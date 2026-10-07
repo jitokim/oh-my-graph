@@ -82,7 +82,9 @@ oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
 로그인을 사용합니다. 기본값은 계속 Claude입니다. `--runtime codex`는 run 전체에
 적용되어 `state.json`에 저장되고, `resume`과 브라우저 gate 동작도 같은 런타임을
 사용합니다. `auto`에 `--plan-only`를 붙이면 플랜을 사서 읽기만 하고 노드는 하나도
-실행하지 않습니다.
+실행하지 않습니다. 플랜은 `graph.json`과 그 옆의 `graph.yaml`로 저장됩니다. YAML을
+고친 뒤(사람 gate를 넣으려면 `depends_on`이 있는 `type: gate` 노드를 추가) 그 파일을
+`run`하세요.
 
 Codex는 `permission_mode: plan`을 read-only sandbox로, 일반 모드를
 `workspace-write`로, `bypassPermissions`를 `danger-full-access`로 매핑합니다.
@@ -236,7 +238,7 @@ run 디렉토리에 stage하고, session을 resume하지 않는 모든 planned n
 남기며, 그보다 큰 prompt(큰 `| inline` artifact)는 Linux에서 시작 시점이 아니라
 run 도중에 `E2BIG`으로 spawn에 실패합니다. prompt의 나머지와 마찬가지로 이
 텍스트는 node가 실행되는 동안 프로세스 테이블에서 읽을 수 있습니다(SECURITY.md).
-plan 화면은 각 경로와 hash를 출력합니다. `run <graph.json>`은 컨벤션을 가져가지
+plan 화면은 각 경로와 hash를 출력합니다. `run <graph.yaml>`은 컨벤션을 가져가지
 않으므로 `--plan-only`는 컨벤션이 저장된 그래프에 들어 있지 않다고 알려줍니다.
 
 그 ceiling 안에서 최근에 바뀐 것이 하나 있고, 계층을 읽기 전에 알아둘 값어치가

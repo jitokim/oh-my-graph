@@ -51,9 +51,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -403,6 +405,7 @@ func runGraphWithRuntime(runtime runner.Runtime, args []string, nodeRunner runne
 	if issues := gateDescriptionInputIssues(g, flags.inputs); len(issues) > 0 {
 		return fmt.Errorf("%s: %w", flags.graphPath, issues[0])
 	}
+	warnIfPlanYAMLDiffers(os.Stderr, flags.graphPath, g)
 	// Every --auto-approve id must name a gate node in THIS graph (#285), and
 	// the check sits here, on the graph verdicts and before the runtime one:
 	// a misspelt gate id is a fact about the graph the operator wrote, so it is
@@ -471,6 +474,34 @@ func runGraphWithRuntime(runtime runner.Runtime, args []string, nodeRunner runne
 	// exactly as it always has (ADR 0023 §2.2).
 	return executeGraph(ctx, newRunID(), g, nodeRunner, flags.commonRunFlags, nil, 0, flags.graphPath, loaded.Source,
 		len(loaded.Resolutions) > 0, webOpener(flags.noWeb, stdout, opener), nil, nil)
+}
+
+// warnIfPlanYAMLDiffers is ADR 0039 §9.1's warning on `run <dir>/graph.json`:
+// when a graph.yaml sits beside it — the copy `--plan-only` saved for the user
+// to edit — and that YAML no longer loads to the same graph, say so and name
+// the command that runs the edit. Advisory only: the run still reads and runs
+// exactly the graph.json it was given (#342). "The same graph" is graph.LoadFile
+// of both, compared, so reformatting the YAML does not warn; a YAML that no
+// longer loads is a difference, reported here and never fatal. Running the
+// YAML itself never reaches this, since only a graph.json looks beside itself.
+func warnIfPlanYAMLDiffers(warnW io.Writer, graphPath string, g *graph.Graph) {
+	if filepath.Base(graphPath) != generatedSpecFileName {
+		return
+	}
+	yamlPath := filepath.Join(filepath.Dir(graphPath), generatedSpecYAMLFileName)
+	if _, err := os.Stat(yamlPath); errors.Is(err, fs.ErrNotExist) {
+		return
+	}
+	why := ""
+	if fromYAML, err := graph.LoadFile(yamlPath); err != nil {
+		why = fmt.Sprintf(" (it no longer loads: %v)", err)
+	} else if reflect.DeepEqual(fromYAML.Graph, g) {
+		return
+	}
+	fmt.Fprintf(warnW,
+		"WARNING: %s differs from the graph.json being run%s; this run uses %s as it is. To run the edit instead: oh-my-graph run %s\n",
+		yamlPath, why, graphPath, yamlPath,
+	)
 }
 
 // runAuto is the `auto` subcommand — the zero-config path (hand-written YAML
@@ -862,7 +893,14 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 }
 
 // notePlanOnlyPreview is `auto --plan-only`'s terminal branch: print the
-// topology, say what the call cost, and keep the spec under plans/.
+// topology, say what the call cost, and keep the spec under plans/ — as
+// graph.json and, beside it, as graph.yaml (ADR 0039 §9.1, #342).
+//
+// The closing note's run command names graph.yaml, not graph.json, because
+// the YAML is the file a user edits, and a gate is authored by editing it: the
+// planner may never write one and trusted code never attaches one (ADR 0039
+// §2). So the note says in one sentence how to add a gate, naming the shipped
+// example, and prints `run <graph.yaml>` as the step after that edit.
 //
 // A preview is still not a run, and since ADR 0023 §3 the reason is no longer
 // the old mechanism argument — that a runs/ directory holding a graph.json and
@@ -874,12 +912,12 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 // at any point, its planner call included.
 //
 // conv is the launch's conventions set, nil for none. The preview states that
-// it does NOT carry into the saved graph, because `run <graph.json>` is the
+// it does NOT carry into the saved graph, because `run <graph.yaml>` is the
 // preview's natural next step and would not prefix it (ADR 0041 §2.4).
 //
 // iv is the launch's interview, nil for none. Its staged answers go beside
 // the saved spec, under the same plans/<id>/ (ADR 0044 §2.1(a)): the plan has
-// already absorbed them, so `run <graph.json>` does not carry them, and they
+// already absorbed them, so `run <graph.yaml>` does not carry them, and they
 // are kept as the record of what the planner was told.
 //
 // baselineSkipped is `auto --no-baseline` (#328). A preview writes no
@@ -890,16 +928,21 @@ func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Ru
 	if err != nil {
 		return err
 	}
+	yamlPath, err := savePlanYAML(planDir, plan.Spec)
+	if err != nil {
+		return err
+	}
 	if _, err := stageInterview(planDir, iv); err != nil {
 		return err
 	}
 	printPlanForRuntime(out, plan, specPath, runtime, evidence, baselineSkipped, conventionsDisclosure{set: conv, notCarried: true})
 	fmt.Fprintf(out,
 		"plan only: no node was executed. The %s still paid for (%s) —\n"+
-			"unlike `run --dry-run`, this is not free — and its plan is kept at %s.\n"+
+			"unlike `run --dry-run`, this is not free — and its plan is kept at %s, and as YAML at %s.\n"+
 			"Nothing ran, so this is not a run: it gets no run directory and `runs list` stays silent\n"+
-			"about it. Run it with `oh-my-graph run %s`.\n",
-		plannerCallsPhrase(plan), formatCost(plan.CostUSD, plan.CostUnknown), specPath, specPath)
+			"about it. Run it with `oh-my-graph run %s`.\n"+
+			"To add a human gate, edit that YAML, add a `type: gate` node with its `depends_on` (like `approve-merge` in graphs/merge-shepherd.yaml), then run it with the same command.\n",
+		plannerCallsPhrase(plan), formatCost(plan.CostUSD, plan.CostUnknown), specPath, yamlPath, yamlPath)
 	if iv != nil {
 		fmt.Fprintf(out, "The interview before it was paid for too (%s), and the answers the planner received are kept at %s.\n",
 			formatCost(iv.Cost.CostUSD, iv.Cost.CostUnknown), filepath.Join(planDir, interview.StagedFileName))
@@ -1313,6 +1356,12 @@ func savePlan(dir string, plan coordinator.Plan) (string, error) {
 // generatedSpecFileName is the accepted plan's file — the one every consumer
 // of a run directory already reads.
 const generatedSpecFileName = "graph.json"
+
+// generatedSpecYAMLFileName is the same accepted plan as YAML, written beside
+// graph.json by `--plan-only` only (ADR 0039 §9.1, #342): the file a user edits
+// to add a gate and then runs. `run` reads exactly the path it is given, so it
+// never chooses between the two.
+const generatedSpecYAMLFileName = "graph.yaml"
 
 // rejectedSpecFileName is a REFUSED plan's file. A distinct name because it is
 // not a graph the engine would run: nothing may mistake it for one, least of all

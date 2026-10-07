@@ -490,7 +490,14 @@ while there is no plan to inspect until one has been bought, so `--plan-only`
 still pays for the planner call and prints what it cost. The plan it paid for is
 kept — under `~/.oh-my-graph/plans/<id>/graph.json`, not in `runs/`, because
 nothing ran: a preview is not a run, so `runs list` and `serve` never see it.
-Run it later with `oh-my-graph run <that path>`. It previews one cycle by
+Beside it is the same plan as YAML, `graph.yaml`, and that is the file to edit
+and run: the closing note prints `oh-my-graph run <path>/graph.yaml`, and says
+how to add a human gate — a `type: gate` node with its `depends_on`, like
+`approve-merge` in `graphs/merge-shepherd.yaml` (a planner never writes one,
+[ADR 0039](adr/0039-a-gate-is-authored-not-attached.md)). `run` reads exactly
+the file you give it. If you edit the YAML and then run the `graph.json`
+beside it, `run` warns that the two differ and names the YAML command, but runs
+the `graph.json` as it is. It previews one cycle by
 definition — `--plan-only` with `--max-cycles` above 1 is rejected at parse,
 since every cycle after the first is planned from the previous cycle's run and
 so does not exist yet to be shown.
@@ -567,7 +574,7 @@ Question 1/5: Should --json print the coverage line too, or only the runs?
 - **With `--plan-only`** the interview runs, the planner runs once with the
   answers, the plan prints and nothing executes. The answers are kept beside
   the saved spec as `~/.oh-my-graph/plans/<id>/interview.md`; `run` on that
-  `graph.json` does not need them, because the plan already absorbed them.
+  `graph.yaml` does not need them, because the plan already absorbed them.
 - **With `--conventions`** both work: the conventions reach planned nodes and
   the interview reaches the planner, and neither reaches the other's call.
 

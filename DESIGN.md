@@ -2792,8 +2792,8 @@ the sequence immediately after the topology print, so that one call is all it
 makes and no node runs — the inspection path for the mappings and the ceiling,
 and deliberately NOT free the way `run --dry-run` is: there is no plan to
 inspect until one has been bought, which is why the stop line prints its cost
-and the paid-for spec is kept — in `$OMG_HOME/plans/<id>/graph.json`, never
-under `runs/`. The reason for that is no longer the mechanism one (a directory
+and the paid-for spec is kept — in `$OMG_HOME/plans/<id>/graph.json`, with a
+`graph.yaml` copy beside it to edit and run, never under `runs/`. The reason for that is no longer the mechanism one (a directory
 with no `state.json` reading as damage — ADR 0023 §2.5 dissolved exactly that,
 and such directories are now ordinary): **a preview has none of the six statuses
 and cannot be given one.** It is not `PLANNING` (it finished), not `RUNNING`,
@@ -3377,6 +3377,19 @@ until a human answers its `[y/N]`, so the spec save happens after that answer
 and a `n` leaves no run directory at all (ADR 0023 §2.4). It used to save
 before the prompt, which meant declining manufactured a `runs/<id>/` holding a
 `graph.json` and no `state.json` — a corrupt run produced by saying no.
+
+Only `--plan-only` also writes `graph.yaml` beside its `graph.json`: the same
+spec projected to block YAML by trusted code, not a second source, so it is the
+file a user edits to add a gate (ADR 0039 §9.1). `run` reads exactly the file
+it is given, never whichever of the two is in the directory. `run` of a
+`graph.json` with a `graph.yaml` beside it compares the two as loaded graphs
+(so reformatting the YAML is no difference) and, when they differ or the YAML
+no longer loads, warns on stderr and names `oh-my-graph run <graph.yaml>` — but
+still runs the `graph.json` it was given, unchanged. The preview's closing note
+prints `oh-my-graph run <graph.yaml>`, no longer a command for `graph.json`, and
+one sentence on adding a human gate: edit that YAML, add a `type: gate` node
+with its `depends_on` (like `approve-merge` in `graphs/merge-shepherd.yaml`),
+then run it.
 
 ### Goal cycles — `auto --max-cycles N` (ADR 0011)
 `auto` plans once by default; `--max-cycles N` (N ≥ 2) opts into the bounded

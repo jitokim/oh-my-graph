@@ -375,7 +375,7 @@ func TestAutoConventions_PlanOnlySaysTheyAreNotInTheSavedGraph(t *testing.T) {
 			t.Fatalf("auto --plan-only: %v", err)
 		}
 	})
-	want := fmt.Sprintf("  Your conventions (2 files, %d bytes) are NOT in the saved graph: `run <graph.json>` does not prefix them. Launch with `auto` to apply them.\n", set.TotalBytes()) +
+	want := fmt.Sprintf("  Your conventions (2 files, %d bytes) are NOT in the saved graph: `run <graph.yaml>` does not prefix them. Launch with `auto` to apply them.\n", set.TotalBytes()) +
 		wantConventionsFileLines(set)
 	if !strings.Contains(out, want) {
 		t.Errorf("--plan-only screen lacks:\n%s\ngot:\n%s", want, out)
