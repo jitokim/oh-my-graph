@@ -26,7 +26,7 @@ import (
 // fragment drift smell) go to warnW through the same warnAdvisories /
 // warnFragmentAdvisories helpers `lint` uses, and never affect the exit code.
 func dryRunGraph(w, warnW io.Writer, path string, inputs map[string]string) error {
-	return dryRunGraphForRuntime(w, warnW, path, inputs, nil, runner.RuntimeClaude)
+	return dryRunGraphForRuntime(w, warnW, path, inputs, nil, nil, runner.RuntimeClaude)
 }
 
 // autoApprove is the invocation's `--auto-approve` list (#285): a dry run
@@ -34,7 +34,11 @@ func dryRunGraph(w, warnW io.Writer, path string, inputs map[string]string) erro
 // exit 1 — and prints the resulting pre-approved gate list as part of the
 // plan, so a reader checking what a run WILL do sees which gates it will
 // walk straight through.
-func dryRunGraphForRuntime(w, warnW io.Writer, path string, inputs map[string]string, autoApprove []string, runtime runner.Runtime) error {
+//
+// inputSources is each bound key's winning source (commonRunFlags.inputSources,
+// #356): a key the graph does not declare gets the same warning a real run
+// prints, on warnW beside the other advisories, and never changes the verdict.
+func dryRunGraphForRuntime(w, warnW io.Writer, path string, inputs, inputSources map[string]string, autoApprove []string, runtime runner.Runtime) error {
 	issues, fragmentAdvisories, loaded, err := graph.LintLoadFile(path)
 	if err != nil {
 		return err
@@ -63,6 +67,7 @@ func dryRunGraphForRuntime(w, warnW io.Writer, path string, inputs map[string]st
 	}
 	warnAdvisories(warnW, path, g)
 	warnFragmentAdvisories(warnW, path, fragmentAdvisories)
+	warnUndeclaredInputs(warnW, path, g.Inputs, inputSources)
 	// The disclosure `lint` and `run` both print, on the third command that
 	// resolves fragments — and the one that had it missing. A dry run is where a
 	// reader checks what a graph WILL do before paying for it, so a splice

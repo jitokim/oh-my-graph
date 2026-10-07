@@ -380,7 +380,7 @@ func runGraphWithRuntime(runtime runner.Runtime, args []string, nodeRunner runne
 		return err
 	}
 	if flags.dryRun {
-		return dryRunGraphForRuntime(os.Stdout, os.Stderr, flags.graphPath, flags.inputs, flags.autoApprove, runtime)
+		return dryRunGraphForRuntime(os.Stdout, os.Stderr, flags.graphPath, flags.inputs, flags.inputSources, flags.autoApprove, runtime)
 	}
 
 	// The path-aware load stage (ADR 0013): resolve any `use:` fragments
@@ -406,6 +406,10 @@ func runGraphWithRuntime(runtime runner.Runtime, args []string, nodeRunner runne
 		return fmt.Errorf("%s: %w", flags.graphPath, issues[0])
 	}
 	warnIfPlanYAMLDiffers(os.Stderr, flags.graphPath, g)
+	// A bound key the graph does not declare (#356): a warning, never a
+	// refusal, printed with the other load-time warnings and before anything
+	// spawns. The key stays bound.
+	warnUndeclaredInputs(os.Stderr, flags.graphPath, g.Inputs, flags.inputSources)
 	// Every --auto-approve id must name a gate node in THIS graph (#285), and
 	// the check sits here, on the graph verdicts and before the runtime one:
 	// a misspelt gate id is a fact about the graph the operator wrote, so it is
