@@ -1035,6 +1035,26 @@ Repeat `--input-file` to layer files; a later file overrides an earlier one.
 The merged values are then checked like `--input` values: `run --dry-run`
 reports a missing input the same way.
 
+A key the graph's `inputs:` does not declare is bound anyway, with one warning
+on stderr per key. It names the key and its source (`--input`, or the file
+that set it last), never the value, and offers a declared name that is a
+near miss. A typo in the file:
+
+```yaml
+# self-dev.inputs.yaml
+repo: /work/oh-my-graph
+tsak: add a --json flag to runs list
+```
+
+```
+warning: graphs/self-dev.yaml: input "tsak" (from self-dev.inputs.yaml) is not declared in the graph's inputs list; it is bound anyway — did you mean "task"?
+```
+
+The warning never changes the exit status; here `task` is still unbound, and
+that is what fails the run. `auto` judges the bound keys against the graph it
+planned and prints the same line on the plan screen, `--plan-only` included,
+and once per key across a goal loop.
+
 The file is read once, at launch. The merged values are saved in the run's
 `state.json`, and `resume` takes them from there. Editing
 `self-dev.inputs.yaml` before a `resume --retry-failed` (or a gate decision on
