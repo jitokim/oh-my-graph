@@ -329,9 +329,10 @@ That is what §6 measures before this moves past Proposed.
 Read against `main` at `eee9afe` (v0.17.0 plus #355). Only §3.5 is accepted.
 The `loop` leg and everything that depends on it (§3.1–§3.4, §3.6) stay
 Proposed, for the reason §6.2 gives itself: whether a supervisor that waits
-out limit windows is needed at all depends on how often runs pause on a limit,
-and that cannot be counted until §3.5 records it. So §3.5 is the first slice,
-and it is the measurement's precondition.
+out limit windows is needed at all depends on how often runs pause on a limit.
+§8.4 counts that from the event stream, which already records it; §3.5 is the
+first slice because it is small and removes the inference every consumer
+makes today.
 
 ### 8.1 What the record is
 
@@ -351,11 +352,16 @@ is still never recorded FAILED or completed (ADR 0009 unchanged).
   not read by the status derivation, the same way `Facts` deliberately excludes
   `gate.paused_at`. What changes is that `runs list` and `resume` can say
   *why* it paused by reading the record, instead of inferring it from absence.
-- **No schema bump.** The field is optional and absent in older snapshots,
-  which is how #337 (`verification`) and #348 (`paused_gate_description`)
-  added theirs. A snapshot without it reads exactly as today, and `resume` of
-  an older run is unaffected. §5's "schema change with a version bump" is
-  superseded by this precedent.
+- **No schema bump.** The rule this repo applies to the stamp (ADR 0034
+  §2.6(3), ADR 0040, and ADR 0041's counter-case, which did bump to 4) is that
+  it moves only when an older binary would resume the run differently or
+  wrongly. This record changes no control flow: not the status, not what
+  `resume` re-launches, not an exit code. An older binary ignores the field
+  and resumes a limit-paused run exactly as it does today, so the stamp stays.
+  §5's "schema change with a version bump" is superseded on that ground. The
+  one real cost: an older binary that resumes and rewrites the snapshot drops
+  the field, so a later limit pause in its leg goes unrecorded. That is
+  harmless for control flow, and §8.4 does not depend on the record.
 - **No parsing of the reset time.** The cause is recorded as captured text
   (§3.3, `internal/runner/sessionlimit.go`). Nothing computes from it.
 - **`runs list --exit-in-flight` keeps its meaning** (ADR 0039 §4): this
@@ -374,8 +380,17 @@ is still never recorded FAILED or completed (ADR 0009 unchanged).
 
 ### 8.4 The count §6.2 asks for
 
-From the merge of #358 on, limit pauses are countable from snapshots. The
-count runs for a month of ordinary use, recorded in the project's
-measurement notes. If no run pauses on a limit, §6.2's conclusion applies (the
-shell loop of `main.go`'s `until … --exit-in-flight` example is enough). If
-runs do pause, §3.1–§3.4 come back for acceptance with the count as evidence.
+**The count does not need §3.5, and it starts now.** §8.1 clears the record
+once a resumed leg runs past it, so snapshots show only runs that are *still*
+paused; a month counted from them would undercount. The append-only event
+stream already has what the count needs: every leg that stops on a limit ends
+with a `run_finished` event whose detail reads `session limit reached at
+<node ids>: <cause>` (`runFinishedEvent`, `internal/schedule/scheduler.go`).
+Today's v0.17.0 `smoke-codex` run ended that way. So the count reads
+`events.jsonl` across runs, for a month of ordinary use, and is recorded in the
+project's measurement notes. That leaves §3.5's job as **display**: `runs
+list` and `resume` say why a run is paused, from the record, instead of
+inferring it. If no run pauses on a limit in that month, §6.2's conclusion
+applies (the shell loop of `main.go`'s `until … --exit-in-flight` example is
+enough). If runs do pause, §3.1–§3.4 come back for acceptance with the count as
+evidence.
