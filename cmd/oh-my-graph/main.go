@@ -1420,6 +1420,9 @@ func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, ru
 	// Right after the ceiling it does not move, on either runtime: the prompt
 	// prefix is runtime-neutral (ADR 0041 §2.7).
 	noteConventions(w, conv)
+	// Runtime-neutral too: the menu was in the planner prompt either way, and
+	// a citation is spliced before either runtime sees the graph (ADR 0038).
+	noteReuse(w, plan.Reuse)
 	noteVerifyAttachments(w, plan.VerifyAttachments)
 	noteMissingBuildEvidence(w, evidence)
 	noteSkippedBaseline(w, baselineSkipped)
