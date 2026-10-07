@@ -93,9 +93,27 @@ const MarkerPrefix = "---"
 // reader would accept as a marker is a guess an attacker gets to make too.
 func LooksLikeMarker(line string) bool {
 	visible := strings.TrimLeftFunc(line, func(r rune) bool {
-		return unicode.IsSpace(r) || unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
+		return unicode.IsSpace(r) || unicode.IsControl(r) || IsFormatOrLineSeparator(r)
 	})
 	return strings.HasPrefix(visible, MarkerPrefix)
+}
+
+// IsFormatOrLineSeparator reports whether r is a Unicode format character
+// (category Cf: the bidi embeddings, overrides and isolates U+202A–U+202E and
+// U+2066–U+2069, the zero-width characters U+200B–U+200F, U+FEFF and their
+// kin) or the line or paragraph separator, U+2028 or U+2029.
+//
+// It is the one rule for the characters that are not controls, so
+// unicode.IsControl does not catch them, yet are unsafe in text a person is
+// meant to read as written on one line: a format character is invisible or
+// reorders what is shown around it — U+202E prints the rest of the line
+// reversed — and a separator breaks the line wherever it is rendered. Callers
+// pair it with unicode.IsControl for the controls proper. It lives here,
+// beside LooksLikeMarker, because its callers — internal/coordinator's reuse
+// menu summary and internal/handoff's gate description (#346) — both already
+// import this package; a copy per caller is a set that drifts.
+func IsFormatOrLineSeparator(r rune) bool {
+	return unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029'
 }
 
 // MaxPriorReplyInPrompt bounds a node's own earlier reply quoted back into a

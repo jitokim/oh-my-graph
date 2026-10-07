@@ -469,8 +469,8 @@ func writeVerificationBlock(b *strings.Builder, id string, v NodeVerification, b
 // its own, so it cannot pass for a fence marker or a second record.
 //
 // A command that is NOT one plain line — it holds a newline, a carriage
-// return, any other control character, a Unicode line or paragraph separator,
-// or invalid UTF-8 — could break that line, so it falls back to a Go-quoted
+// return, any other control character, a Unicode format character, a Unicode
+// line or paragraph separator, or invalid UTF-8 — could break that line, so it falls back to a Go-quoted
 // form on one line, and the label says it is escaped so nobody reads the
 // quotes and backslashes as part of the command.
 func renderVerifyCommand(command string) string {
@@ -481,15 +481,18 @@ func renderVerifyCommand(command string) string {
 	return "  command (escaped — it contains a newline or other control character, so it is shown Go-quoted on one line): " + strconv.Quote(cut) + "\n"
 }
 
-// plainLine reports whether s is valid UTF-8 holding no control character and
-// no Unicode line or paragraph separator — text that renders as exactly one
-// line wherever it is printed.
+// plainLine reports whether s is valid UTF-8 holding no control character, no
+// Unicode format character and no Unicode line or paragraph separator — text
+// that renders as exactly one line, as written, wherever it is printed. The
+// last two are fence.IsFormatOrLineSeparator, the rule the reuse menu summary
+// and a gate description share (#346): a bidi override would show the command
+// reversed and a zero-width character would hide part of it.
 func plainLine(s string) bool {
 	if !utf8.ValidString(s) {
 		return false
 	}
 	for _, r := range s {
-		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+		if unicode.IsControl(r) || fence.IsFormatOrLineSeparator(r) {
 			return false
 		}
 	}

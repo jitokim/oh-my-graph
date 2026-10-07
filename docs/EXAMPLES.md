@@ -1309,6 +1309,75 @@ Spec:
 - **`resume <run-id> --retry-failed`** — re-executes only a failed run's failed
   and cancelled nodes, keeping every passed node's artifact for its dependents.
 
+### Saying what approving means (`description:`)
+
+A gate can carry one `description:` line. It is printed wherever you decide
+the gate, so the pause says what you are approving, not just the gate's id
+(#346):
+
+```yaml
+inputs: [ticket]
+nodes:
+  - id: build
+    prompt: Build the release for {{ inputs.ticket }} and summarize it.
+    allowed_tools: [Read, "Bash(make *)"]
+
+  - id: approve
+    type: gate
+    depends_on: [build]
+    description: "ship {{ inputs.ticket }} from {{ artifacts.build }}?"
+
+  - id: ship
+    depends_on: [approve]
+    prompt: Publish the release for {{ inputs.ticket }}.
+    allowed_tools: [Read, "Bash(make *)"]
+```
+
+`run release.yaml --input ticket=T-42` pauses with the description rendered
+into the pause block:
+
+```
+Paused at gate "approve" (ship T-42 from /Users/you/.oh-my-graph/runs/<run-id>/build.out?). Resume with:
+  oh-my-graph resume <run-id> --approve approve
+  oh-my-graph resume <run-id> --reject approve
+```
+
+Approving echoes the same text back before the leg starts:
+
+```
+$ oh-my-graph resume <run-id> --approve approve
+approved gate approve: ship T-42 from /Users/you/.oh-my-graph/runs/<run-id>/build.out?
+Resuming run "<run-id>" (gate "approve" approved)
+```
+
+`--reject` prints `rejected gate approve: …` the same way. The same text is
+recorded as `gate_description` on the gate's record in `state.json`, so the
+run's history says what was approved. A bare `resume <run-id>`, a wrong gate
+id and `--retry-failed` on the paused run also name the gate with its
+description in parentheses.
+
+What it may say:
+
+- `description:` is valid on `type: gate` only. On any other node the graph
+  fails to load, and `auto` never writes one.
+- `{{ artifacts.<id> }}` with no filter renders the artifact's **file path**,
+  which you can open. `{{ inputs.<name> }}` renders your `--input` value.
+  Nothing else is admitted.
+- `oh-my-graph lint` refuses `{{ artifacts.<id> | inline }}`, any
+  `{{ feedback.<id> }}`, `{{ self.previous }}` and `{{ self.timeout }}`,
+  because each would print a model's reply, or a number that is true of no
+  process, where you approve. It also refuses a reference that cannot
+  resolve. `lint`, `run`, `run --dry-run` and `resume` all refuse such a
+  description when the graph loads, before any node runs, so nothing is
+  spent.
+- The printed text is always **one line**. Newlines and tabs become a single
+  space, and terminal escape sequences, control characters, Unicode format
+  characters (bidi controls, zero-width characters) and the line and
+  paragraph separators are stripped, so an input value cannot repaint the
+  prompt you approve from.
+- The web live view's approve/reject buttons do not show the description
+  (web view: #348). A decision made there still records it in `state.json`.
+
 Spec: [DESIGN.md § Gate nodes and resume](../DESIGN.md#gate-nodes-and-resume-v11).
 
 ## Session limits pause, not fail

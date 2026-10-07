@@ -155,6 +155,24 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner, web browser
 	}
 	warnIfGraphSourceChanged(snap)
 
+	// The refusal `run` gives at load, given again to the graph this run holds
+	// (#346), before either mode and so before anything spawns: a description
+	// lint refuses, and one quoting an input the run's recorded inputs do not
+	// bind, which could not be rendered when its gate pauses. A snapshot
+	// whose graph does not parse is reported here, as continueRun reports it,
+	// so every mode refuses a broken snapshot the same way and before any
+	// gate is named.
+	g, parseErr := graph.Parse(snap.Graph)
+	if parseErr != nil {
+		return fmt.Errorf("reconstruct graph for run %q: %w", runID, parseErr)
+	}
+	if err := gateDescriptionRefusal(g); err != nil {
+		return fmt.Errorf("resume run %q: %w", runID, err)
+	}
+	if issues := gateDescriptionInputIssues(g, snap.Inputs); len(issues) > 0 {
+		return fmt.Errorf("resume run %q: %w", runID, issues[0])
+	}
+
 	// Before either mode, because both have exits that never reach continueRun:
 	// a --retry-failed with nothing to retry returns early and would otherwise
 	// accept a flag that is an error in every other state, answering as if it had
@@ -179,15 +197,22 @@ func resumeGateLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner
 	if snap.Gate.PausedAt == "" {
 		return fmt.Errorf("run %q is not paused (nothing to resume; a failed run is retried with --retry-failed)", flags.runID)
 	}
-	gateID, decision, err := resumeDecision(flags, snap.Gate.PausedAt)
+	// Rendered once, against the run as the pause left it, so every line this
+	// leg prints about the gate shows the same text the pause did (#346).
+	description, err := snapshotGateDescription(flags.runID, snap, snap.Gate.PausedAt)
+	if err != nil {
+		return fmt.Errorf("resume run %q: %w", flags.runID, err)
+	}
+	gateID, decision, err := resumeDecision(flags, snap.Gate.PausedAt, description)
 	if err != nil {
 		return err
 	}
 	decisions := mergedGateDecisions(snap.Gate.Decisions, gateID, runstate.GateDecision(decision))
 	banner := fmt.Sprintf("Resuming run %q (gate %q %s)", flags.runID, gateID, decisionVerb(decision))
+	echoGateDecision(os.Stdout, gateID, decisionVerb(decision), description)
 	// nil: a gate resume clears no failed node, so there is no attempt for
 	// anything in this leg to be repeating.
-	return continueRun(flags, snap, snap.Nodes, decisions, nil, banner, nodeRunner, web)
+	return continueRun(flags, snap, snap.Nodes, decisions, nil, decidedGate{id: gateID, description: description}, banner, nodeRunner, web)
 }
 
 // resumeRetryLeg is the --retry-failed mode: keep every PASSED node's record
@@ -215,9 +240,13 @@ func resumeRetryLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runne
 	banner := fmt.Sprintf("Resuming run %q (retrying failed nodes: %s)", flags.runID, strings.Join(cleared, ", "))
 	if len(cleared) == 0 {
 		if snap.Gate.PausedAt != "" {
+			description, err := snapshotGateDescription(flags.runID, snap, snap.Gate.PausedAt)
+			if err != nil {
+				return fmt.Errorf("resume run %q: %w", flags.runID, err)
+			}
 			fmt.Fprintf(os.Stdout, "run %q has no failed nodes to retry.\n", flags.runID)
-			fmt.Fprintf(os.Stdout, "It is paused at gate %q — decide it with --approve %s or --reject %s instead.\n",
-				snap.Gate.PausedAt, snap.Gate.PausedAt, snap.Gate.PausedAt)
+			fmt.Fprintf(os.Stdout, "It is paused at gate %s — decide it with --approve %s or --reject %s instead.\n",
+				describedGate(snap.Gate.PausedAt, description), snap.Gate.PausedAt, snap.Gate.PausedAt)
 			return nil
 		}
 		if !hasUnfinishedWork(g, retained) {
@@ -226,7 +255,7 @@ func resumeRetryLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runne
 		}
 		banner = fmt.Sprintf("Resuming run %q (running unfinished nodes)", flags.runID)
 	}
-	return continueRun(flags, snap, retained, snap.Gate.Decisions, cleared, banner, nodeRunner, web)
+	return continueRun(flags, snap, retained, snap.Gate.Decisions, cleared, decidedGate{}, banner, nodeRunner, web)
 }
 
 // hasUnfinishedWork reports whether a retry leg carrying exactly the retained
@@ -332,7 +361,7 @@ func checkVerifyCommandApplies(runID string, snap runstate.Snapshot, v coordinat
 // is repeating, and the only ones whose failed reply is re-read from disk. web,
 // when non-nil, is the Opener this leg's embedded live view hands its URL to;
 // nil is no live view at all (see executeResume).
-func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]runstate.NodeRecord, decisions map[string]runstate.GateDecision, cleared []string, banner string, nodeRunner runner.NodeRunner, web browser.Opener) error {
+func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]runstate.NodeRecord, decisions map[string]runstate.GateDecision, cleared []string, decided decidedGate, banner string, nodeRunner runner.NodeRunner, web browser.Opener) error {
 	runID := flags.runID
 	runDir := runDirFor(runID)
 
@@ -716,8 +745,10 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// half-written output, and neither result then describes the tree the
 		// user has. Nil unless this invocation supplied a command.
 		SerializedVerifyNodes: serializedVerify,
-		Recorder:              recorder,
-		EventSink:             feed,
+		// The decided gate's record carries the description its decider was
+		// shown (#346); every other record is written exactly as before.
+		Recorder:  decided.recorderFor(recorder),
+		EventSink: feed,
 		// CompletedNodes seeds the resumed leg's ready set from
 		// graph.ReadyGiven(completed) instead of graph.Roots(), so a node the
 		// first leg already finished is never re-run (and re-paid for).
@@ -757,7 +788,11 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// snapshot this leg rewrites carries snap.Graph forward verbatim — the
 	// verification stays on disk and stays untrusted — so the hint repeats the
 	// flags rather than promising a bare resume that would be refused.
-	printPauseHint(os.Stdout, runID, runErr, verifyCmd)
+	description, err := pausedGateDescription(runID, runErr, g, h)
+	if err != nil {
+		return err
+	}
+	printDescribedPauseHint(os.Stdout, runID, runErr, verifyCmd, description)
 
 	return runErr
 }
@@ -772,7 +807,10 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 //   - the named gate must match where the run is actually paused, so
 //     resuming an old run can never approve a gate the user was not looking
 //     at.
-func resumeDecision(flags *resumeFlags, pausedAt string) (gateID string, decision gate.Decision, err error) {
+//
+// pausedDescription is the paused gate's shown description (#346), named
+// beside it in both refusals; "" leaves them as they always read.
+func resumeDecision(flags *resumeFlags, pausedAt, pausedDescription string) (gateID string, decision gate.Decision, err error) {
 	switch {
 	case flags.approveGate != "" && flags.rejectGate != "":
 		return "", "", fmt.Errorf("resume: --approve and --reject are mutually exclusive")
@@ -782,12 +820,12 @@ func resumeDecision(flags *resumeFlags, pausedAt string) (gateID string, decisio
 		gateID, decision = flags.rejectGate, gate.DecisionReject
 	default:
 		return "", "", fmt.Errorf(
-			"run is paused at gate %q; resume with --approve %s or --reject %s",
-			pausedAt, pausedAt, pausedAt,
+			"run is paused at gate %s; resume with --approve %s or --reject %s",
+			describedGate(pausedAt, pausedDescription), pausedAt, pausedAt,
 		)
 	}
 	if gateID != pausedAt {
-		return "", "", fmt.Errorf("resume named gate %q but the run is paused at %q", gateID, pausedAt)
+		return "", "", fmt.Errorf("resume named gate %q but the run is paused at %s", gateID, describedGate(pausedAt, pausedDescription))
 	}
 	return gateID, decision, nil
 }

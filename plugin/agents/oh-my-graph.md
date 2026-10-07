@@ -155,7 +155,10 @@ when authoring or debugging:
 - **Worktrees.** `worktree: <name>` on a node runs it in an isolated git
   worktree, so parallel nodes can mutate the same repo without colliding.
 - **Gates.** A gate node pauses the run for human approval; the run exits
-  with code 2 and resumes via `resume --approve/--reject`.
+  with code 2 and resumes via `resume --approve/--reject`. A gate (and only a
+  gate) may carry `description:`, one line printed at the pause and echoed on
+  the decision. It may quote only `{{artifacts.<id>}}` with no filter (a path)
+  and `{{inputs.<name>}}`, and `lint` refuses anything else.
 - **Verification.** A node's `success_check.verify` shell command is
   independent evidence that the node did what it claimed — encourage it for
   nodes whose output feeds later nodes.

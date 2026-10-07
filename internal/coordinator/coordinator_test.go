@@ -643,6 +643,63 @@ func TestPlan_RejectsGateNode(t *testing.T) {
 	}
 }
 
+// TestPlan_RejectsGateNodeWithDescription: a planned gate is refused whether
+// or not it carries a description, and the description is refused beside it
+// (#346, ADR 0039).
+func TestPlan_RejectsGateNodeWithDescription(t *testing.T) {
+	gated := `{"name":"bad","nodes":[{"id":"a","type":"gate","prompt":"approve","description":"approve the merge"}]}`
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: gated})
+
+	planErr := planExpectingError(t, fake, "lint the repo")
+	if !strings.Contains(planErr.Reason, `planned node "a" is a gate node`) {
+		t.Errorf("reason %q is not the planned-gate refusal", planErr.Reason)
+	}
+
+	g, err := graph.ParsePlannerReply([]byte(gated))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reasons []string
+	for _, issue := range validatePlannedNodes(g, gated, nil) {
+		reasons = append(reasons, issue.Reason)
+	}
+	joined := strings.Join(reasons, "\n")
+	for _, want := range []string{"is a gate node", "wrote a description"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("refusals do not include %q:\n%s", want, joined)
+		}
+	}
+}
+
+// TestPlan_RejectsDescriptionOnNonGateNode: a description on a planned
+// claude-run node is refused by the coordinator in its own words, not by the
+// load-time refusal graph.ParsePlannerReply leaves to it (#346).
+func TestPlan_RejectsDescriptionOnNonGateNode(t *testing.T) {
+	described := `{"name":"bad","nodes":[{"id":"a","prompt":"a","allowed_tools":["Read"],"description":"approve the merge"}]}`
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: described})
+
+	planErr := planExpectingError(t, fake, "lint the repo")
+	want := `planned node "a" wrote a description; only a hand-written gate carries one, and auto mode never plans a gate`
+	if planErr.Reason != want {
+		t.Errorf("reason = %q, want %q", planErr.Reason, want)
+	}
+}
+
+// TestPlan_AcceptsNodeWithoutDescription is the negative control for the two
+// refusals above: the same node with no description plans cleanly (#346).
+func TestPlan_AcceptsNodeWithoutDescription(t *testing.T) {
+	plain := `{"name":"ok","nodes":[{"id":"a","prompt":"a","allowed_tools":["Read"]}]}`
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: plain})
+
+	plan, err := New(fake).Plan(context.Background(), "lint the repo", nil)
+	if err != nil {
+		t.Fatalf("a planned node without a description must plan cleanly: %v", err)
+	}
+	if n, _ := plan.Graph.NodeByID("a"); n.Description != "" {
+		t.Errorf("Description = %q, want none", n.Description)
+	}
+}
+
 func TestPlan_RejectsBypassPermissions(t *testing.T) {
 	privileged := `{"name":"bad","nodes":[` +
 		`{"id":"a","prompt":"a","permission_mode":"bypassPermissions"}]}`

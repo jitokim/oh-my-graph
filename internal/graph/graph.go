@@ -259,6 +259,14 @@ type Node struct {
 	Handoff        string       `yaml:"handoff" json:"handoff,omitempty"`
 	SuccessCheck   SuccessCheck `yaml:"success_check" json:"success_check,omitempty"`
 	Retry          *Retry       `yaml:"retry" json:"retry,omitempty"`
+	// Description, when non-empty, is what a person reads when deciding a
+	// gate: the author's sentence about what approving means here (#346). It
+	// is valid on `type: gate` only, refused on any other node at load
+	// (validateDescriptions), because nothing else is ever decided by a
+	// person. Hand-written graphs only: coordinator.validatePlannedNodes
+	// rejects it on every planned node, since a planner may not write a gate
+	// at all (ADR 0039: a gate is authored, not attached).
+	Description string `yaml:"description" json:"description,omitempty"`
 	// Timeout, when non-empty, is a Go duration string bounding this node's
 	// whole subprocess run, replacing the runner's 20-minute default — the
 	// declaration a legitimately long node makes so the engine's wedge
@@ -434,10 +442,12 @@ func Parse(data []byte) (*Graph, error) {
 // node may carry `reuse:`/`bind:` (ADR 0038): every structural issue Parse
 // would refuse is refused here too, except the unspliced-reuse backstop,
 // because the coordinator judges a citation against the menu it showed
-// (validatePlannedNodeReuse) and trusted code splices it. The graph it returns
-// is valid in every other respect; the caller must Validate it again once
-// nothing it runs carries a citation, which is what keeps an unspliced reuse
-// node from ever reaching the scheduler.
+// (validatePlannedNodeReuse) and trusted code splices it, and the
+// misplaced-description refusal, because the coordinator refuses a planned
+// description on every node, gate or not, in its own words (#346). The graph
+// it returns is valid in every other respect; the caller must Validate it
+// again once nothing it runs carries a citation, which is what keeps an
+// unspliced reuse node from ever reaching the scheduler.
 func ParsePlannerReply(data []byte) (*Graph, error) {
 	g, err := decode(data)
 	if err != nil {
@@ -445,7 +455,8 @@ func ParsePlannerReply(data []byte) (*Graph, error) {
 	}
 	for _, issue := range g.Issues() {
 		var unspliced *UnsplicedReuseError
-		if errors.As(issue, &unspliced) {
+		var misplaced *MisplacedDescriptionError
+		if errors.As(issue, &unspliced) || errors.As(issue, &misplaced) {
 			continue
 		}
 		return nil, issue

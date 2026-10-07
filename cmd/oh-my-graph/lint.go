@@ -37,6 +37,9 @@ func runLintRuntime(runtime runner.Runtime, args []string) error {
 // agent and worktree names) — without executing anything: no node spawns, no
 // run directory is created, zero cost. Where `run` stops at the first
 // violation, lint prints them all, so a broken graph is fixable in one pass.
+// A gate `description:` that would print anything but an artifact path, an
+// input or an engine fact (handoff.GateDescriptionIssues, #346) is an issue
+// here too, not an advisory.
 // A valid graph prints one disclosure line per resolved `use:` — the same
 // line `run` prints, naming the fragment's source file and its own
 // description — then one confirmation line, and returns nil (exit 0); an
@@ -81,6 +84,11 @@ func lintGraphForRuntime(w, warnW io.Writer, path string, runtime runner.Runtime
 	issues, fragmentAdvisories, loaded, err := graph.LintLoadFile(path)
 	if err != nil {
 		return err
+	}
+	if loaded != nil {
+		// Not advice: a gate description that would print a model's text
+		// where a person approves is refused like a load error (#346).
+		issues = append(issues, handoff.GateDescriptionIssues(loaded.Graph)...)
 	}
 	if len(issues) == 0 {
 		runtimeWarnings, err := runner.ValidateGraphForRuntime(runtime, loaded.Graph)

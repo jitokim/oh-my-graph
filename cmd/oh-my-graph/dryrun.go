@@ -39,6 +39,11 @@ func dryRunGraphForRuntime(w, warnW io.Writer, path string, inputs map[string]st
 	if err != nil {
 		return err
 	}
+	if loaded != nil {
+		// The refusal `lint` and `run` give a gate description, as one more
+		// issue in the list (#346).
+		issues = append(issues, handoff.GateDescriptionIssues(loaded.Graph)...)
+	}
 	if len(issues) > 0 {
 		err := reportDryRunIssues(w, path, issues)
 		warnFragmentAdvisories(warnW, path, fragmentAdvisories)
@@ -68,7 +73,7 @@ func dryRunGraphForRuntime(w, warnW io.Writer, path string, inputs map[string]st
 	printAutoApproved(w, autoApprove)
 	noteCodexRuntimePolicy(w, runtime, g, handWrittenNodes)
 
-	if issues := inputIssues(g, inputs); len(issues) > 0 {
+	if issues := append(inputIssues(g, inputs), gateDescriptionInputIssues(g, inputs)...); len(issues) > 0 {
 		return reportDryRunIssues(w, path, issues)
 	}
 	fmt.Fprintf(w, "\ndry run: validation passed — no node was executed\n")

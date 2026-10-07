@@ -470,3 +470,48 @@ func TestLintGraph_FeedbackReachWarningNamesAllThreeIds(t *testing.T) {
 		t.Errorf("lint with only a feedback-reach warning exited %d, want 0", code)
 	}
 }
+
+// TestLintGraph_GateDescriptionInlineFails: a gate description that would
+// print a model's reply where a person approves is a lint ISSUE, with exit 1,
+// not a warning (#346).
+func TestLintGraph_GateDescriptionInlineFails(t *testing.T) {
+	path := writeGraphFile(t, `
+name: gate-description
+nodes:
+  - { id: build, prompt: build }
+  - id: approve
+    type: gate
+    depends_on: [build]
+    description: "ship {{ artifacts.build | inline }}?"
+`)
+	var out strings.Builder
+	err := lintGraph(&out, io.Discard, path)
+	if err == nil {
+		t.Fatal("an inline token in a gate description must fail lint")
+	}
+	if !strings.Contains(out.String(), `gate "approve": description: {{ artifacts.build | inline }}`) {
+		t.Errorf("report should name the gate and the token:\n%s", out.String())
+	}
+	if !strings.Contains(err.Error(), "1 issue found") {
+		t.Errorf("error should carry the issue count: %v", err)
+	}
+}
+
+// TestLintGraph_GateDescriptionPathPasses: the filterless artifact path and a
+// declared input are what a gate description is for (#346).
+func TestLintGraph_GateDescriptionPathPasses(t *testing.T) {
+	path := writeGraphFile(t, `
+name: gate-description
+inputs: [ticket]
+nodes:
+  - { id: build, prompt: build }
+  - id: approve
+    type: gate
+    depends_on: [build]
+    description: "ship {{ inputs.ticket }} from {{ artifacts.build }}?"
+`)
+	var out strings.Builder
+	if err := lintGraph(&out, io.Discard, path); err != nil {
+		t.Fatalf("a path-and-input description must lint clean: %v\n%s", err, out.String())
+	}
+}
