@@ -88,6 +88,27 @@ oh-my-graph run graphs/gated-dev.yaml --input repo="$PWD" \
   --input publish="Push this worktree's branch and open a DRAFT pull request with gh pr create --draft. Put the review in the PR body:"
 ```
 
+`run` and `auto` also take `--input-file <path>` (repeatable): a flat YAML or
+JSON map of input names to values, each value bound verbatim as written, as
+`--input name=value` would bind it. A nested value, a list or a null is refused
+before anything runs.
+
+```yaml
+# inputs.yaml
+repo: /work/oh-my-graph
+task: add a --json flag to runs list
+```
+
+```sh
+oh-my-graph run graphs/self-dev.yaml --input-file inputs.yaml --input task="fix the flaky test"
+```
+
+A later file overrides an earlier one, and `--input` overrides every file
+wherever it sits on the command line. Each key set by more than one source gets
+one line on stderr naming the sources, never the value
+(`input "task": --input overrides inputs.yaml`). `resume` takes the inputs from
+the run's snapshot and never re-reads the file.
+
 Engine-run evidence is established per RUN, not per node: `--verify-cmd`
 attaches your command to the sinks of the plan (ADR 0030), and a planned
 non-sink node carries no engine-run verify at all — its `PASS` is the

@@ -331,6 +331,43 @@ other bodies, and `max` required ≥ 1 — an unbounded loop on a paid runtime i
 unrepresentable). Iteration is a *runtime* phenomenon; full semantics in
 ADR 0010 and under "Execution engine" below.
 
+### Binding inputs — `--input` and `--input-file` (#354)
+
+A graph's inputs are bound on the command line, on `run` and `auto` only:
+`--input k=v` (repeatable) and `--input-file <path>` (repeatable). `resume`,
+`design` and `chat` do not take `--input-file`.
+
+- **The file is a flat map of scalars**, YAML or JSON alike (both are read by
+  yaml.v3's node API, never decoded into Go values). Each value is taken
+  verbatim as written, its scalar's source text: `1.10` stays `1.10`, `0123`
+  stays `0123`, `yes` stays `yes`. Each key must be a string, so a key that
+  reads as a number or a boolean has to be quoted (`"7": x`); it must also be
+  non-empty with no `=`, as `--input` requires.
+- **Refused at load, with nothing run.** A nested map, a list, a null (an empty
+  `k:` included) or an alias as a value; a top level that is not a map (a
+  list, a scalar, an empty document); more than one YAML document (a second
+  one after `---`), rather than silently dropping it; and a key that appears
+  twice in the same file, JSON included, rather than last-one-wins. Each file is loaded while the
+  flags are parsed, so a refusal is a flag-parse error naming the path, exactly
+  as a malformed `--input` is: exit 1, no planner call, no node, no run
+  directory.
+- **Precedence.** Files apply in argv order, a later file over an earlier one,
+  then every `--input` over every file wherever it sits in argv. Every key set
+  by more than one source gets one line on stderr, sorted by key, naming the
+  key and its sources and never a value, since an input may carry a token:
+  `input "<key>": <winner> overrides <overridden, in argv order>`.
+- **Validation after the merge is unchanged.** The merged map is the only one
+  from there on and takes exactly the path `--input` values always took: a
+  `{{ inputs.<name> }}` the merge left unbound is reported by `run --dry-run`
+  and fails its node at run time, a bound key the graph never quotes is
+  accepted as an unused `--input` key is, and `auto`'s planner sees the merged
+  keys.
+- **Resume reads the snapshot, never the file.** The merged values land in
+  `state.json`'s existing inputs (see "Gate nodes and `resume`"); the file is
+  not recorded and not re-read.
+- **There are no per-graph input defaults.** The graph's `inputs: [..]` names
+  what it needs; every value comes from the invocation.
+
 ### Fragments — `use:`/`with:`, resolved by the file loader (ADR 0013, 0027, 0029)
 
 A fragment is a **definition file** with declared substitution points — a
@@ -2098,7 +2135,8 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   crash, but the graph did not complete as declared.
 - `--input` on `resume` is **rejected**. Inputs come from the snapshot; changing
   one mid-run would make the already-persisted artifacts inconsistent with the
-  prompts that produced them. `--concurrency` may be overridden — it is not
+  prompts that produced them. `resume` takes no `--input-file` either, and
+  never re-reads the file a run was launched with (#354). `--concurrency` may be overridden — it is not
   semantic. `--no-web` is accepted with `run`/`auto`'s exact meaning: a
   resumed leg embeds the same live view under the same TTY gate (see "Web
   live view"), and this opts out.
