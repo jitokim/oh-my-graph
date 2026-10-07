@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -20,19 +23,26 @@ import (
 // `--input` value to take: a nested map, a list, a null (an empty `k:` among
 // them) or an alias.
 //
-// A key binds only if `--input` could have bound it: a non-empty string with
-// no '=' (inputFlag.Set splits at the first one). A key that appears twice is
-// refused rather than last-one-wins — yaml.v3 does not refuse it when it
-// unmarshals into a Node, so the mapping's pairs are walked here, and a .json
-// file gets the same check. Every refusal names the path.
+// Each key must be a string scalar, so one that reads as a number or a bool
+// has to be quoted ("7": x); it must also be non-empty with no '=', as
+// `--input` requires (inputFlag.Set splits at the first one). The file must
+// hold a single document — a second one after `---` is refused rather than
+// silently dropped. A key that appears twice is refused rather than
+// last-one-wins — yaml.v3 does not refuse it when it decodes into a Node, so
+// the mapping's pairs are walked here, and a .json file gets the same check.
+// Every refusal names the path.
 func loadInputFile(path string) (map[string]string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("invalid --input-file %q: %w", path, err)
 	}
+	dec := yaml.NewDecoder(bytes.NewReader(data))
 	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	if err := dec.Decode(&doc); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("invalid --input-file %q: not valid YAML or JSON: %w", path, err)
+	}
+	if err := dec.Decode(new(yaml.Node)); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("invalid --input-file %q: more than one YAML document (want a single map of key: value)", path)
 	}
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
 		return nil, fmt.Errorf("invalid --input-file %q: the top level is an empty document (want a map of key: value)", path)

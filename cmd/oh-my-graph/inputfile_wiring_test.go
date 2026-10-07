@@ -185,6 +185,7 @@ func TestInputFile_RefusesAtLoadBeforeAnything_354(t *testing.T) {
 		"non-map top":   {"- repo\n- ticket\n", "the top level is a list"},
 		"json non-map":  {`["repo"]`, "the top level is a list"},
 		"json null val": {`{"repo": null}`, `key "repo" is null`},
+		"second doc":    {"repo: /x\n---\ntask: do it\n", "more than one YAML document"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			home := isolateRunHome(t)

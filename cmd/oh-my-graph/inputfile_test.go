@@ -132,3 +132,8 @@ func TestLoadInputFile_RefusesMissingFile_354(t *testing.T) {
 func TestLoadInputFile_RefusesMalformedFile_354(t *testing.T) {
 	wantInputFileRefusal(t, "in.json", `{"repo": `, "not valid YAML or JSON")
 }
+
+func TestLoadInputFile_RefusesSecondDocument_354(t *testing.T) {
+	wantInputFileRefusal(t, "in.yaml", "repo: /x\n---\ntask: do it\n", "more than one YAML document")
+	wantInputFileRefusal(t, "in.yaml", "repo: /x\n---\n", "more than one YAML document")
+}
