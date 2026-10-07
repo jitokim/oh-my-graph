@@ -53,7 +53,7 @@ var falsifiedByADR0032 = []falsified{
 		name:      `"no planned node gets that any more"`,
 		absolute:  regexp.MustCompile(`no planned node gets that any more`),
 		qualifier: optIn,
-		address: "internal/coordinator/coordinator.go:879-882 — toolPolicyFor sets " +
+		address: "internal/coordinator/coordinator.go:901-904 — toolPolicyFor sets " +
 			"policy.SettingSources = nil when the run typed --accept-loaded-user-config, " +
 			"so every planned node of such a run does get the operator's configuration",
 		anchors: []string{"if loadedUserConfig {"},
@@ -62,7 +62,7 @@ var falsifiedByADR0032 = []falsified{
 		name:      "\"as every planned node's has\", of `--strict-mcp-config`",
 		absolute:  regexp.MustCompile(`as every planned node('s)? (always )?has`),
 		qualifier: optIn,
-		address: "internal/coordinator/coordinator.go:879-882 sets policy.StrictMCPConfig = false " +
+		address: "internal/coordinator/coordinator.go:901-904 sets policy.StrictMCPConfig = false " +
 			"under --accept-loaded-user-config, and internal/runner/claude_protocol.go:65-67 " +
 			"emits --strict-mcp-config only when it is true, so such a node's argv carries none",
 		anchors: []string{"if loadedUserConfig {", "if policy.StrictMCPConfig {"},
@@ -123,9 +123,9 @@ var statedByShippedBehaviour = []stated{
 			regexp.MustCompile(`branchEvidenceRule`),
 			regexp.MustCompile(`The pattern itself is unchanged`),
 		},
-		address: "internal/coordinator/coordinator.go:1973-1980 — branchEvidenceRule reserves PASS " +
+		address: "internal/coordinator/coordinator.go:2006-2013 — branchEvidenceRule reserves PASS " +
 			"for the assertion holding and nothing a reader would act on differently, and sends " +
-			"anything else into the FAIL branch; internal/coordinator/coordinator.go:2051 — the " +
+			"anything else into the FAIL branch; internal/coordinator/coordinator.go:2083 — the " +
 			"pattern the same paragraph hands out is unchanged, anchored at both ends",
 		anchors: []string{
 			"markdown. Anything the node does need to report goes in the FAIL branch,",

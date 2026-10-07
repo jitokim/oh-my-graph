@@ -301,6 +301,10 @@ type Coordinator struct {
 	// of. What it changes is toolPolicyFor's layers 1 and 4, and nothing else.
 	loadedUserConfig bool
 	interviewPrefix  string // ADR 0044 §2.2 — see WithInterviewPrefix (interviewer.go)
+	// reuseOff turns the reuse catalog off (ADR 0038 §2.5), set via
+	// WithoutReuse: no scan, no menu in the planner prompt, and reuse:
+	// refused by its disposition case exactly as when nothing is admitted.
+	reuseOff bool
 }
 
 // Option configures a Coordinator at construction.
@@ -360,6 +364,16 @@ func WithoutAgentsNamed(names ...string) Option {
 // run's ceiling.
 func WithoutSkillActivation() Option {
 	return func(c *Coordinator) { c.skillActivationOff = true }
+}
+
+// WithoutReuse turns off the reuse catalog for every Plan call (ADR 0038
+// §2.5). Reuse is on by default: each planning call scans
+// <invocation root>/graphs/fragments/ once and offers the admitted shapes as a
+// menu. Off, the catalog is never read and the planner prompt carries no menu,
+// so the run plans exactly as one whose catalog admitted nothing. Like the
+// other opt-outs here it only removes: no option turns a menu on.
+func WithoutReuse() Option {
+	return func(c *Coordinator) { c.reuseOff = true }
 }
 
 // WithLoadedUserConfig states that this run's planned nodes load the
@@ -505,7 +519,10 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 		return Plan{}, err
 	}
 
-	base, err := c.plannerBase(goal, inputKeys, remaining)
+	// The catalog is scanned inside this render and nowhere else; catalog is
+	// held for the whole loop below, so a repair is judged against the menu
+	// the base it was built from showed.
+	base, catalog, err := c.plannerBase(goal, inputKeys, remaining)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -513,7 +530,7 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 	spent := callAccounting{}
 	var repaired *PlanRepair
 	for attempt := 0; ; attempt++ {
-		plan, accounting, refusal := c.attemptPlan(ctx, goal, prompt, nil)
+		plan, accounting, refusal := c.attemptPlan(ctx, goal, prompt, catalog.Offered)
 		spent.add(accounting)
 		if refusal == nil {
 			// The sum, never the last call alone: three ADRs claim planning
@@ -552,9 +569,14 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 // which final-check paragraph the planner is given (ADR 0016 §5), and a repair
 // attempt must be given the same one the first attempt was — a repair that
 // re-planned against the other paragraph would be answering a different
-// question than the one that was refused.
-func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyCommandSupplied bool) (string, error) {
-	prompt := plannerPrompt(goal, inputKeys, verifyCommandSupplied)
+// question than the one that was refused. offered travels for the same
+// reason: it is the menu this base shows, and every attempt built from the
+// base is judged against it.
+func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyCommandSupplied bool, offered []ReuseEntry) (string, error) {
+	prompt, err := plannerPrompt(goal, inputKeys, verifyCommandSupplied, offered)
+	if err != nil {
+		return "", err
+	}
 	if remaining == "" {
 		return prompt, nil
 	}
@@ -1834,7 +1856,12 @@ var plannerRetryCauses = graph.RetryCauses()
 // the exact sets validation enforces so a well-behaved plan validates on the
 // first try. Enforcement does not depend on the planner reading or following
 // this text.
-func plannerPrompt(goal string, inputKeys []string, verifyCommandSupplied bool) string {
+//
+// offered is the reuse menu (ADR 0038 §2.2), rendered by reuseMenuBlock
+// directly after the reply shape that describes a node's fields and before the
+// rules (§9.5), and omitted entirely when it is empty. The error is the menu's
+// fence failing to mint a nonce.
+func plannerPrompt(goal string, inputKeys []string, verifyCommandSupplied bool, offered []ReuseEntry) (string, error) {
 	keys := "none"
 	if len(inputKeys) > 0 {
 		sorted := append([]string(nil), inputKeys...)
@@ -1852,14 +1879,19 @@ func plannerPrompt(goal string, inputKeys []string, verifyCommandSupplied bool) 
 	// That is also why the pattern is no longer an argument of the outer
 	// template: the template's %[4]s takes the RENDERED paragraph, and the
 	// retry causes keep %[5]s.
-	finalCheck := fmt.Sprintf(paragraph, strconv.Quote(plannedVerdictPattern))
+	finalCheck := fmt.Sprintf(paragraph, strconv.Quote(plannedVerdictPattern), reportingShapePointer(offered))
+	menu, err := reuseMenuBlock(offered)
+	if err != nil {
+		return "", err
+	}
 	return fmt.Sprintf(plannerPromptTemplate,
 		goal,
 		keys,
 		strings.Join(plannedToolAllowlist, ", "),
 		finalCheck,
 		strings.Join(plannerRetryCauses, ", "),
-	)
+		menu,
+	), nil
 }
 
 // finalCheckWithoutVerifyCommand / finalCheckWithVerifyCommand are the two
@@ -1899,8 +1931,9 @@ const (
 
 // branchEvidenceRule is the branch half of the final-check paragraph, shared
 // by both spellings because it is one prompt and the rule does not depend on
-// who gathers build evidence. It carries the single %s the verdict pattern
-// renders into, so it must appear exactly once per rendered paragraph.
+// who gathers build evidence. It carries two verbs, in order: the %s the
+// verdict pattern renders into, and the %s reportingShapePointer fills — so it
+// must appear exactly once per rendered paragraph.
 //
 // It asks for evidence that belongs to the REPOSITORY — a pull request, a
 // branch ref — never to a checkout. The rule used to mandate
@@ -1995,13 +2028,12 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
   node's output IS the evidence its reader judges. OR a PREFIX verdict —
   a "result_matches" anchored at the START only, carrying no trailing
   dollar sign, and wrapping the token in the SAME decoration class the
-  whole-reply pin above carries, so it reads like the shipped reporting
-  node at graphs/fragments/read-and-report.yaml rather than a bare
-  "^RECORDED" — a model writes "**RECORDED**" unbidden, a bare anchor
-  fails on it, and that false FAIL is the very thing this rule exists to
-  stop. The node's prompt must ALSO name the decorated spelling as wrong,
-  the way that fragment does. So the report itself survives in
-  the reply. If you choose the prefix verdict, the prompt must demand the
+  whole-reply pin above carries rather than leaving a bare "^RECORDED" —
+  a model writes "**RECORDED**" unbidden, a bare anchor fails on it, and
+  that false FAIL is the very thing this rule exists to stop. The node's
+  prompt must ALSO name the decorated spelling as wrong. So the report
+  itself survives in the reply.
+%s  If you choose the prefix verdict, the prompt must demand the
   verdict token as the FIRST characters of the reply and put the report
   AFTER it. That ordering is the whole of it: the engine compiles your
   pattern with no flags, so "^" anchors to the start of the WHOLE reply
@@ -2077,7 +2109,7 @@ prose before or after:
   ]
 }
 
-Rules:
+%[6]sRules:
 - Use 1 to 6 nodes. depends_on must be acyclic; a node with no dependencies
   omits depends_on.
 - A node reads a parent's result by writing {{ artifacts.<parent-id> }} in its
@@ -2087,7 +2119,7 @@ Rules:
   claude session, then "session". A "session" node must have exactly one
   parent.
 - Every node MUST set allowed_tools to a non-empty list drawn ONLY from this
-  exact set: %s
+  exact set: %[3]s
   Pick just the tools that node needs (least privilege). Any tool outside
   this set, an empty list, or a bare "Bash" / "Bash(*)" will be rejected —
   there is no other Bash pattern available, so a node needing a different

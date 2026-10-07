@@ -3098,7 +3098,13 @@ exact `plannedToolAllowlist` member; no node declares `permission_mode`; and
 the fragment raises no loader advisory and has no description line shaped like
 a fence marker (`fence.LooksLikeMarker`). The catalog is read from
 `<invocation root>/graphs/fragments/`, and on this repository it admits
-`read-and-report` alone.
+`read-and-report` alone. Each planning call scans it once, inside the call that
+renders the planner prompt (`plannerBase`), and shows what it admitted as a
+fenced menu directly after the reply shape — id, contributes, binds and
+summary, never a path — omitted entirely when nothing is admitted. The reply
+and its repair are judged against that held set, never a re-scan.
+`coordinator.WithoutReuse` turns reuse off: no scan, no menu, and `reuse:`
+refused as when nothing is offered.
 
 Both mechanisms apply ONLY to coordinator-planned graphs; hand-written YAML
 (`oh-my-graph run`) is human-authored/reviewed, passes a nil deny list, and is

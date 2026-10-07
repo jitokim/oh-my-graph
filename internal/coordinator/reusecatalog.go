@@ -158,6 +158,16 @@ func scanReuseCatalog(invocationDir string) (ReuseCatalog, error) {
 	return catalog, nil
 }
 
+// reuseCatalog is the catalog one planning call offers: the scan of this
+// Coordinator's invocation root, or nothing at all when reuse is off — in
+// which case the directory is never read. plannerBase is its one caller.
+func (c *Coordinator) reuseCatalog() (ReuseCatalog, error) {
+	if c.reuseOff {
+		return ReuseCatalog{}, nil
+	}
+	return scanReuseCatalog(c.invocationDir)
+}
+
 // admitReuseFragment applies every admission rule to one file and returns
 // either its entry or the first rule it failed.
 func admitReuseFragment(graphDir, name string) (ReuseEntry, *ReuseSkip) {
