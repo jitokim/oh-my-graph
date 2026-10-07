@@ -2581,7 +2581,7 @@ off.
   `Write`, `Bash(go *)` and `Bash(make *)`: a fragment is repository-authored
   text the committed path opens with nobody reading it first, so it may bring
   no tool that writes a file or runs a command. The check runs at admission
-  (`admitInspection`, `internal/coordinator/reusecatalog.go:240`) and again on
+  (`admitInspection`, `internal/coordinator/reusecatalog.go:243`) and again on
   every spliced node (`checkSplicedNodes`,
   `internal/coordinator/reusesplice.go:145`), which also refuses any
   `permission_mode` there, so a fragment forced past the menu is still
@@ -2597,6 +2597,19 @@ off.
   are legal in a planner reply only: a hand-written graph, a saved
   `graph.json` and a resumed run refuse them (`validateReuseSpliced`). The
   refusal of a planner's `use:`/`with:` is unchanged.
+- **The citing node's other fields.** Beside a single-node shape the citing
+  node may set any field a planned node may, each under its own rule —
+  `handoff`, `timeout`, `retry` and `success_check` ride the splice, and `cwd`
+  is refused, repairably, as on every planned node — and where the node and
+  the shape both set a field, the node's value wins: the fragment loader lays
+  the using node's keys over the shape's body, so `timeout: 5m` beside
+  read-and-report's `10m` runs at 5m. Beside a multi-node shape it may set
+  nothing outside `bind`, `cwd`, `depends_on`, `id`, `reuse` and `worktree`
+  (`graph.MultiNodeCitingKeys`, the splice's own list in the reply's
+  spelling, of which `cwd` and `worktree` then meet their own refusals);
+  `validatePlannedNodeReuse` refuses any other key it wrote,
+  repairably and naming the key, before the splice, and the menu states that
+  rule whenever such a shape is offered.
 - **The pipeline.** `validatePlannedNodes` → the splice
   (`spliceReuse`: re-read and re-hash each cited file, re-admit from those
   bytes, splice with the fragment loader's machinery — which itself refuses
@@ -2633,7 +2646,7 @@ off.
     directory (`cmd.Dir = spec.Cwd`, `internal/runner/cli.go:362`) and passes
     the bare tool names as `--allowedTools` and `--tools`
     (`internal/runner/claude_protocol.go:60` and `:63`, built by
-    `toolPolicyFor`, `internal/coordinator/coordinator.go:925`), with no path
+    `toolPolicyFor`, `internal/coordinator/coordinator.go:927`), with no path
     scope on the rule and no `--add-dir`; `--setting-sources ""` withholds
     settings, not files. `childenv.Scrub` (`internal/runner/cli.go:363`)
     deletes four API-key variables and nothing else. Under `--runtime codex`
@@ -3189,7 +3202,7 @@ turns that rule into a build failure. Current dispositions:
 | `success_check.verify` | **rejected when planner-authored** (`exit_zero`/`result_matches` allowed); trusted code may set it strictly after validation, from the user-supplied `--verify-cmd` string (`coordinator.attachVerifyCommand`, ADR 0016 §2) |
 | `use` | **rejected** — a planner-emitted `use:` would let unreviewed output pick which local file's prompt text, tool grant and verify command get spliced in, and a fragment file in the run's repo is attacker-influencable whenever the repo is untrusted (ADR 0013: trusted code resolves files, the planner never names local resources). Refused at the coordinator's `graph.Parse` boundary |
 | `with` | **rejected** — `use`'s substitution bindings, on the same grounds: dead without a `use:`, and a `with:` on a planned node means the plan tried to reference a fragment at all |
-| `reuse` | constrained — written only by a planned node citing a menu entry: the id of a reusable shape from the menu the plan's prompt showed (ADR 0038), checked against the offered set held from that render, never a re-scan: a file name, a path or an unlisted id is refused, naming the id and listing the menu. The planner picks an id from a menu trusted code built; trusted code resolves the file. A citing node writes no `prompt` and no `allowed_tools` (each is refused beside it), and is exempt from those two emptiness checks and no other. **Rejected** when nothing was offered. Validated by admission (`coordinator/reusecatalog.go`, `admitInspection`: no nested `use:` — a nested file's bytes are not pinned by the digest, so a fragment citing another is skipped as `nested use` and nested fragments are not offered in this slice — then prompt-only slots, `allowed_tools` within the read-only set `Read`, `Glob`, `Grep`, no `permission_mode`, no planner-refused field) and by the splice (`coordinator/reusesplice.go`: re-hash, re-admit, `graph.SpliceReuse` refusing pinned bytes that hold a nested `use:` before any nested file is read, then `checkSplicedNodes`, which runs the read-only tool check again and refuses any `permission_mode` on every spliced node). `graph.json` never holds it: the splice replaces it with the resolved node(s) before the save. Legal in a planner reply only: `graph.ParsePlannerReply` lets it through for `validatePlannedNodeReuse`, and `graph.Validate`'s `validateReuseSpliced` refuses it in a graph file, a saved `graph.json` or a resumed run. **Residual:** nothing confines `Read`, `Glob` and `Grep` to the working directory, so a planted admitted fragment can make its read-only node read any file the user can read (e.g. `~/.ssh/config`) into its report, which stays local in the run directory and flows downstream as an artifact path (see "Auto mode", what admission does not bound) |
+| `reuse` | constrained — written only by a planned node citing a menu entry: the id of a reusable shape from the menu the plan's prompt showed (ADR 0038), checked against the offered set held from that render, never a re-scan: a file name, a path or an unlisted id is refused, naming the id and listing the menu. The planner picks an id from a menu trusted code built; trusted code resolves the file. A citing node writes no `prompt` and no `allowed_tools` (each is refused beside it), and is exempt from those two emptiness checks and no other; one citing a multi-node shape is also refused any key outside `graph.MultiNodeCitingKeys`, naming the key. **Rejected** when nothing was offered. Validated by admission (`coordinator/reusecatalog.go`, `admitInspection`: no nested `use:` — a nested file's bytes are not pinned by the digest, so a fragment citing another is skipped as `nested use` and nested fragments are not offered in this slice — then prompt-only slots, `allowed_tools` within the read-only set `Read`, `Glob`, `Grep`, no `permission_mode`, no planner-refused field) and by the splice (`coordinator/reusesplice.go`: re-hash, re-admit, `graph.SpliceReuse` refusing pinned bytes that hold a nested `use:` before any nested file is read, then `checkSplicedNodes`, which runs the read-only tool check again and refuses any `permission_mode` on every spliced node). `graph.json` never holds it: the splice replaces it with the resolved node(s) before the save. Legal in a planner reply only: `graph.ParsePlannerReply` lets it through for `validatePlannedNodeReuse`, and `graph.Validate`'s `validateReuseSpliced` refuses it in a graph file, a saved `graph.json` or a resumed run. **Residual:** nothing confines `Read`, `Glob` and `Grep` to the working directory, so a planted admitted fragment can make its read-only node read any file the user can read (e.g. `~/.ssh/config`) into its report, which stays local in the run directory and flows downstream as an artifact path (see "Auto mode", what admission does not bound) |
 | `bind` | constrained — written only by a planned node citing a menu entry, as `reuse`'s slot values; its keys must be exactly the cited entry's `binds` (an unlisted slot and a missing slot are separate refusals). Refused without `reuse`, and so whenever nothing was offered. Validated by `validatePlannedNodeReuse` against the held menu, and by admission (`coordinator/reusecatalog.go`), which offers only shapes whose every slot lands in a `prompt:` scalar, so a bound value reaches only text the planner could already write. The splice (`coordinator/reusesplice.go`, through `graph.SpliceReuse`) turns it into the `with:` bindings the fragment loader substitutes, so `graph.json` never holds it |
 | `budget_usd`, `timeout` | allowed |
 | `retry` | constrained — bounded re-runs of an already-ceilinged node, but a planned `max` above `maxPlannedRetries` (3) is rejected: `verify_failed` is a legal cause, so retry count is the one lever planner output still has on an injected evidence command's execution (ADR 0016 §2) |

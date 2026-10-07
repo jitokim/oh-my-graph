@@ -251,3 +251,21 @@ func TestReuseKeys_SingleNodeCitationWithCwdBuysOneRepair(t *testing.T) {
 		t.Errorf("cwd = %q survived the repair", report.Cwd)
 	}
 }
+
+// #338 finding 3c: read-and-report declares timeout 10m and the citing node
+// sets its own. The citing node's value is the one the spliced node keeps —
+// the fragment loader overlays the using node's keys onto the shape's body —
+// and a citing node that sets none keeps the shape's 10m.
+func TestReuseKeys_CitingNodesTimeoutWinsOverTheShapes(t *testing.T) {
+	dir := shippedReadAndReport(t)
+	for extra, want := range map[string]string{`,"timeout":"5m"`: "5m", "": "10m"} {
+		fake, _ := newPlannerFake(runnerOutcome(readAndReportCitingSpec(extra)))
+		plan, err := New(fake, WithInvocationDir(dir)).Plan(context.Background(), "audit the docs", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report, _ := plan.Graph.NodeByID("report"); report.Timeout != want {
+			t.Errorf("citing node %q: spliced timeout = %q, want %q", extra, report.Timeout, want)
+		}
+	}
+}
