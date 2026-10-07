@@ -116,8 +116,9 @@ in the graph's inputs list; it is bound anyway — did you mean "task"?`). `run`
 prints it at load, `--dry-run` included. `auto` prints it on the plan screen,
 `--plan-only` included, but only for a near miss of a name the planned graph
 declares or references as `{{ inputs.<name> }}`: the planner saw every input
-and may simply not need one, so `auto "..." --input repo=$PWD` stays quiet.
-The exit status does not change.
+and may simply not need one, so `auto "..." --input repo=$PWD` stays quiet
+when the plan uses `repo` itself or no input at all. The exit status does not
+change.
 
 Engine-run evidence is established per RUN, not per node: `--verify-cmd`
 attaches your command to the sinks of the plan (ADR 0030), and a planned
