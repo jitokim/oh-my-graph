@@ -25,7 +25,13 @@ type commonRunFlags struct {
 	// inputFiles is `--input-file`, repeatable, in argv order (#354). Each
 	// file is loaded as the flag is parsed; bindInputFiles folds them into
 	// inputs once argv is read, so nothing downstream knows a file existed.
-	inputFiles          inputFileFlag
+	inputFiles inputFileFlag
+	// inputSources maps every bound input key to the source that won it
+	// (#356): "--input", or the --input-file path that bound it last. The
+	// same winner the precedence line names first. Filled by bindInputFiles
+	// for every invocation, with or without a file, so undeclaredInputWarnings
+	// can name where a key the graph does not declare came from.
+	inputSources        map[string]string
 	concurrency         int
 	continueOnFail      bool
 	noWeb               bool
@@ -129,11 +135,9 @@ func (f *inputFileFlag) Set(path string) error {
 //
 // Every key more than one source set gets one line on w, sorted by key, naming
 // the key and the sources and never a value: an input may carry a token, and a
-// precedence note is no reason to print one.
+// precedence note is no reason to print one. Each key's winning source is kept
+// in c.inputSources (#356), for --input-only invocations too.
 func (c *commonRunFlags) bindInputFiles(w io.Writer) {
-	if len(c.inputFiles) == 0 {
-		return
-	}
 	merged := make(inputFlag)
 	sources := make(map[string][]string)
 	for _, file := range c.inputFiles {
@@ -147,7 +151,9 @@ func (c *commonRunFlags) bindInputFiles(w io.Writer) {
 		sources[key] = append(sources[key], "--input")
 	}
 	keys := make([]string, 0, len(sources))
+	winners := make(map[string]string, len(sources))
 	for key, from := range sources {
+		winners[key] = from[len(from)-1]
 		if len(from) > 1 {
 			keys = append(keys, key)
 		}
@@ -159,6 +165,7 @@ func (c *commonRunFlags) bindInputFiles(w io.Writer) {
 		fmt.Fprintf(w, "input %q: %s overrides %s\n", key, winner, strings.Join(overridden, ", "))
 	}
 	c.inputs = merged
+	c.inputSources = winners
 }
 
 // runFlags holds the parsed `run` subcommand options. Kept in its own type so
