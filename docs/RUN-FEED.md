@@ -177,7 +177,30 @@ terminal record: `verdict`, `session_id`, `cost_usd`, `cost_unknown`, `usage`
 `reasoning_output_tokens`), `budget_usd`, `duration`
 in nanoseconds, `artifact_path`, `detail`, `judged` — for executions inside a
 feedback loop (ADR 0010) — `round`, the 1-based round ordinal, absent on any
-execution outside one), and `gate` (`paused_at`, `decisions`).
+execution outside one, and `verification` — see below), and `gate`
+(`paused_at`, `decisions`).
+
+`verification` is a node's record of its `success_check.verify` command as
+the engine ran it ([#332](https://github.com/jitokim/oh-my-graph/issues/332)):
+`command` (as run, after interpolation; the declared text on an interpolation
+error), `exit_code`, `expected_exit_code`, `duration` in nanoseconds, `status`
+and `output_tail` and `output_truncated`. `status` is one of `"passed"` or `"failed"` (the command
+ran to a verdict), or `"timed out"`, `"cancelled"`, `"did not run"`,
+`"interpolation error"` or `"not judged"` (it broke before one). **`exit_code`
+is absent when the command never exited on its own** — never 0 and never a
+sentinel — so test for the key, not its value; a command killed by a signal
+is `"failed"` with no `exit_code`, and `"not judged"` keeps the code
+the command really exited with. `output_tail` is the end of the combined
+output, at most 4096 bytes including a leading `…(earlier output truncated)…`
+marker when cut, and absent when nothing was captured. `output_truncated` is
+`true` when that cut happened — the engine's own measurement, never inferred
+from the marker, which the command could print — and absent when the whole
+output was kept. The record is that of
+the attempt the node's verdict came from, so a retried node shows its final
+attempt. It is absent on a node with no verify, on gates and feedback-loop
+markers, and on a node whose final attempt failed before its verify ran. It
+is an **additive optional block and the schema stays 3**; `resume` carries it
+forward unchanged. No event carries it; the feed schema is unchanged.
 
 `tool_policies` is the per-node execution ceiling of an auto run, keyed by node
 id, and is absent entirely for a `run` of a hand-written graph. Each entry holds

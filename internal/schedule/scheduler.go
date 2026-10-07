@@ -869,7 +869,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 
 	invocation, err := s.buildInvocation(ctx, node, h)
 	if err != nil {
-		return s.recordFail(led, h, node, runner.NodeOutcome{}, s.since(start), 0, err)
+		return s.recordFail(led, h, node, runner.NodeOutcome{}, s.since(start), 0, err, nil)
 	}
 
 	// basePrompt is the interpolated node prompt with nothing appended, kept
@@ -930,7 +930,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 				// coupling for a diagnostic — so the detail says so instead.
 				runErr = fmt.Errorf("%w; cost unknown (killed before reporting)", runErr)
 			}
-			return s.recordFail(led, h, node, outcome, s.since(start), attempt, runErr)
+			return s.recordFail(led, h, node, outcome, s.since(start), attempt, runErr, nil)
 		}
 
 		if outcome.SessionLimited {
@@ -945,6 +945,11 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 		}
 
 		var verdictErr error
+		// This attempt's verification record, declared per attempt so the one
+		// recorded is always the kept attempt's: a retried node keeps its final
+		// attempt's command, and an attempt that never reached its verify
+		// records none rather than an earlier attempt's.
+		var verification *runstate.VerificationRecord
 		if outcome.BudgetExhausted {
 			// claude's own --max-budget-usd killed this node the moment its
 			// running spend crossed budget_usd — a real mid-run cost kill. It
@@ -961,13 +966,13 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 			// them never pays for a command run against the wreckage.
 			verdictErr = evaluateSuccessCheck(node, outcome)
 			if verdictErr == nil {
-				verdictErr = s.verifyEvidence(ctx, node, h, invocation.Cwd)
+				verification, verdictErr = s.verifyEvidence(ctx, node, h, invocation.Cwd)
 			}
 		}
 		if verdictErr == nil {
 			if persistErr := h.PersistOutput(node.ID, outcome.Result, outcome.SessionID); persistErr != nil {
 				s.keepFailedReply(h, node, outcome.Result)
-				return s.recordFail(led, h, node, outcome, s.since(start), attempt, persistErr)
+				return s.recordFail(led, h, node, outcome, s.since(start), attempt, persistErr, verification)
 			}
 			// Budget is judged only after the output has been persisted, so a
 			// node that did useful work before blowing its budget still leaves
@@ -975,7 +980,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 			// semantics are untouched here — only the pass/fail verdict is.
 			verdictErr = evaluateBudget(node, outcome)
 			if verdictErr == nil {
-				return s.recordPass(led, h, node, outcome, s.since(start), attempt, retryingPriorLeg)
+				return s.recordPass(led, h, node, outcome, s.since(start), attempt, retryingPriorLeg, verification)
 			}
 		}
 
@@ -1009,7 +1014,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 		// reacting to node_failed on the event stream never beats the file
 		// onto disk.
 		s.keepFailedReply(h, node, outcome.Result)
-		return s.recordFail(led, h, node, outcome, s.since(start), attempt, finalErr)
+		return s.recordFail(led, h, node, outcome, s.since(start), attempt, finalErr, verification)
 	}
 
 	// Unreachable in practice — the final attempt always records and returns
@@ -1038,7 +1043,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 func (s *Scheduler) evaluateGate(ctx context.Context, node graph.Node, h *handoff.Handoff, led *ledger.RunLedger, start time.Time) error {
 	decision, err := s.gate.Evaluate(ctx, node)
 	if err != nil {
-		return s.recordFail(led, h, node, runner.NodeOutcome{}, s.since(start), 0, fmt.Errorf("gate %q: %w", node.ID, err))
+		return s.recordFail(led, h, node, runner.NodeOutcome{}, s.since(start), 0, fmt.Errorf("gate %q: %w", node.ID, err), nil)
 	}
 
 	switch decision {
@@ -1047,14 +1052,14 @@ func (s *Scheduler) evaluateGate(ctx context.Context, node graph.Node, h *handof
 	case gate.DecisionReject:
 		s.recordGateDecision(node, runstate.GateReject)
 		s.emitEvent(runfeed.Event{Type: runfeed.EventGateRejected, NodeID: node.ID})
-		return s.recordFail(led, h, node, runner.NodeOutcome{}, s.since(start), 0, &rejectSignal{NodeID: node.ID})
+		return s.recordFail(led, h, node, runner.NodeOutcome{}, s.since(start), 0, &rejectSignal{NodeID: node.ID}, nil)
 	case gate.DecisionPause:
 		s.logProgress("⏸ %s  gate paused\n", node.ID)
 		s.emitEvent(runfeed.Event{Type: runfeed.EventGatePaused, NodeID: node.ID})
 		return &pauseSignal{NodeID: node.ID}
 	default:
 		return s.recordFail(led, h, node, runner.NodeOutcome{}, s.since(start), 0,
-			fmt.Errorf("node %q: gate controller returned unknown decision %q", node.ID, decision))
+			fmt.Errorf("node %q: gate controller returned unknown decision %q", node.ID, decision), nil)
 	}
 }
 
@@ -1063,7 +1068,9 @@ func (s *Scheduler) evaluateGate(ctx context.Context, node graph.Node, h *handof
 // event, then returns cause so callers can `return s.recordFail(...)` directly.
 // attempt is the 0-based index of the terminal attempt — i.e. how many retries
 // preceded it (0 for a path that never retries, such as a gate).
-func (s *Scheduler) recordFail(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int, cause error) error {
+// verification is that attempt's success_check.verify record, or nil when it
+// ran none (see verifyEvidence).
+func (s *Scheduler) recordFail(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int, cause error, verification *runstate.VerificationRecord) error {
 	s.settleProgress(node.ID, "✗ %s  FAILED: %s\n", node.ID, cause.Error())
 	rec := failRecord(node, outcome, duration, cause)
 	appendRoundNote(&rec, s.feedback.roundNote(node.ID))
@@ -1071,7 +1078,7 @@ func (s *Scheduler) recordFail(led *ledger.RunLedger, h *handoff.Handoff, node g
 	// isJudgmentFailure here, at the one place a terminal failure is recorded,
 	// so the snapshot carries the same split the in-leg retry quote is gated on
 	// and a later process never has to re-derive it (ADR 0020).
-	s.recordSnapshot(node, rec, h, isJudgmentFailure(cause))
+	s.recordSnapshot(node, rec, h, isJudgmentFailure(cause), verification)
 	s.emitEvent(terminalEvent(runfeed.EventNodeFailed, rec, attempt, s.feedback.roundOf(node.ID)))
 	return cause
 }
@@ -1125,7 +1132,7 @@ func (s *Scheduler) dropFailedReply(h *handoff.Handoff, node graph.Node) {
 // recordPass writes the node's live "✓ PASS" progress line, its ledger row,
 // the same record into the resumable snapshot, and the matching node_passed
 // event, then returns nil so callers can `return s.recordPass(...)` directly.
-func (s *Scheduler) recordPass(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int, coldStart bool) error {
+func (s *Scheduler) recordPass(led *ledger.RunLedger, h *handoff.Handoff, node graph.Node, outcome runner.NodeOutcome, duration time.Duration, attempt int, coldStart bool, verification *runstate.VerificationRecord) error {
 	if outcome.CostUnknown {
 		s.settleProgress(node.ID, "✓ %s  %s  cost unknown  %s\n", node.ID, ledger.VerdictPass, duration.Round(time.Millisecond))
 	} else {
@@ -1135,7 +1142,7 @@ func (s *Scheduler) recordPass(led *ledger.RunLedger, h *handoff.Handoff, node g
 	rec := passRecord(node, outcome, duration, attempt, coldStart)
 	appendRoundNote(&rec, s.feedback.roundNote(node.ID))
 	led.Record(rec)
-	s.recordSnapshot(node, rec, h, false)
+	s.recordSnapshot(node, rec, h, false, verification)
 	s.emitEvent(terminalEvent(runfeed.EventNodePassed, rec, attempt, s.feedback.roundOf(node.ID)))
 	return nil
 }
@@ -1199,7 +1206,7 @@ func (s *Scheduler) recordGateApprove(led *ledger.RunLedger, h *handoff.Handoff,
 		Provenance: passProvenance(node),
 	}
 	led.Record(rec)
-	s.recordSnapshot(node, rec, h, false)
+	s.recordSnapshot(node, rec, h, false, nil)
 	s.recordGateDecision(node, runstate.GateApprove)
 	// A gate is never in a feedback body (validated), so its round is 0.
 	s.emitEvent(terminalEvent(runfeed.EventNodePassed, rec, 0, 0))
@@ -1302,9 +1309,14 @@ func (s *Scheduler) recordRetry(node graph.Node, start time.Time) {
 // judged is meaningful only on a FAIL, where it is isJudgmentFailure's answer
 // about that failure's cause; every other caller passes false, because a PASS
 // and a mid-loop marker have no verdict to have been rendered on them.
-func (s *Scheduler) recordSnapshot(node graph.Node, rec ledger.Record, h *handoff.Handoff, judged bool) {
+//
+// verification is the kept attempt's success_check.verify record (#332), nil
+// for a node that declares none or never reached it — and for a gate.
+func (s *Scheduler) recordSnapshot(node graph.Node, rec ledger.Record, h *handoff.Handoff, judged bool, verification *runstate.VerificationRecord) {
 	artifactPath, _ := h.ArtifactPath(node.ID)
-	if err := s.recorder.RecordNode(node.ID, toNodeRecord(rec, artifactPath, s.feedback.roundOf(node.ID), judged)); err != nil {
+	nodeRecord := toNodeRecord(rec, artifactPath, s.feedback.roundOf(node.ID), judged)
+	nodeRecord.Verification = verification
+	if err := s.recorder.RecordNode(node.ID, nodeRecord); err != nil {
 		s.logProgress("⚠ %s  snapshot write failed: %v\n", node.ID, err)
 	}
 }
@@ -1535,6 +1547,11 @@ func (s *Scheduler) policyFor(node graph.Node) (runner.ToolPolicy, error) {
 // when the evidence holds, or a *NodeCheckError naming the "verify" predicate.
 // A node that declared no verification passes trivially and nothing is spawned.
 //
+// Alongside the verdict it returns the snapshot's record of what the command
+// did (#332) — non-nil exactly when the node declares a verification, whether
+// the command passed, was judged failed, or broke before a verdict — so
+// state.json shows the evidence a PASS was reached on, not only the PASS.
+//
 // nodeCwd is the node's own already-interpolated working directory: a
 // verification runs where its node ran unless it says otherwise, so the common
 // case declares no cwd at all.
@@ -1549,15 +1566,15 @@ func (s *Scheduler) policyFor(node graph.Node) (runner.ToolPolicy, error) {
 // verdict — the interpolation failed, the command could not spawn or timed
 // out — is an Infrastructure fault (verifyFault), so a feedback arc does not
 // spend a whole body re-run on a fault no re-run can repair (ADR 0010).
-func (s *Scheduler) verifyEvidence(ctx context.Context, node graph.Node, h *handoff.Handoff, nodeCwd string) error {
+func (s *Scheduler) verifyEvidence(ctx context.Context, node graph.Node, h *handoff.Handoff, nodeCwd string) (*runstate.VerificationRecord, error) {
 	verification := node.SuccessCheck.Verify
 	if verification == nil {
-		return nil
+		return nil, nil
 	}
 
 	request, err := resolveVerification(node, *verification, h, nodeCwd)
 	if err != nil {
-		return verifyFault(node.ID, err.Error())
+		return unresolvedVerificationRecord(*verification), verifyFault(node.ID, err.Error())
 	}
 
 	if s.serializedVerify[node.ID] {
@@ -1569,11 +1586,14 @@ func (s *Scheduler) verifyEvidence(ctx context.Context, node graph.Node, h *hand
 	}
 
 	s.logProgress("… %s  verifying: %s\n", node.ID, request.Command)
+	started := s.now()
 	result, err := s.verifier.Verify(ctx, request)
+	duration := s.since(started)
 	if err != nil {
-		return verifyFault(node.ID, err.Error())
+		return brokenVerificationRecord(request.Command, *verification, duration, err), verifyFault(node.ID, err.Error())
 	}
-	return judgeVerification(node.ID, *verification, request.Command, result)
+	verdictErr := judgeVerification(node.ID, *verification, request.Command, result)
+	return ranVerificationRecord(request.Command, *verification, duration, result, verdictErr), verdictErr
 }
 
 // resolveVerification turns a declared verification into a runnable request:
