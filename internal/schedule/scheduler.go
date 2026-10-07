@@ -137,7 +137,7 @@ type Recorder interface {
 	RecordGateDecision(gateNodeID string, decision runstate.GateDecision) error
 	// RecordPause is called once per Run(), after in-flight siblings have
 	// drained, when the run stops launching new work at gateNodeID. Unlike the
-	// other two methods, a failure here MUST be treated as fatal by the caller:
+	// other methods, a failure here MUST be treated as fatal by the caller:
 	// a pause whose state was not persisted is an unrecoverable stop and must
 	// not be reported as a clean one (DESIGN.md, "a snapshot write failure at a
 	// gate pause is fatal").
