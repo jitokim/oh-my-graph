@@ -1856,7 +1856,7 @@ incompatible snapshot is refused rather than misread:
   or exited 0. Its keys are `command` (as run, after interpolation),
   `exit_code`, `expected_exit_code` (the node's `expect_exit`, default 0, so a
   reader can judge the exit code without the graph), `duration` (nanoseconds,
-  like the node's own), `status` and `output_tail`. `status` is what the engine
+  like the node's own), `status`, `output_tail` and `output_truncated`. `status` is what the engine
   observed of the command, not the node's verdict: `passed` and `failed` mean
   it ran to a verdict; `timed out`, `cancelled` (halt-on-fail or Ctrl-C while
   it ran), `did not run` (it could not start), `interpolation error` (the
@@ -1871,6 +1871,10 @@ incompatible snapshot is refused rather than misread:
   the END of the combined output, because a check prints its verdict last,
   bounded by `verify.RetainedTail` to 4096 bytes including its
   `…(earlier output truncated)…` marker, and absent when nothing was captured.
+  `output_truncated` is `true` when that bound cut the output, so the tail is
+  only the end of a longer one. It is `RetainedTail`'s own length measurement,
+  never read off the marker, which the command could print itself, and it is
+  absent when the whole output was kept.
   The record describes the attempt whose verdict the node kept, so a retried
   node carries its final attempt's record. It is absent on a node with no
   verify, on a gate or a feedback-loop marker, and on a node whose kept
@@ -3154,16 +3158,29 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   (or "none — the command did not exit on its own", which is also what a
   negative code renders as) and `expected exit code`
   lines from its own record, OUTSIDE the fence, never parsed out of the
-  command's output. The command is planner-authored, so it is cut to 500
-  bytes and Go-quoted onto one line, where a newline in it cannot start a
-  fake marker or a second record. The output tail is the command's own text,
+  command's output. The command is cut to 500 bytes and rendered **verbatim,
+  byte for byte**, whenever it is one plain line: valid UTF-8 with no control
+  character and no Unicode line or paragraph separator. Behind the
+  `  command: ` prefix such a line cannot start a fake marker or a second
+  record, and the assessor sees the exact command it was told about, quotes
+  and backslashes included. Only a command that is not one plain line (a
+  newline, a carriage return, a tab or another control character, a line
+  separator, invalid UTF-8) falls back to a Go-quoted form on one line,
+  labelled `command (escaped — …)`, so nobody reads its escapes as part of
+  the command. The output tail is the command's own text,
   so it goes INSIDE a nonce-fenced `engine verification` block as DATA, like
   an artifact. The blocks render after the node results and before every
   artifact, and their tails share the artifacts' caps (2000 bytes each, 12000
   in total), so a node's own artifact cannot spend the room the engine's
-  observation of it needs. A tail is cut from its head, and the cut is said
-  above the fence (`output: the last N of M bytes; the earlier K bytes were
-  dropped for the material cap`); once the total cap is spent the line reads
+  observation of it needs. A tail is cut from its head, and every cut is said
+  above the fence. When the record's `output_truncated` is set, the engine's
+  own line says so (`output: the command printed more than the engine
+  retains, so the engine kept only the last N bytes of its output; everything
+  earlier was dropped when the check was recorded`). It is written from the
+  record's flag, not the tail's marker, which the command could forge and the
+  material cap could trim away. A further cut for the material cap adds
+  `output: the last N of M bytes; the earlier K bytes were dropped for the
+  material cap`. Once the total cap is spent the line reads
   `output: omitted (total material cap reached)`. The engine-observed lines
   always render: a cap may drop output, never the record that a check
   failed. The assessor prompt gains one sentence: an engine verification
