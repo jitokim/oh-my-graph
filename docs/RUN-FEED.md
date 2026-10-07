@@ -186,13 +186,7 @@ execution outside one, `verification` — see below — and `gate_description`,
 a decided gate's `description:` exactly as its decider was shown it,
 interpolated and sanitised to one line ([#346](https://github.com/jitokim/oh-my-graph/issues/346)),
 absent on every other node and on a gate without one), and `gate`
-(`paused_at`, `paused_gate_description`, `decisions`).
-`paused_gate_description` is the description of the gate named by
-`paused_at`, exactly as the pause printed it and as a decision will record it
-in `gate_description` ([#348](https://github.com/jitokim/oh-my-graph/issues/348));
-it is written together with `paused_at` and is absent when the run is not
-paused, when the paused gate has no description, and in a snapshot written
-before #348.
+(`paused_at`, `decisions`).
 
 `verification` is a node's record of its `success_check.verify` command as
 the engine ran it ([#332](https://github.com/jitokim/oh-my-graph/issues/332)):
