@@ -1139,6 +1139,15 @@ never a back door for a field the planner is refused. With the read-only tool
 subset and all three tests, a planted fragment cannot write a file or run a
 command through its own node.
 
+**Nested `use:` is not admitted in this slice.** A fragment that `use:`s
+another fragment pulls in a file whose bytes the catalog does not pin, so it
+could be swapped between scan and splice without a digest mismatch, and it
+could bring a `permission_mode` past the checks. So admission refuses any
+fragment whose body holds a nested `use:`, and the post-splice backstop
+refuses any `permission_mode`, not only `bypassPermissions`. Nesting comes
+back only with its own design, in which every transitively loaded file is
+pinned and digested.
+
 **What admission does not bound.** A fragment's `prompt:` is the node's
 instructions, not data the node reads. oh-my-graph closes the repository's
 other instruction channels on purpose: runners pass `--setting-sources ""`
@@ -1231,6 +1240,8 @@ One PR, built on `main` at or after `b2517b7`:
     to the splice it is refused there. The command never runs.
   - Each field `validatePlannedNodes` refuses from a planner, declared
     statically in a fragment, keeps the fragment off the menu.
+  - A fragment with a nested `use:` is not admitted, and a spliced node with
+    any `permission_mode` is refused by the backstop.
   - A fragment otherwise inert whose `allowed_tools` holds `Write`, `Edit`,
     `Bash(go *)` or `Bash(make *)` is not admitted, though each is a member
     of `plannedToolAllowlist`.
