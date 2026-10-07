@@ -69,8 +69,10 @@
 #   - Because check-head no longer spends the pin, a check-head reached again
 #     by `resume --retry-failed` (after pr failed, say) passes again while
 #     HEAD still equals the pin.
-#   - A run that stops before pr passes — rejected, stopped before the gate,
-#     or a pr that fails its verify — leaves its ref behind. List them with
+#   - A run whose review passed but that stops before pr passes — rejected
+#     at the gate, stopped at it, or a pr that fails its verify — leaves its
+#     ref behind; one that stops before review passes never wrote one. List
+#     them with
 #     `git for-each-ref refs/omg-approved` and delete one with
 #     `git update-ref -d <ref>`.
 #
