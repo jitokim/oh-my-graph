@@ -4,6 +4,11 @@
 Written before its code. §9.6 lists what the implementation PR owes, and the
 prompt-size measurement §4 requires lands in that same PR.
 
+**Counts in §1–§8 are historical.** They were measured at `e767bd9`, when the
+library held six fragments and none passed admission. §9.1 gives the count on
+`b2517b7`: seven fragments, one admitted. The older figures are left as
+measured, because §2.2.1 and §6 reason from them.
+
 **Where the addresses point.** Read on branch `lane-reuse` at `e767bd9`, the
 `main` this branch left. Every `file:line` below was re-opened against that
 tree rather than copied from the survey brief that preceded this record; where
@@ -1111,7 +1116,17 @@ that costs rather than calling it free.
 **What admission bounds.** A fragment that passes both tests has open slots
 that reach only `prompt:`, tools that are exact members of
 `plannedToolAllowlist` (today `read-and-report` has `Read`, `Grep`, `Glob`),
-and no `permission_mode`. That is not yet enough: a fragment can also carry a
+and no `permission_mode`. That is not yet enough, for two reasons.
+
+First, exact membership is too loose: `plannedToolAllowlist` also holds
+`Edit`, `Write`, `Bash(go *)` and `Bash(make *)`, and the last two run
+arbitrary code. So the tool test is **narrowed for fragments**: an admitted
+fragment's `allowed_tools` must be a subset of the read-only tools `Read`,
+`Glob` and `Grep`. The planned-node ceiling itself does not change; this only
+limits what a fragment may bring. The check runs at admission and again on
+the spliced node.
+
+Second, a fragment can also carry a
 **static** field with no slot in it, and `success_check.verify.command` is
 the dangerous one, a repository-authored shell command the engine itself
 would run. So admission gets a third test: **a fragment that declares any
@@ -1120,8 +1135,9 @@ field a planner may not write is not admitted** (`success_check.verify`,
 `validatePlannedNodes` refuses from a planner, taken from its disposition
 table, not a second list). And the spliced node is run
 through the same planned-node checks as a hand-written one, so the splice is
-never a back door for a field the planner is refused. With all three, a
-planted fragment cannot write a file or run a command through its own node.
+never a back door for a field the planner is refused. With the read-only tool
+subset and all three tests, a planted fragment cannot write a file or run a
+command through its own node.
 
 **What admission does not bound.** A fragment's `prompt:` is the node's
 instructions, not data the node reads. oh-my-graph closes the repository's
@@ -1215,6 +1231,13 @@ One PR, built on `main` at or after `b2517b7`:
     to the splice it is refused there. The command never runs.
   - Each field `validatePlannedNodes` refuses from a planner, declared
     statically in a fragment, keeps the fragment off the menu.
+  - A fragment otherwise inert whose `allowed_tools` holds `Write`, `Edit`,
+    `Bash(go *)` or `Bash(make *)` is not admitted, though each is a member
+    of `plannedToolAllowlist`.
+- `DESIGN.md`'s planned-node field table gains `reuse` and `bind` rows, next
+  to the `use` row that stays **rejected**, saying what §9.2 says: the planner
+  picks an id from a menu trusted code built, trusted code resolves the file,
+  and the residual is named.
 - The prompt-size measurement §4 requires, as a `docs/measurements/` note in
   the form ADR 0022 used: planner prompt tokens with the menu on and off.
 - The CHANGELOG fragment, per ADR 0042.
@@ -1229,5 +1252,6 @@ The symbols in this record are still the addresses that keep. The line
 numbers drifted: on `b2517b7`, `validatePlannedNodes` is at
 `coordinator.go:1020`, `validatePlannedNodeTools` at `:1638`, `plannerPrompt`
 at `:1686`, `plannerPromptTemplate` at `:1902`, and `printPlanForRuntime` at
-`cmd/oh-my-graph/main.go:1355`. "Six fragments" in §1.3, §2.2.1 and §6 now
-reads seven, and "zero of six" reads one of seven.
+`cmd/oh-my-graph/main.go:1355`. The fragment counts in §1–§8 stay as
+measured at `e767bd9` and are marked historical in the header; §9.1 has
+today's.
