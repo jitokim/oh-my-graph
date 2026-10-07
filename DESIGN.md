@@ -362,6 +362,31 @@ A graph's inputs are bound on the command line, on `run` and `auto` only:
   and fails its node at run time, a bound key the graph never quotes is
   accepted as an unused `--input` key is, and `auto`'s planner sees the merged
   keys.
+- **An undeclared key warns, never refuses (#356).** Each bound key the
+  graph's `inputs: [..]` does not name gets one `warning:` line, sorted by key;
+  the key stays bound, and the run and its exit status are exactly what they
+  would have been without it. The line names the key (`%q`-quoted, so a file
+  key carrying an escape sequence prints escaped) and its **winning** source,
+  the same winner the precedence line names first: `--input`, or the
+  `--input-file` path that bound it last, terminal-sanitised. It never prints
+  the value; the values are not even an argument to the check, so no line can
+  carry one by construction:
+  `input "<key>" (from <source>) is not declared in the graph's inputs list; it is bound anyway — did you mean "<name>"?`.
+  The `— did you mean` tail is a near miss only: the declared name at the
+  smallest Levenshtein distance from the key, counted in runes, within 2 for a
+  key of 4 runes or more, within 1 for 3 runes, and never for 2 or fewer; a
+  tie goes to the alphabetically first name. A graph with **no** `inputs:`
+  declares nothing, so every bound key warns. That is the reading `lint`
+  already gives a missing list (every `{{ inputs.<name> }}` in it is an
+  undeclared input), and skipping the check there would leave `run` silent
+  about a key `lint` calls undeclared. `run` prints the lines on stderr at
+  load, beside the other load-time warnings and before anything spawns, and
+  `run --dry-run` prints the same ones. `auto` has no graph until the planner
+  writes one, so the plan screen judges the bound keys against the PLANNED
+  graph's `inputs:` and prints them at the head of its warning block,
+  `--plan-only` included. Across a goal loop every cycle's plan is judged,
+  but each key warns once, on the first cycle whose plan leaves it out; the
+  binding is the same on every cycle. `chat` binds no inputs and judges none.
 - **Resume reads the snapshot, never the file.** The merged values land in
   `state.json`'s existing inputs (see "Gate nodes and `resume`"); the file is
   not recorded and not re-read.
