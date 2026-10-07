@@ -149,6 +149,12 @@ var nodeFieldDispositions = map[string]fieldRule{
 		probeJSON:      `"cwd":"/tmp/elsewhere"`,
 		reasonContains: "cwd",
 	},
+	"Description": {
+		disposition:    rejected,
+		why:            "a gate's sentence to the person deciding it (#346), and a planner may not write a gate (ADR 0039: a gate is authored, not attached) — so it is refused on every planned node, beside a planned gate's own refusal and on any other node, where graph.Validate would refuse it at load anyway. graph.ParsePlannerReply leaves that load refusal to validatePlannedNodeDescription so the planner is told in the coordinator's words",
+		probeJSON:      `"description":"approve the merge"`,
+		reasonContains: "description",
+	},
 	"Agent": {
 		disposition:    rejected,
 		why:            "would let the plan choose which subagent's system prompt, tools and model run the node, routing around layers 0-3",

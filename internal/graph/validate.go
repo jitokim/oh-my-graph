@@ -59,6 +59,19 @@ type UnsplicedReuseError struct{ GraphValidationError }
 // UnresolvedFragmentError's Unwrap gives.
 func (e *UnsplicedReuseError) Unwrap() error { return &e.GraphValidationError }
 
+// MisplacedDescriptionError is a `description:` on a node that is not a gate
+// (#346). A description is what a person reads when deciding a gate, so on any
+// other node it is text nobody will ever be shown. Its own type so
+// ParsePlannerReply can pass it through for the coordinator to judge — a
+// planner may not write a description on any node, gate or not, and refusing
+// it there names the planner's fault in the same words as its neighbours —
+// while every other path refuses it here.
+type MisplacedDescriptionError struct{ GraphValidationError }
+
+// Unwrap exposes the embedded GraphValidationError, for the reason
+// UnresolvedFragmentError's Unwrap gives.
+func (e *MisplacedDescriptionError) Unwrap() error { return &e.GraphValidationError }
+
 // validTypes and validHandoffs are the closed sets a node's type/handoff may
 // take. Kept as maps so membership is a single lookup and the error message can
 // list the allowed values.
@@ -107,7 +120,8 @@ func (g *Graph) Validate() error {
 //  1. every node id is non-empty, unique, and a single safe path element;
 //  2. every type/handoff is a known value, and a declared permission_mode is
 //     one the `claude` CLI accepts — an unvalidated typo reached argv and
-//     failed the node at spawn, mid-run, a long way from the typo;
+//     failed the node at spawn, mid-run, a long way from the typo — and a
+//     description is declared on a gate only (#346);
 //  3. every depends_on id refers to a real node;
 //  4. the depends_on relation is acyclic (DFS three-colour);
 //  5. a session-handoff node has exactly one parent — the session it resumes
@@ -153,6 +167,7 @@ func (g *Graph) Issues() []error {
 	issues = append(issues, g.validateNodesUnique()...)
 	issues = append(issues, g.validateNodeIDs()...)
 	issues = append(issues, g.validateEnums()...)
+	issues = append(issues, g.validateDescriptions()...)
 	issues = append(issues, g.validateDependenciesExist()...)
 	issues = append(issues, g.validateAcyclic()...)
 	issues = append(issues, g.validateHandoffConstraints()...)
@@ -165,6 +180,24 @@ func (g *Graph) Issues() []error {
 	issues = append(issues, g.validateReuseSpliced()...)
 	issues = append(issues, g.validateFeedback()...)
 	issues = append(issues, g.validateFeedbackPlaceholders()...)
+	return issues
+}
+
+// validateDescriptions refuses a `description:` on any node that is not
+// `type: gate` (#346). Only a gate is decided by a person, so a description
+// anywhere else would be read by nobody, and an author who wrote one most
+// likely meant the node to be a gate.
+func (g *Graph) validateDescriptions() []error {
+	var issues []error
+	for _, n := range g.Nodes {
+		if n.Description == "" || n.Type == TypeGate {
+			continue
+		}
+		issues = append(issues, &MisplacedDescriptionError{GraphValidationError{
+			NodeID: n.ID,
+			Reason: fmt.Sprintf("node declares description, which is valid only on type: %s (this node is type: %s)", TypeGate, n.Type),
+		}})
+	}
 	return issues
 }
 

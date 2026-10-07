@@ -1038,6 +1038,8 @@ func toolName(rule string) string {
 //   - no planned node may set cwd (validatePlannedNodeCwd);
 //   - no planned node may set success_check.verify
 //     (validatePlannedNodeVerify);
+//   - no planned node may set description, gate or not
+//     (validatePlannedNodeDescription, #346);
 //   - no planned node may set agent (validatePlannedNodeAgent);
 //   - no planned node may set worktree (validatePlannedNodeWorktree);
 //   - no planned node may declare a feedback max above
@@ -1219,6 +1221,7 @@ func plannedNodeRefusals(node graph.Node, declared []string, offered []ReuseEntr
 	add(validatePlannedNodeID(node))
 	add(validatePlannedNodeCwd(node))
 	add(validatePlannedNodeVerify(node))
+	add(validatePlannedNodeDescription(node))
 	add(validatePlannedNodeAgent(node))
 	add(validatePlannedNodeWorktree(node))
 	add(validatePlannedNodeFeedback(node))
@@ -1717,6 +1720,22 @@ func validatePlannedNodeAgent(node graph.Node) *PlanError {
 	}
 	return &PlanError{
 		Reason: fmt.Sprintf("planned node %q requested agent %q; auto mode never runs a planned node as one of your subagents", node.ID, node.Agent),
+	}
+}
+
+// validatePlannedNodeDescription rejects a planned node that writes a
+// description (#346). The field is a gate's sentence to the person deciding
+// it, and a planner may not write a gate at all (ADR 0039: a gate is
+// authored, not attached), so on a planned node it is refused whatever the
+// type: beside a planned gate, which is refused too, and on any other node,
+// where graph.Validate would refuse it anyway — graph.ParsePlannerReply
+// leaves that refusal to this one, so the planner reads it in these words.
+func validatePlannedNodeDescription(node graph.Node) *PlanError {
+	if node.Description == "" {
+		return nil
+	}
+	return &PlanError{
+		Reason: fmt.Sprintf("planned node %q wrote a description; only a hand-written gate carries one, and auto mode never plans a gate", node.ID),
 	}
 }
 
