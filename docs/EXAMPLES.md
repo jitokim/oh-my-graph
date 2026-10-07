@@ -789,10 +789,15 @@ one bot's — a human's `CHANGES_REQUESTED` counts, and does not clear on a push
 that requested changes, a run awaiting approval, a conflicting branch and a
 rate-limited bot are reported as `LATCHED <what>; unblock: <act>`, which fails
 the node at once instead of spending the timeout (ADR 0021).
-Its merge verdict is deliberately two-valued: the node
-passes on `MERGED <sha>` and equally on `WITHHELD <reason>`, because declining
-to merge past an unfinished review is the graph working. So a green run of
-this one graph is not proof that anything landed — read `merge`'s artifact
+Its merge verdict is deliberately two-valued, `MERGED <sha>` or
+`WITHHELD <reason>`, because declining to merge past an unfinished review is
+the graph working. But the node does not take its own word for which: it
+checks the PR on GitHub against `recheck`'s verdict. After `RECHECKED <sha>`
+it passes only if the PR is merged at exactly that SHA, so a denied or
+refused merge fails the run; after `UNSETTLED` it passes only if the PR is
+still open. So a green run of this graph means the PR landed at the SHA
+`recheck` judged, or was deliberately left open after an `UNSETTLED` recheck
+— read `merge`'s artifact to see which
 (see [LIMITATIONS](LIMITATIONS.md#known-limitations)).
 
 The `auto` equivalent — no hand-written graph, just the goal:

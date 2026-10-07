@@ -116,9 +116,14 @@ has no open issue behind it.
   difference between checks that concluded green and checks that were still
   moving when the wait ran out. (Its third verdict, `LATCHED <sha>`, is not in
   this gap: it fails the node on purpose, so it shows up as a red row that
-  names the act on its first line.) So a green run of that graph is **not** by
-  itself evidence
-  that anything landed, or even that anything was checked. The ledger prints
+  names the act on its first line.) Since #334 `merge` narrows its half of the
+  gap: it also checks the PR on GitHub against `recheck`'s verdict, so a
+  `WITHHELD` passes only after an `UNSETTLED` recheck with the PR still open,
+  and after `RECHECKED <sha>` the node passes only if the PR is merged at
+  exactly that SHA — a denied or refused merge fails the run. So a green run
+  of that graph is **not** by itself evidence that anything landed, or that
+  the checks concluded: it means the PR landed at the SHA `recheck` judged,
+  or was left open because the checks were still moving. The ledger prints
   `PASS` either way; only the node's artifact (`<run-id>/merge.out`,
   `<run-id>/recheck.out`) says which. Read it, or `git log`. The
   engine has no notion of a "partial" verdict to print instead, and inventing
