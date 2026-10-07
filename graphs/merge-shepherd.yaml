@@ -486,8 +486,10 @@ nodes:
         6. Record what you fetched, in the worktree's own per-worktree ref:
            `git -C /tmp/shepherd-triage-{{ inputs.pr }} update-ref refs/worktree/omg-shepherd-sha SHA`
         7. `gh pr view {{ inputs.pr }} --json isCrossRepository --jq .isCrossRepository`
-           — if it prints `true`, the PR comes from a fork, and pushing
-           BRANCH would create or move a same-named branch in the BASE
+           — continue ONLY if the command succeeded and printed exactly
+           `false`. Anything else (`true`, an error, empty or unexpected
+           output) means the PR may come from a fork, and pushing BRANCH
+           would create or move a same-named branch in the BASE
            repository. Do NOT push and apply nothing; answer BLOCKED fork PR.
            First clean up:
            `git worktree remove --force /tmp/shepherd-triage-{{ inputs.pr }}`
@@ -506,8 +508,8 @@ nodes:
           SYNCHRONOUSLY, waiting for the exit code, never in the
           background), commit there staging ONLY the files you changed by
           explicit path (`git -C /tmp/shepherd-triage-{{ inputs.pr }} add
-          <path> ...` — never `git add -A`/`.`/`-u`), and push — never
-          when step 7 printed `true`. The worktree
+          <path> ...` — never `git add -A`/`.`/`-u`), and push — only
+          when step 7 succeeded and printed exactly `false`. The worktree
           is detached, so push HEAD to the branch by its full ref name:
           `git -C /tmp/shepherd-triage-{{ inputs.pr }} push origin HEAD:refs/heads/BRANCH`.
         - You disagree, or it is out of the PR's scope → reply to that

@@ -624,6 +624,21 @@ func TestMergeShepherd360TriageRefusesForkPRPush(t *testing.T) {
 		t.Errorf("no BLOCKED fork PR instruction names both %q and %q", removeWT, removeRef)
 	}
 
+	// Fail closed (#360 review): the push is allowed only on a verified
+	// `false`; an error, empty or unexpected answer must block like `true`.
+	flat := strings.Join(strings.Fields(prompt), " ")
+	for _, want := range []string{
+		"continue ONLY if the command succeeded and printed exactly `false`",
+		"push — only when step 7 succeeded and printed exactly `false`",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("triage must allow the push only on a verified `false` (missing %q)", want)
+		}
+	}
+	if strings.Contains(flat, "never when step 7 printed `true`") {
+		t.Errorf("triage still blocks only on `true`; it must fail closed")
+	}
+
 	re := regexp.MustCompile(triage.SuccessCheck.ResultMatches)
 	if re.MatchString("BLOCKED fork PR — pushing would write the base repository") {
 		t.Errorf("result_matches %q passes a BLOCKED fork PR verdict", re)
