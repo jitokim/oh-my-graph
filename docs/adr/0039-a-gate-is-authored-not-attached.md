@@ -1,7 +1,8 @@
 # ADR 0039 — A gate is authored, not attached
 
-**Status:** Proposed. Decision record only — no flag, no schema key, no new
-seam, no behaviour change. The question put to this record is
+**Status:** Accepted on 2026-10-07: the answer to shape 1 stays **no**, and
+§9 picks which of shapes 2–4 goes next (#342). Decision record only — no flag, no
+schema key, no new seam, no behaviour change. The question put to this record is
 [#265](https://github.com/jitokim/oh-my-graph/issues/265)'s shape 1, an
 `auto --gate-before-sink` (or `--gate`) that lets trusted code splice a
 `type: gate` into a planned graph after validation the way `--verify-cmd`
@@ -377,3 +378,47 @@ live, cheap and unblocked by this refusal:
   reopen.
 - **The refusal itself** — `internal/coordinator/coordinator.go:1051-1053`, with
   its reason at `:957-959`. Kept.
+
+---
+
+## 9. Acceptance (2026-10-07)
+
+Read against `main` at `4b64b15`. §2's answer stands unchanged: trusted code
+does not attach a `type: gate` to a planned graph, and the planner may not
+write one. None of §7's three reopen conditions has happened.
+
+### 9.1 What goes next: the friction in §3, at the place the user meets it
+
+§3 names the strongest argument in #265 and says it survives this refusal:
+the path that exists (`auto --plan-only`, edit, `run`) asks the user to edit
+**generated JSON**. That is the one cost this record left standing, so it is
+the one to remove first. Shape 4 belongs in the same place, because the
+moment a user runs `--plan-only` to change a plan is the moment the sentence
+is useful, and `auto`'s startup output stays as dense as it is.
+
+**Decision:** one lane, with two parts.
+
+1. `auto --plan-only` also writes the plan as YAML, next to `graph.json`, in
+   the same directory and with the same content. `run` accepts either file.
+   The YAML is a projection of the JSON spec, not a second source: a test
+   loads both and requires the same graph.
+2. The `--plan-only` closing note says, in one sentence, how to add a human
+   gate: edit the YAML, add a `type: gate` node with its `depends_on`, then
+   `run` it. It names the shipped example, `approve-merge` in
+   `graphs/merge-shepherd.yaml`. Nothing is added to `auto`'s startup output.
+
+### 9.2 Not next
+
+- **Shape 3** (`--input-file` or per-graph input defaults) is useful on the
+  `run` path and is a separate decision with its own issue.
+- **Shape 2** (ship a gated graph) waits until 9.1 lands, so that an example
+  graph is written against the edit path users actually take.
+
+### 9.3 Addresses that moved since `a14c24f`
+
+The planned-gate refusal is now `coordinator.go:1081-1083` (its reason is
+still at `:957-959`), `generatedSpecFileName` is used at
+`cmd/oh-my-graph/main.go:1276`, and `notePlanOnlyPreview` is at
+`cmd/oh-my-graph/main.go:873`. ADR 0044's interview landed after this record, and ADR
+0038's reuse menu was accepted after it (its implementation is #340). Neither adds a gate: a spliced fragment node still
+passes `validatePlannedNodes`, which refuses `type: gate`.
