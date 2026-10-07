@@ -798,7 +798,10 @@ one bot's — a human's `CHANGES_REQUESTED` counts, and does not clear on a push
 worktrees `verify` and `triage` test in are never built from git's shared
 `FETCH_HEAD`, which a concurrent fetch can repoint: each node fetches the PR
 head into the named ref `refs/omg-shepherd/pr-<N>/<sha>` and adds the worktree
-detached at that SHA, so two shepherds can run in one repo. An engine-run
+detached at that SHA, so shepherds on different PRs can run in one repo. Two
+runs on the same PR at once are not supported: the worktree directory is per
+PR, so step 0 of one removes the other's worktree and the engine check's EXIT
+trap deletes the ref they share. An engine-run
 `success_check.verify` on each then fails unless the worktree's HEAD is the
 PR's `headRefOid`, and removes the worktree and that run's ref whatever the
 check's result. That check runs only after a passing verdict, so on `FAIL` or
