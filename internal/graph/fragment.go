@@ -1351,6 +1351,16 @@ func loadFragmentFile(name, source string) *loadedFragment {
 	if err != nil {
 		return fileErr(fmt.Sprintf("read fragment file %q: %v", source, err))
 	}
+	return loadFragmentData(name, source, data)
+}
+
+// loadFragmentData is loadFragmentFile's judgment over bytes already read, so a
+// caller that pinned a file by its digest (ADR 0038 §2.3 C.2) judges and
+// splices exactly the bytes it hashed, never a second read of the path.
+func loadFragmentData(name, source string, data []byte) *loadedFragment {
+	fileErr := func(reason string) *loadedFragment {
+		return &loadedFragment{errs: []*FragmentError{{Fragment: name, Source: source, Reason: reason}}}
+	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return fileErr(fmt.Sprintf("fragment file %q does not parse: %v", source, err))
@@ -1603,12 +1613,37 @@ var slotPlaceholderPattern = regexp.MustCompile(`@@reuse-slot:([A-Za-z0-9._-]+)@
 // `handoff: session` body is valid depends on the graph that cites it, which
 // does not exist here.
 func InspectFragment(graphDir, name string) (*FragmentInspection, error) {
-	entryPath := filepath.Join(graphDir, "fragment-inspection.yaml") // never read: only its directory anchors the lookup
+	if err := bareFragmentName(name); err != nil {
+		return nil, err
+	}
+	return inspectLoaded(graphDir, name, loadFragmentFile(name, filepath.Join(graphDir, "fragments", name+".yaml")))
+}
+
+// InspectFragmentData is InspectFragment over bytes the caller already read
+// from <graphDir>/fragments/<name>.yaml — the splice-time re-admission of ADR
+// 0038 §2.3, which must judge the bytes it hashed and nothing read later.
+// Nested citations still resolve from disk, exactly as they would at splice.
+func InspectFragmentData(graphDir, name string, data []byte) (*FragmentInspection, error) {
+	if err := bareFragmentName(name); err != nil {
+		return nil, err
+	}
+	return inspectLoaded(graphDir, name, loadFragmentData(name, filepath.Join(graphDir, "fragments", name+".yaml"), data))
+}
+
+// bareFragmentName refuses a name no use: could resolve.
+func bareFragmentName(name string) error {
 	if !fragmentNamePattern.MatchString(name) {
-		return nil, &FragmentError{Fragment: name,
+		return &FragmentError{Fragment: name,
 			Reason: "a fragment name must be bare (letters, digits, then any of . _ -) — it is the name a use: resolves, so no citation could ever reach this file"}
 	}
-	lf := loadFragmentFile(name, filepath.Join(graphDir, "fragments", name+".yaml"))
+	return nil
+}
+
+// inspectLoaded is the shared back half of InspectFragment and
+// InspectFragmentData: resolve the loaded file from a synthetic citing node and
+// read off what the catalog is built from.
+func inspectLoaded(graphDir, name string, lf *loadedFragment) (*FragmentInspection, error) {
+	entryPath := filepath.Join(graphDir, "fragment-inspection.yaml") // never read: only its directory anchors the lookup
 	if lf.frag == nil {
 		return nil, lf.errs[0]
 	}
