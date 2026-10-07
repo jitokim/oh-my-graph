@@ -226,24 +226,56 @@ func TestInputFile_RefusalTakesTheMalformedInputPath_354(t *testing.T) {
 }
 
 // An unknown key is reported however an unknown --input is today: the two
-// spellings of the same binding produce byte-identical output and outcome.
+// spellings of the same binding produce byte-identical output and the same
+// exit code. Today that is acceptance — nothing checks a bound key against the
+// graph's inputs: [..] — so both exit 0 and a real run still runs the node.
 func TestInputFile_UnknownKeyReportedLikeUnknownInput_354(t *testing.T) {
 	graphPath := writeGraphFile(t, boundGraph)
 	file := writeInputFile(t, "in.yaml", "repo: /x\nticket: T-1\nextra: y\n")
-	type outcome struct{ stdout, stderr, err string }
-	runOnce := func(args ...string) outcome {
+	viaFlagArgs := []string{"--input", "repo=/x", "--input", "ticket=T-1", "--input", "extra=y"}
+	viaFileArgs := []string{"--input-file", file}
+
+	type outcome struct {
+		stdout, stderr, err string
+		code                int
+	}
+	dryRun := func(args []string) outcome {
 		isolateRunHome(t)
 		stdout, stderr, err := runWithInputs(t, firstWordRunner("scan"), append([]string{graphPath, "--dry-run"}, args...)...)
-		o := outcome{stdout: stdout, stderr: stderr}
+		o := outcome{stdout: stdout, stderr: stderr, code: exitCodeForError(err)}
 		if err != nil {
 			o.err = err.Error()
 		}
 		return o
 	}
-	viaFlag := runOnce("--input", "repo=/x", "--input", "ticket=T-1", "--input", "extra=y")
-	viaFile := runOnce("--input-file", file)
+	viaFlag, viaFile := dryRun(viaFlagArgs), dryRun(viaFileArgs)
 	if viaFlag != viaFile {
 		t.Errorf("unknown key reported differently\n--input:      %+v\n--input-file: %+v", viaFlag, viaFile)
+	}
+	if viaFile.code != 0 {
+		t.Errorf("--dry-run exit code = %d, want 0 like an unknown --input", viaFile.code)
+	}
+
+	// A real run: same exit code, the same prompt reaches the node, and the
+	// unknown key is kept in state.json's inputs rather than dropped. Its
+	// stdout names a fresh run id, so only the outcome is compared here.
+	for name, args := range map[string][]string{"--input": viaFlagArgs, "--input-file": viaFileArgs} {
+		home := isolateRunHome(t)
+		fake := firstWordRunner("scan")
+		_, _, err := runWithInputs(t, fake, append([]string{graphPath}, args...)...)
+		if code := exitCodeForError(err); code != 0 {
+			t.Errorf("%s: run exit code = %d (%v), want 0", name, code, err)
+		}
+		if got, want := scanPrompt(t, fake), "scan /x for T-1"; got != want {
+			t.Errorf("%s: prompt = %q, want %q", name, got, want)
+		}
+		snap, err := runstate.Load(filepath.Join(runDirFor(onlyRunID(t, home)), runstate.SnapshotFileName))
+		if err != nil {
+			t.Fatalf("%s: load snapshot: %v", name, err)
+		}
+		if snap.Inputs["extra"] != "y" || len(snap.Inputs) != 3 {
+			t.Errorf("%s: state.json inputs = %v, want all three bindings, extra included", name, snap.Inputs)
+		}
 	}
 }
 
