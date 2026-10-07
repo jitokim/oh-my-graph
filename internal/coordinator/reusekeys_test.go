@@ -2,10 +2,19 @@ package coordinator
 
 import (
 	"context"
+	"io"
+	"os"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jitokim/oh-my-graph/internal/graph"
+	"github.com/jitokim/oh-my-graph/internal/handoff"
+	"github.com/jitokim/oh-my-graph/internal/ledger"
+	"github.com/jitokim/oh-my-graph/internal/runner"
+	"github.com/jitokim/oh-my-graph/internal/schedule"
+	"github.com/jitokim/oh-my-graph/internal/verify"
 )
 
 // withSlot is the fragment loader's substitution token for name, assembled
@@ -131,5 +140,114 @@ func TestReuseKeys_CatalogRecordsMultiNode(t *testing.T) {
 	}
 	if len(got) != 2 || !got["pair"] || got["probe"] {
 		t.Errorf("MultiNode by id = %v, skipped %+v", got, catalog.Skipped)
+	}
+}
+
+// shippedReadAndReport plants the repository's own read-and-report — the
+// single-node shape that declares handoff artifact, timeout 10m and a DONE
+// success_check — so the keys below are judged against the shape as shipped.
+func shippedReadAndReport(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile("../../graphs/fragments/read-and-report.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plantCatalog(t, map[string]string{"read-and-report": string(data)})
+}
+
+// readAndReportCitingSpec is a reply citing read-and-report under the id
+// "report", every slot bound, with extra appended to the citing node.
+func readAndReportCitingSpec(extra string) string {
+	return `{"name":"plan","nodes":[{"id":"impl","prompt":"do it","allowed_tools":["Read"]},` +
+		`{"id":"report","depends_on":["impl"],"reuse":"read-and-report",` +
+		`"bind":{"target":"README.md","question":"what is it"}` + extra + `}]}`
+}
+
+// #338 finding 3b: on a node citing the SINGLE-NODE read-and-report, handoff,
+// timeout, retry and success_check are accepted with no repair, the spliced
+// node carries the citing node's handoff, retry and success_check over the
+// shape's own, and it runs under them: it resumes its parent's session, its
+// first reply fails the citing node's result_matches (the shape's DONE would
+// have passed it), and the citing node's retry re-runs it to a pass.
+func TestReuseKeys_SingleNodeCitationKeepsItsBehaviorKeys(t *testing.T) {
+	dir := shippedReadAndReport(t)
+	fake, _ := newPlannerFake(runnerOutcome(readAndReportCitingSpec(
+		`,"handoff":"session","timeout":"5m","retry":{"max":1,"on":["result_mismatch"]},` +
+			`"success_check":{"exit_zero":true,"result_matches":"^VERIFIED"}`)))
+
+	plan, err := New(fake, WithInvocationDir(dir)).Plan(context.Background(), "audit the docs", nil)
+	if err != nil {
+		t.Fatalf("the citation must be accepted: %v", err)
+	}
+	if plan.Repaired != nil || len(fake.Invocations()) != 1 {
+		t.Fatalf("Repaired = %+v after %d calls, want no repair", plan.Repaired, len(fake.Invocations()))
+	}
+	report, ok := plan.Graph.NodeByID("report")
+	if !ok {
+		t.Fatalf("no report node in %+v", plan.Graph.Nodes)
+	}
+	if report.Handoff != graph.HandoffSession {
+		t.Errorf("handoff = %q, want the citing node's session", report.Handoff)
+	}
+	if report.Retry == nil || report.Retry.Max != 1 || strings.Join(report.Retry.On, ",") != "result_mismatch" {
+		t.Errorf("retry = %+v, want the citing node's", report.Retry)
+	}
+	if report.SuccessCheck.ResultMatches != "^VERIFIED" || !report.SuccessCheck.ExitZero {
+		t.Errorf("success_check = %+v, want the citing node's", report.SuccessCheck)
+	}
+	if !strings.HasPrefix(report.Prompt, "Read README.md") || strings.Join(report.AllowedTools, ",") != "Read,Grep,Glob" {
+		t.Errorf("not spliced: prompt %q tools %v", report.Prompt, report.AllowedTools)
+	}
+
+	var mu sync.Mutex
+	attempts := 0
+	nodes := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"impl":     {Result: "done", SessionID: "s-impl"},
+		"report-1": {Result: "DONE the file says nothing", SessionID: "s-report"},
+		"report-2": {Result: "VERIFIED README.md:1", SessionID: "s-report"},
+	})
+	nodes.KeyFn = func(spec runner.NodeInvocation) string {
+		if spec.Prompt == "do it" {
+			return "impl"
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		attempts++
+		return "report-" + strconv.Itoa(attempts)
+	}
+	s := schedule.NewScheduler(nodes, schedule.Options{ProgressWriter: io.Discard, Verifier: verify.NewFakeVerifier(nil), ToolPolicies: plan.ToolPolicies})
+	if err := s.Run(context.Background(), plan.Graph, handoff.New(t.TempDir(), nil), ledger.New("test")); err != nil {
+		t.Fatalf("the spliced node did not run to a pass: %v", err)
+	}
+	if got := strings.Join(nodes.Calls(), ","); got != "impl,report-1,report-2" {
+		t.Errorf("calls = %s, want the citing node's retry to re-run it once", got)
+	}
+	if first := nodes.Invocations()[1]; first.ResumeSession != "s-impl" {
+		t.Errorf("first attempt resumed %q, want the parent's session s-impl", first.ResumeSession)
+	}
+}
+
+// #338 finding 3b: cwd on a node citing read-and-report is refused as a
+// repairable refusal — the cwd rule every planned node meets — and the
+// corrected reply passes after exactly one re-plan.
+func TestReuseKeys_SingleNodeCitationWithCwdBuysOneRepair(t *testing.T) {
+	dir := shippedReadAndReport(t)
+	fake, _ := newRepairFake(
+		runnerOutcome(readAndReportCitingSpec(`,"cwd":"docs"`)),
+		runnerOutcome(readAndReportCitingSpec("")),
+	)
+
+	plan, err := New(fake, WithInvocationDir(dir)).Plan(context.Background(), "audit the docs", nil)
+	if err != nil {
+		t.Fatalf("the corrected citation must be accepted: %v", err)
+	}
+	if plan.Repaired == nil || len(plan.Repaired.Issues) != 1 || !strings.Contains(plan.Repaired.Issues[0], `planned node "report" set cwd "docs"`) {
+		t.Fatalf("Repaired = %+v, want exactly the cwd refusal", plan.Repaired)
+	}
+	if n := len(fake.Invocations()); n != 2 {
+		t.Errorf("made %d planner calls, want 2", n)
+	}
+	if report, _ := plan.Graph.NodeByID("report"); report.Cwd != "" {
+		t.Errorf("cwd = %q survived the repair", report.Cwd)
 	}
 }
