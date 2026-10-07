@@ -2561,10 +2561,14 @@ off.
   directory that exists and cannot be listed fails the plan before the
   planner is paid. Each file is admitted or skipped for the FIRST rule it
   fails, in this order, and the reason is the printout's vocabulary:
-  `load error`; `advisory` (any loader advisory over its citation chain);
+  `load error`; `nested use` (any node of the file's own body — the
+  single-node form's node or any `nodes:` entry — carries a `use:`: only
+  the cited file's bytes are digested and pinned, so a nested file could be
+  swapped between scan and splice unseen, and it is refused before that file
+  is read); `advisory` (any loader advisory over the file);
   `description` (a line shaped like a fence marker, or nothing printable
   left); `non-prompt slot` (a substitution slot lands anywhere but a
-  `prompt:` scalar, nested `use:` followed); `tool not read-only` (a declared
+  `prompt:` scalar); `tool not read-only` (a declared
   tool outside `Read`, `Glob`, `Grep`); `permission_mode` (any); and
   `planner-refused field` (`plannedNodeRefusals`, the function behind the
   dispositions table below, on every resolved node). On this repository it
@@ -2576,7 +2580,7 @@ off.
   `Write`, `Bash(go *)` and `Bash(make *)`: a fragment is repository-authored
   text the committed path opens with nobody reading it first, so it may bring
   no tool that writes a file or runs a command. The check runs at admission
-  (`admitInspection`, `internal/coordinator/reusecatalog.go:232`) and again on
+  (`admitInspection`, `internal/coordinator/reusecatalog.go:240`) and again on
   every spliced node (`checkSplicedNodes`,
   `internal/coordinator/reusesplice.go:143`), so a fragment forced past the
   menu is still refused. The planned-node ceiling itself is unchanged.
@@ -2593,7 +2597,8 @@ off.
   refusal of a planner's `use:`/`with:` is unchanged.
 - **The pipeline.** `validatePlannedNodes` → the splice
   (`spliceReuse`: re-read and re-hash each cited file, re-admit from those
-  bytes, splice with the fragment loader's machinery, then every spliced node
+  bytes, splice with the fragment loader's machinery — which itself refuses
+  pinned bytes holding a nested `use:` before resolving anything — then every spliced node
   through `plannedNodeRefusals` again) → `Graph.Validate` → the
   unisolated-path scan (over the planner's unspliced graph) → agent mapping →
   the `--verify-cmd` attachment → skill activation. The splice is the first
@@ -2610,7 +2615,7 @@ off.
   directory scanned, the offered count and the skipped counts by reason, then
   one line per citation with the node, the entry id, the source path and the
   full SHA-256 the record holds:
-  `reuse: scanned <dir> — 1 offered, 6 skipped (non-prompt slot: 3, tool not read-only: 3)`,
+  `reuse: scanned <dir> — 1 offered, 6 skipped (nested use: 1, non-prompt slot: 2, tool not read-only: 3)`,
   then `<node> cites <id> — <path> sha256:<hex>`. The scan line prints even
   when nothing is cited. With reuse off the screen says nothing about reuse,
   and the run is exactly a run from before the catalog existed.
