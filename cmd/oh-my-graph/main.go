@@ -12,7 +12,7 @@
 //
 //	oh-my-graph init [dir]
 //	oh-my-graph run <graph.yaml> [--dry-run] [--auto-approve <gate-id> ...] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
-//	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--no-baseline] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--interview] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
+//	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--no-baseline] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--interview] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation] [--no-reuse]
 //	oh-my-graph lint <graph.yaml>
 //	oh-my-graph design "<goal>" --out <file>
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
@@ -20,7 +20,7 @@
 //	oh-my-graph show <run-id>
 //	oh-my-graph watch <run-id>
 //	oh-my-graph serve [<run-id>] [--port N] [--no-open]   (no run id: the dashboard over every run)
-//	oh-my-graph chat [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
+//	oh-my-graph chat [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation] [--no-reuse]
 //	oh-my-graph version
 //
 // Exit codes: 0 every node passed, 1 the run failed, 2 the run paused and is
@@ -207,7 +207,7 @@ func exitCodeForError(err error) int {
 // under the "usage: " prefix.
 const usageLines = `oh-my-graph init [dir]
        oh-my-graph run <graph.yaml> [--dry-run] [--auto-approve <gate-id> ...] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
-       oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--no-baseline] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--interview] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
+       oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--no-baseline] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--interview] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation] [--no-reuse]
        oh-my-graph lint <graph.yaml>
        oh-my-graph design "<goal>" --out <file>
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
@@ -215,7 +215,7 @@ const usageLines = `oh-my-graph init [dir]
        oh-my-graph show <run-id>
        oh-my-graph watch <run-id>
        oh-my-graph serve [<run-id>] [--port N] [--no-open]   (no run id: the dashboard over every run)
-       oh-my-graph chat [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation]
+       oh-my-graph chat [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation] [--no-reuse]
        oh-my-graph version`
 
 const runtimeUsage = "oh-my-graph [--runtime claude|codex] <command> ..."
@@ -621,6 +621,9 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 	} else {
 		fmt.Fprintln(os.Stdout, "Codex runtime: Claude agent mapping and skill activation are unavailable; the generated plan will show the filesystem sandbox policy used for each node.")
 	}
+	// On both runtimes, and on the coordinator for the goal loop's reason:
+	// every cycle renders the planner prompt afresh, menu included (ADR 0038).
+	options = append(options, reuseOptions(flags.noReuse)...)
 	coord := coordinator.New(nodeRunner, options...)
 	return planAndExecute(ctx, os.Stdout, coord, nodeRunner, flags.commonRunFlags, flags.goal,
 		goalCycleOptions{maxCycles: flags.maxCycles, maxGoalBudgetUSD: flags.maxGoalBudgetUSD}, flags.planOnly, nil,

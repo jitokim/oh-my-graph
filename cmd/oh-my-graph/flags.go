@@ -176,6 +176,10 @@ type autoFlags struct {
 	// answers reach the PLANNER's prompt as fenced text. Like the flag above it
 	// widens nothing, and unlike it the text never reaches a node.
 	interview bool
+	// noReuse is ADR 0038 §2.5's switch: the reuse catalog is ON by default,
+	// and this turns it off — no scan of graphs/fragments/, no menu in the
+	// planner prompt, reuse: refused, no reuse-catalog.json. Off only removes.
+	noReuse bool
 	commonRunFlags
 
 	set *flag.FlagSet
@@ -225,8 +229,25 @@ func newAutoFlags() *autoFlags {
 	f.set.Var(&f.conventionPaths, "conventions", "prefix this file's TEXT to every planned node's prompt, as your conventions (ADR 0041; repeatable, in order — name each file a CLAUDE.md @-import would have reached, since imports are not followed). Text only: no settings, grants, hooks or MCP servers come with it, so the tool ceiling, agent mapping and skill activation are unchanged. Every file is read and validated before the planner call — missing, blank, import-only, duplicate, non-UTF-8, or a rendered prefix over 96 KiB refuses the launch; nothing is truncated. A full-size prefix leaves a node's own prompt about 32 KiB of Linux's 128 KiB limit on one argv string, so a larger prompt (e.g. a big `| inline` artifact) fails to spawn there with E2BIG mid-run rather than at launch. Staged into the run directory (owner-only) and checked by `resume`; NOT carried into a `--plan-only` graph run with `run`. Like any prompt text, it is in each node's argv while the node runs, so other local users can read it from the process table (SECURITY.md)")
 	f.set.BoolVar(&f.interview, "interview", false, "before planning, ask you at most 5 questions on this terminal about what the goal leaves out, and give your answers to the PLANNER as fenced text (ADR 0044). Off by default; needs a terminal on stdin and refuses without one, before any model call. Each question is one paid read-only call, counted in cycle 1's planning cost and the goal's spend. Type /skip to skip a question or /done to stop; an answer over 2000 bytes is refused, never cut. Asked once per goal, not per cycle. The answers reach no planned node, and change no setting, grant or tool. Staged into each run directory (owner-only, hash in state.json, checked by `resume`); with --plan-only, kept beside the saved spec")
 	f.set.BoolVar(&f.noBaseline, "no-baseline", false, "skip the starting-tree baseline (#315, #325): by default `auto` runs --verify-cmd once on the tree as it is and stops (exit 5) when it is red. Pass this when --verify-cmd is an acceptance test of the goal that is red before the change on purpose. Only the baseline is skipped — every sink still runs the same command. Printed at launch. Requires --verify-cmd")
+	f.set.BoolVar(&f.noReuse, "no-reuse", false, noReuseUsage)
 	f.set.BoolVar(&f.acceptNoBuildEvidence, "accept-no-build-evidence", false, "state that this run carries no build evidence, and run anyway (ADR 0030). Without it, `auto` REFUSES to start in a directory where a build system is detected and no --verify-cmd was given — a planned node cannot carry a build command, so such a run's every judgement is the model's about its own work. This is not a verification switch: nothing is being skipped, because nothing was going to run. The choice is written to the run's state.json and printed with the plan, so a reader of that run later learns the absence was chosen. Accepted and inert where no build signal is detected")
 	return f
+}
+
+// noReuseUsage is --no-reuse's description, one string for `auto` and `chat`:
+// a chat graph turn plans through the same coordinator, so the switch means
+// the same thing on both and its help must not drift between them.
+const noReuseUsage = "do not offer the planner your reusable shapes (ADR 0038). By default each planning call scans <repository root>/graphs/fragments/ once, offers only the fragments that pass admission as a menu the planner may cite with reuse:/bind:, and the plan screen names the directory, the offered and skipped counts, and each citation's id, source path and SHA-256, which reuse-catalog.json records beside graph.json. With this flag the catalog is never read: the planner prompt carries no menu, reuse: is refused, and no reuse-catalog.json is written"
+
+// reuseOptions maps --no-reuse onto the coordinator (ADR 0038 §2.5). Reuse is
+// the coordinator's default, so the flag's absence adds nothing and its
+// presence adds WithoutReuse. One function for `auto` and `chat` so the two
+// surfaces cannot map the same flag differently.
+func reuseOptions(noReuse bool) []coordinator.Option {
+	if noReuse {
+		return []coordinator.Option{coordinator.WithoutReuse()}
+	}
+	return nil
 }
 
 // buildDeclaration is what `auto` says about running without build evidence —
