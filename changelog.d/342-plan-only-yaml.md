@@ -1,0 +1,3 @@
+### Added
+
+- **`auto --plan-only` also saves the plan as `graph.yaml`, the file to edit and run.** It sits beside `graph.json` in `~/.oh-my-graph/plans/<id>/`, with the same content, so adding a human gate no longer means editing generated JSON. The closing note prints `oh-my-graph run <graph.yaml>` instead of a `graph.json` command, and says how to add a gate: a `type: gate` node with its `depends_on`, like `approve-merge` in `graphs/merge-shepherd.yaml`. `run` reads exactly the file it is given; running a `graph.json` whose `graph.yaml` beside it no longer matches prints a warning and still runs the JSON. ([#342](https://github.com/jitokim/oh-my-graph/issues/342))
