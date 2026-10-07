@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -92,6 +93,21 @@ func callsWhere(fake *runner.FakeRunner, match func(string) bool) []runner.NodeI
 		}
 	}
 	return calls
+}
+
+// reuseMenuNonce is the per-call token in the reuse menu's fence markers
+// (#338). This command runs from inside a checkout that ships an admissible
+// fragment, so its planner prompt carries the menu, and two renderings of the
+// same prompt differ in that token alone.
+var reuseMenuNonce = regexp.MustCompile(`(?m)^--- (?:end )?reusable shapes ([0-9a-f]{6}) `)
+
+// withoutReuseMenuNonce replaces the menu's fence nonce so two renderings of
+// one planner prompt compare equal everywhere else.
+func withoutReuseMenuNonce(prompt string) string {
+	for _, m := range reuseMenuNonce.FindAllStringSubmatch(prompt, -1) {
+		prompt = strings.ReplaceAll(prompt, m[1], "<NONCE>")
+	}
+	return prompt
 }
 
 func plannerCalls(fake *runner.FakeRunner) []runner.NodeInvocation {
@@ -240,7 +256,7 @@ func TestAutoInterview_DoneAtTheFirstPromptLeavesThePlannerPromptUnchanged(t *te
 	if len(a) != 1 || len(b) != 1 {
 		t.Fatalf("planner calls = %d and %d, want 1 each", len(a), len(b))
 	}
-	if a[0].Prompt != b[0].Prompt {
+	if withoutReuseMenuNonce(a[0].Prompt) != withoutReuseMenuNonce(b[0].Prompt) {
 		t.Errorf("/done at the first prompt changed the planner prompt:\nwithout:\n%s\nwith:\n%s", a[0].Prompt, b[0].Prompt)
 	}
 	if !strings.Contains(out, "exactly what it would be without --interview") {

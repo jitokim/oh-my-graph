@@ -34,6 +34,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/handoff"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/usermodel"
+	"gopkg.in/yaml.v3"
 )
 
 // plannerPermissionMode is the permission mode of every coordinator-owned
@@ -250,6 +251,12 @@ type Plan struct {
 	// (--no-skill-activation), or a Coordinator built with no skill
 	// directories.
 	SkillScan *SkillScan
+	// Reuse is the reuse-catalog disclosure (ADR 0038 §2.5): the directory
+	// scanned, what was offered and skipped, and each citation's id, source
+	// and digest as spliced. Same disclosure contract as AgentMappings: the
+	// caller must print it with the plan, and writes it beside graph.json with
+	// WriteReuseRecord. nil when reuse is off (WithoutReuse).
+	Reuse *ReuseRecord
 }
 
 // Coordinator plans graphs (Plan) and classifies chat turns (Route). Construct
@@ -301,6 +308,10 @@ type Coordinator struct {
 	// of. What it changes is toolPolicyFor's layers 1 and 4, and nothing else.
 	loadedUserConfig bool
 	interviewPrefix  string // ADR 0044 §2.2 — see WithInterviewPrefix (interviewer.go)
+	// reuseOff turns the reuse catalog off (ADR 0038 §2.5), set via
+	// WithoutReuse: no scan, no menu in the planner prompt, and reuse:
+	// refused by its disposition case exactly as when nothing is admitted.
+	reuseOff bool
 }
 
 // Option configures a Coordinator at construction.
@@ -360,6 +371,16 @@ func WithoutAgentsNamed(names ...string) Option {
 // run's ceiling.
 func WithoutSkillActivation() Option {
 	return func(c *Coordinator) { c.skillActivationOff = true }
+}
+
+// WithoutReuse turns off the reuse catalog for every Plan call (ADR 0038
+// §2.5). Reuse is on by default: each planning call scans
+// <invocation root>/graphs/fragments/ once and offers the admitted shapes as a
+// menu. Off, the catalog is never read and the planner prompt carries no menu,
+// so the run plans exactly as one whose catalog admitted nothing. Like the
+// other opt-outs here it only removes: no option turns a menu on.
+func WithoutReuse() Option {
+	return func(c *Coordinator) { c.reuseOff = true }
 }
 
 // WithLoadedUserConfig states that this run's planned nodes load the
@@ -505,7 +526,10 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 		return Plan{}, err
 	}
 
-	base, err := c.plannerBase(goal, inputKeys, remaining)
+	// The catalog is scanned inside this render and nowhere else; catalog is
+	// held for the whole loop below, so a repair is judged against the menu
+	// the base it was built from showed.
+	base, catalog, err := c.plannerBase(goal, inputKeys, remaining)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -513,7 +537,7 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 	spent := callAccounting{}
 	var repaired *PlanRepair
 	for attempt := 0; ; attempt++ {
-		plan, accounting, refusal := c.attemptPlan(ctx, goal, prompt)
+		plan, accounting, refusal := c.attemptPlan(ctx, goal, prompt, catalog.Offered)
 		spent.add(accounting)
 		if refusal == nil {
 			// The sum, never the last call alone: three ADRs claim planning
@@ -523,6 +547,15 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 			plan.CostUnknown = spent.costUnknown
 			plan.Usage = spent.usage
 			plan.Repaired = repaired
+			// The menu's disclosure travels with every plan made while reuse
+			// was on, citing or not; off, Reuse stays nil and nothing about
+			// reuse is printed or written (ADR 0038 §2.5).
+			if !c.reuseOff {
+				if plan.Reuse == nil {
+					plan.Reuse = &ReuseRecord{}
+				}
+				plan.Reuse.Catalog = catalog
+			}
 			return plan, nil
 		}
 		if !refusal.repairable || attempt >= maxPlanRepairAttempts {
@@ -552,9 +585,14 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 // which final-check paragraph the planner is given (ADR 0016 §5), and a repair
 // attempt must be given the same one the first attempt was — a repair that
 // re-planned against the other paragraph would be answering a different
-// question than the one that was refused.
-func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyCommandSupplied bool) (string, error) {
-	prompt := plannerPrompt(goal, inputKeys, verifyCommandSupplied)
+// question than the one that was refused. offered travels for the same
+// reason: it is the menu this base shows, and every attempt built from the
+// base is judged against it.
+func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyCommandSupplied bool, offered []ReuseEntry) (string, error) {
+	prompt, err := plannerPrompt(goal, inputKeys, verifyCommandSupplied, offered)
+	if err != nil {
+		return "", err
+	}
 	if remaining == "" {
 		return prompt, nil
 	}
@@ -598,7 +636,7 @@ func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyC
 // call whose job is to understand this repository. Widening the ceiling here
 // is a product decision about plan quality, not a safety fix, so it is not
 // made silently as part of one.
-func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Plan, callAccounting, *planRefusal) {
+func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string, offered []ReuseEntry) (Plan, callAccounting, *planRefusal) {
 	outcome, err := runAssessorWithSpawnRetry(ctx, c.runner, coordinatorInvocation(prompt))
 	if err != nil {
 		// No reply, so nothing was produced and nothing is repairable: this
@@ -621,7 +659,10 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Pla
 		}}
 	}
 
-	g, err := graph.Parse([]byte(spec))
+	// ParsePlannerReply, not Parse: a planner reply is the one source in which
+	// reuse:/bind: are legal, and validatePlannedNodes below judges them
+	// against offered. Every other structural refusal fires exactly as Parse's.
+	g, err := graph.ParsePlannerReply([]byte(spec))
 	if err != nil {
 		// The unresolved-fragment refusal (ADR 0013) fires HERE, not in
 		// validatePlannedNodes: graph.Validate refuses any node carrying
@@ -659,7 +700,7 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Pla
 		// be a blind retry on a paid runtime rather than a repair.
 		return Plan{}, accounting, &planRefusal{err: fmt.Errorf("generated graph is invalid: %w", err), spec: []byte(spec)}
 	}
-	if issues := validatePlannedNodes(g, outcome.Result); len(issues) > 0 {
+	if issues := validatePlannedNodes(g, outcome.Result, offered); len(issues) > 0 {
 		return Plan{}, accounting, &planRefusal{
 			err:        issues[0],
 			spec:       []byte(spec),
@@ -667,10 +708,35 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Pla
 			repairable: true,
 		}
 	}
+	// FIRST of the post-validation mutations (ADR 0038 §2.3): every reuse:
+	// citation is spliced here, so agent mapping, verify attachment and skill
+	// activation below all see the spliced nodes, and the Spec they write is
+	// the resolved graph. spliceReuse re-reads and re-hashes each cited file,
+	// re-admits the bytes it read, re-applies plannedNodeRefusals to every
+	// spliced node and runs Graph.Validate.
+	//
+	// Not repairable — the citations were judged well-formed above, and what
+	// refuses them here is the file on disk, which no re-plan changes. The
+	// planner's own reply travels as the spec, so the refused plan is kept
+	// under the rejected-spec name like any other.
+	planned := g
+	g, resolved, citations, err := spliceReuse(planned, []byte(spec), offered)
+	if err != nil {
+		return Plan{}, accounting, &planRefusal{err: err, spec: []byte(spec)}
+	}
+	// The graph as it will run must pass the FULL Validate, including the
+	// unspliced-reuse backstop ParsePlannerReply let through: nothing runs a
+	// node that still cites a shape instead of carrying its prompt and tools.
+	if err := g.Validate(); err != nil {
+		return Plan{}, accounting, &planRefusal{err: fmt.Errorf("generated graph is invalid: %w", err), spec: []byte(spec)}
+	}
 	plan := Plan{
 		Graph:        g,
-		Spec:         []byte(spec),
+		Spec:         resolved,
 		ToolPolicies: toolPoliciesByNode(g, c.loadedUserConfig),
+	}
+	if len(citations) > 0 {
+		plan.Reuse = &ReuseRecord{Citations: citations}
 	}
 	// Read ONCE per plan, here, and never per node: the answer is the same for
 	// every node of the run, and a per-node read would put one warning on the
@@ -678,7 +744,8 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Pla
 	// the coordinator and not in internal/runner — CLIRunner is an exec seam and
 	// stays a pure argv/session/output protocol.
 	plan.Model, plan.ModelWarning = c.chosenModel()
-	// Computed HERE, on the planner's own prompts, and deliberately before the
+	// Computed HERE, on the planner's own text — its prompts and bind values,
+	// in the graph from before the splice — and deliberately before the
 	// post-validation steps below, so what it reads is what the planner
 	// actually wrote and every path it reports is one the plan chose.
 	//
@@ -686,7 +753,7 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string) (Pla
 	// failing it: this is a disclosure, and a paid, valid plan must not be
 	// thrown away because a working directory could not be read.
 	if root, ok := resolveInvocationRoot(c.invocationDir); ok {
-		plan.Unisolated = scanUnisolated(root, goal, g)
+		plan.Unisolated = scanUnisolated(root, goal, planned)
 	}
 	// Strictly after validation: the PLAN may not carry agent: (rejected
 	// above); the coordinator's own trusted mapping is what may add it.
@@ -992,6 +1059,14 @@ func toolName(rule string) string {
 //     docs/measurements/0244-auto-path-sweeps.md);
 //   - no planned node may declare a retry max above maxPlannedRetries
 //     (validatePlannedNodeRetry);
+//   - a planned node may cite a reusable shape with reuse:/bind:
+//     (validatePlannedNodeReuse, ADR 0038) only from offered, the menu its
+//     prompt showed: the id exactly as listed, never a file name or a path,
+//     and bind: keyed by exactly that entry's binds. bind: without reuse:, and
+//     a prompt or allowed_tools written beside reuse:, are refused; with
+//     nothing offered — reuse turned off, or no fragment admitted — reuse: and
+//     bind: are rejected outright. A citing node is exempt from the
+//     empty-prompt and empty-allowed_tools checks above and from no other;
 //   - no planned node may reference a fragment (use:/with:) — refused before
 //     this function ever runs, at Plan's graph.Parse boundary, where
 //     graph.Validate's unresolved-fragment backstop (ADR 0013) is converted
@@ -1017,7 +1092,7 @@ func toolName(rule string) string {
 // The list's ORDER is part of that: graph-level refusals lead, because the
 // repair prompt keeps only the first maxIssuesInPrompt bytes of it. See the
 // comment in the body.
-func validatePlannedNodes(g *graph.Graph, reply string) []*PlanError {
+func validatePlannedNodes(g *graph.Graph, reply string, offered []ReuseEntry) []*PlanError {
 	if len(g.Nodes) == 0 {
 		return []*PlanError{{Reason: "planner produced a graph with no nodes", Output: reply}}
 	}
@@ -1069,33 +1144,88 @@ func validatePlannedNodes(g *graph.Graph, reply string) []*PlanError {
 	// planner is left holding.
 	issues := append(validatePlannedFeedbackReach(g), validatePlannedFeedbackQuoting(g)...)
 	issues = append(issues, validatePlannedArtifactReferences(g)...)
-	add := func(err *PlanError) {
-		if err != nil {
-			issues = append(issues, err)
+	declared := plannedNodeKeys(reply)
+	for i, node := range g.Nodes {
+		var keys []string
+		if i < len(declared) {
+			keys = declared[i]
 		}
-	}
-	for _, node := range g.Nodes {
-		if strings.TrimSpace(node.Prompt) == "" {
-			add(&PlanError{Reason: fmt.Sprintf("planned node %q has an empty prompt", node.ID)})
-		}
-		if node.Type == graph.TypeGate {
-			add(&PlanError{Reason: fmt.Sprintf("planned node %q is a gate node, which auto mode cannot run", node.ID)})
-		}
-		if node.PermissionMode == graph.PermissionBypass {
-			add(&PlanError{
-				Reason: fmt.Sprintf("planned node %q requested permission_mode %s, which auto mode never grants", node.ID, graph.PermissionBypass),
-			})
-		}
-		add(validatePlannedNodeID(node))
-		add(validatePlannedNodeCwd(node))
-		add(validatePlannedNodeVerify(node))
-		add(validatePlannedNodeAgent(node))
-		add(validatePlannedNodeWorktree(node))
-		add(validatePlannedNodeFeedback(node))
-		add(validatePlannedNodeRetry(node))
-		add(validatePlannedNodeTools(node))
+		issues = append(issues, plannedNodeRefusals(node, keys, offered)...)
 	}
 	return issues
+}
+
+// plannedNodeKeys is the keys each node of a planner reply wrote, in node
+// order and in the order written: the raw mapping the splice reads, before
+// normalization fills in a default — a decoded node cannot tell an explicit
+// "handoff": "artifact" from no handoff at all, and the splice can. nil when
+// the reply holds no nodes sequence to read.
+func plannedNodeKeys(reply string) [][]string {
+	var raw struct {
+		Nodes []yaml.Node `yaml:"nodes"`
+	}
+	if err := yaml.Unmarshal([]byte(extractJSON(reply)), &raw); err != nil {
+		return nil
+	}
+	declared := make([][]string, len(raw.Nodes))
+	for i, node := range raw.Nodes {
+		for j := 0; j+1 < len(node.Content); j += 2 {
+			declared[i] = append(declared[i], node.Content[j].Value)
+		}
+	}
+	return declared
+}
+
+// plannedNodeRefusals is every per-NODE refusal validatePlannedNodes makes, in
+// the order it makes them — the field dispositions of one node, judged on that
+// node alone. The graph-level families stay in validatePlannedNodes, because
+// they are properties of the topology rather than of a node's fields.
+//
+// It is its own function so there is exactly ONE statement of what a planner
+// may not write on a node. The reuse catalog (reusecatalog.go) judges every
+// static node body of a fragment with it before offering that fragment to the
+// planner, so a field newly refused here is refused at admission too, with no
+// second list to keep in step (ADR 0038 §9.2, #338). Admission passes no
+// offered set, so a fragment body that itself carries reuse: or bind: is
+// refused by the same disposition case that refuses a plan shown no menu.
+//
+// declared is the keys the planner wrote on this node (plannedNodeKeys), which
+// only a citation of a multi-node shape is judged by; admission and the
+// post-splice checks pass nil, as they pass no offered set.
+//
+// offered is the menu the plan being judged was shown, held from the call that
+// rendered its prompt — never a re-scan. A node citing it (reuse: set) is
+// exempt from exactly two checks, the empty prompt and the empty
+// allowed_tools, because the shape supplies both and is spliced after this
+// runs (ADR 0038 §2.3); every other check applies to it unchanged.
+func plannedNodeRefusals(node graph.Node, declared []string, offered []ReuseEntry) []*PlanError {
+	var refusals []*PlanError
+	add := func(err *PlanError) {
+		if err != nil {
+			refusals = append(refusals, err)
+		}
+	}
+	if node.Reuse == "" && strings.TrimSpace(node.Prompt) == "" {
+		add(&PlanError{Reason: fmt.Sprintf("planned node %q has an empty prompt", node.ID)})
+	}
+	if node.Type == graph.TypeGate {
+		add(&PlanError{Reason: fmt.Sprintf("planned node %q is a gate node, which auto mode cannot run", node.ID)})
+	}
+	if node.PermissionMode == graph.PermissionBypass {
+		add(&PlanError{
+			Reason: fmt.Sprintf("planned node %q requested permission_mode %s, which auto mode never grants", node.ID, graph.PermissionBypass),
+		})
+	}
+	add(validatePlannedNodeID(node))
+	add(validatePlannedNodeCwd(node))
+	add(validatePlannedNodeVerify(node))
+	add(validatePlannedNodeAgent(node))
+	add(validatePlannedNodeWorktree(node))
+	add(validatePlannedNodeFeedback(node))
+	add(validatePlannedNodeRetry(node))
+	add(validatePlannedNodeTools(node))
+	refusals = append(refusals, validatePlannedNodeReuse(node, declared, offered)...)
+	return refusals
 }
 
 // validatePlannedFeedbackReach refuses a planned feedback arc whose loop body
@@ -1634,9 +1764,13 @@ func validatePlannedNodeWorktree(node graph.Node) *PlanError {
 // validatePlannedNodeTools rejects a planned node whose allowed_tools is
 // empty or names anything outside plannedToolAllowlist. See
 // validatePlannedNodes for why an empty list is rejected rather than passed
-// through.
+// through. A node citing a reusable shape is exempt from the empty-list half
+// only: the shape supplies its tools (plannedNodeRefusals).
 func validatePlannedNodeTools(node graph.Node) *PlanError {
 	if len(node.AllowedTools) == 0 {
+		if node.Reuse != "" {
+			return nil
+		}
 		return &PlanError{
 			Reason: fmt.Sprintf("planned node %q has no allowed_tools; auto mode requires an explicit least-privilege tool list", node.ID),
 		}
@@ -1649,6 +1783,137 @@ func validatePlannedNodeTools(node graph.Node) *PlanError {
 		}
 	}
 	return nil
+}
+
+// validatePlannedNodeReuse judges a node's citation of a reusable shape
+// (ADR 0038 §2.3 C.1) against offered, the menu this plan was shown. The id
+// must be one the menu listed, spelled exactly — a file name or a path is an
+// id the menu did not list, whatever file it would resolve to — and bind's
+// keys must be exactly that entry's binds. A citing node writes no prompt and
+// no allowed_tools: the shape supplies both, and a node writing its own would
+// leave two sources for one field.
+//
+// With nothing offered — reuse turned off, or no fragment admitted — the
+// disposition is simply "rejected", and that one refusal is all the node gets:
+// it must write its own prompt and tools, so the advice the other refusals
+// give would point the wrong way. It names the field and never the id the node
+// cited, nor any shape: the repair prompt quotes it back to a call that was
+// offered nothing, and repeating the id there would show that call a shape's
+// name — on this repository, read-and-report under --no-reuse (#338). The node
+// id is enough to find the citation.
+//
+// A node citing a MULTI-NODE shape may carry only the keys the splice accepts
+// beside one (reuseMultiNodeKeys), and any other key in declared is refused
+// here, naming it, rather than by the splice, which no re-plan reaches (#338).
+// prompt and allowed_tools are left to their own refusals above.
+//
+// Every other refusal is repairable the same way: its text names the id and
+// lists the menu, so a re-plan carries what it needs to converge.
+func validatePlannedNodeReuse(node graph.Node, declared []string, offered []ReuseEntry) []*PlanError {
+	if node.Reuse == "" {
+		if node.Bind == nil {
+			return nil
+		}
+		return []*PlanError{{
+			Reason: fmt.Sprintf("planned node %q sets bind without reuse; bind gives values to the slots of the reusable shape that reuse names, and means nothing on its own", node.ID),
+		}}
+	}
+	if len(offered) == 0 {
+		return []*PlanError{{
+			Reason: fmt.Sprintf("planned node %q sets reuse, but this plan has nothing it may reuse; drop reuse and bind, and write the node's own prompt and allowed_tools", node.ID),
+		}}
+	}
+	var refusals []*PlanError
+	entry, found := offeredEntry(offered, node.Reuse)
+	if !found {
+		refusals = append(refusals, &PlanError{
+			Reason: fmt.Sprintf("planned node %q names the reusable shape %q, which is not one of the shapes offered (offered: %s); name an id from that list exactly, never a file name or a path", node.ID, node.Reuse, strings.Join(menuIDs(offered), ", ")),
+		})
+	}
+	if node.Prompt != "" {
+		refusals = append(refusals, &PlanError{
+			Reason: fmt.Sprintf("planned node %q sets reuse %q and also writes its own prompt; a node that reuses a shape writes no prompt, because the shape supplies it", node.ID, node.Reuse),
+		})
+	}
+	if len(node.AllowedTools) > 0 {
+		refusals = append(refusals, &PlanError{
+			Reason: fmt.Sprintf("planned node %q sets reuse %q and also writes its own allowed_tools; a node that reuses a shape writes no allowed_tools, because the shape supplies them", node.ID, node.Reuse),
+		})
+	}
+	if !found {
+		return refusals
+	}
+	if entry.MultiNode {
+		for _, key := range declared {
+			if reuseMultiNodeKeySet[key] || key == "prompt" || key == "allowed_tools" {
+				continue
+			}
+			refusals = append(refusals, &PlanError{
+				Reason: fmt.Sprintf("planned node %q sets reuse %q and also sets %s; that shape contributes several nodes, and one node's %s cannot be laid over all of them, so drop %s — a node that reuses it sets no field outside %s",
+					node.ID, node.Reuse, key, key, key, joinPhrases(reuseMultiNodeKeys)),
+			})
+		}
+	}
+	binds := toSet(entry.Binds)
+	var unlisted, missing []string
+	for slot := range node.Bind {
+		if !binds[slot] {
+			unlisted = append(unlisted, slot)
+		}
+	}
+	for _, slot := range entry.Binds {
+		if _, bound := node.Bind[slot]; !bound {
+			missing = append(missing, slot)
+		}
+	}
+	sort.Strings(unlisted)
+	if len(unlisted) > 0 {
+		refusals = append(refusals, &PlanError{
+			Reason: fmt.Sprintf("planned node %q binds %s, which the reusable shape %q does not have (its binds: %s); bind exactly the slots listed for it", node.ID, plural(len(unlisted), "slot", "slots")+" "+quoteIDs(unlisted), entry.ID, reuseBindsList(entry)),
+		})
+	}
+	if len(missing) > 0 {
+		refusals = append(refusals, &PlanError{
+			Reason: fmt.Sprintf("planned node %q leaves %s of the reusable shape %q unbound (its binds: %s); give bind a value for every slot listed for it", node.ID, plural(len(missing), "slot", "slots")+" "+quoteIDs(missing), entry.ID, reuseBindsList(entry)),
+		})
+	}
+	return refusals
+}
+
+// reuseMultiNodeKeys is every key a node citing a multi-node shape may set,
+// read from the splice's own list (graph.MultiNodeCitingKeys) and never
+// restated here.
+var reuseMultiNodeKeys = graph.MultiNodeCitingKeys()
+
+// reuseMultiNodeKeySet is reuseMultiNodeKeys as a lookup set.
+var reuseMultiNodeKeySet = toSet(reuseMultiNodeKeys)
+
+// offeredEntry finds the menu entry a citation names, by exact id.
+func offeredEntry(offered []ReuseEntry, id string) (ReuseEntry, bool) {
+	for _, entry := range offered {
+		if entry.ID == id {
+			return entry, true
+		}
+	}
+	return ReuseEntry{}, false
+}
+
+// menuIDs lists the menu's ids in its own order, for a refusal to quote.
+func menuIDs(offered []ReuseEntry) []string {
+	ids := make([]string, 0, len(offered))
+	for _, entry := range offered {
+		ids = append(ids, entry.ID)
+	}
+	return ids
+}
+
+// reuseBindsList renders an entry's binds for a refusal; "none" when it has
+// no slots, so the sentence still reads.
+func reuseBindsList(entry ReuseEntry) string {
+	if len(entry.Binds) == 0 {
+		return "none"
+	}
+	return strings.Join(entry.Binds, ", ")
 }
 
 // extractJSON isolates the JSON object from a coordinator call's reply (the
@@ -1683,7 +1948,12 @@ var plannerRetryCauses = graph.RetryCauses()
 // the exact sets validation enforces so a well-behaved plan validates on the
 // first try. Enforcement does not depend on the planner reading or following
 // this text.
-func plannerPrompt(goal string, inputKeys []string, verifyCommandSupplied bool) string {
+//
+// offered is the reuse menu (ADR 0038 §2.2), rendered by reuseMenuBlock
+// directly after the reply shape that describes a node's fields and before the
+// rules (§9.5), and omitted entirely when it is empty. The error is the menu's
+// fence failing to mint a nonce.
+func plannerPrompt(goal string, inputKeys []string, verifyCommandSupplied bool, offered []ReuseEntry) (string, error) {
 	keys := "none"
 	if len(inputKeys) > 0 {
 		sorted := append([]string(nil), inputKeys...)
@@ -1701,14 +1971,19 @@ func plannerPrompt(goal string, inputKeys []string, verifyCommandSupplied bool) 
 	// That is also why the pattern is no longer an argument of the outer
 	// template: the template's %[4]s takes the RENDERED paragraph, and the
 	// retry causes keep %[5]s.
-	finalCheck := fmt.Sprintf(paragraph, strconv.Quote(plannedVerdictPattern))
+	finalCheck := fmt.Sprintf(paragraph, strconv.Quote(plannedVerdictPattern), reportingShapePointer(offered))
+	menu, err := reuseMenuBlock(offered)
+	if err != nil {
+		return "", err
+	}
 	return fmt.Sprintf(plannerPromptTemplate,
 		goal,
 		keys,
 		strings.Join(plannedToolAllowlist, ", "),
 		finalCheck,
 		strings.Join(plannerRetryCauses, ", "),
-	)
+		menu,
+	), nil
 }
 
 // finalCheckWithoutVerifyCommand / finalCheckWithVerifyCommand are the two
@@ -1748,8 +2023,9 @@ const (
 
 // branchEvidenceRule is the branch half of the final-check paragraph, shared
 // by both spellings because it is one prompt and the rule does not depend on
-// who gathers build evidence. It carries the single %s the verdict pattern
-// renders into, so it must appear exactly once per rendered paragraph.
+// who gathers build evidence. It carries two verbs, in order: the %s the
+// verdict pattern renders into, and the %s reportingShapePointer fills — so it
+// must appear exactly once per rendered paragraph.
 //
 // It asks for evidence that belongs to the REPOSITORY — a pull request, a
 // branch ref — never to a checkout. The rule used to mandate
@@ -1844,13 +2120,12 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
   node's output IS the evidence its reader judges. OR a PREFIX verdict —
   a "result_matches" anchored at the START only, carrying no trailing
   dollar sign, and wrapping the token in the SAME decoration class the
-  whole-reply pin above carries, so it reads like the shipped reporting
-  node at graphs/fragments/read-and-report.yaml rather than a bare
-  "^RECORDED" — a model writes "**RECORDED**" unbidden, a bare anchor
-  fails on it, and that false FAIL is the very thing this rule exists to
-  stop. The node's prompt must ALSO name the decorated spelling as wrong,
-  the way that fragment does. So the report itself survives in
-  the reply. If you choose the prefix verdict, the prompt must demand the
+  whole-reply pin above carries rather than leaving a bare "^RECORDED" —
+  a model writes "**RECORDED**" unbidden, a bare anchor fails on it, and
+  that false FAIL is the very thing this rule exists to stop. The node's
+  prompt must ALSO name the decorated spelling as wrong. So the report
+  itself survives in the reply.
+%s  If you choose the prefix verdict, the prompt must demand the
   verdict token as the FIRST characters of the reply and put the report
   AFTER it. That ordering is the whole of it: the engine compiles your
   pattern with no flags, so "^" anchors to the start of the WHOLE reply
@@ -1926,7 +2201,7 @@ prose before or after:
   ]
 }
 
-Rules:
+%[6]sRules:
 - Use 1 to 6 nodes. depends_on must be acyclic; a node with no dependencies
   omits depends_on.
 - A node reads a parent's result by writing {{ artifacts.<parent-id> }} in its
@@ -1936,7 +2211,7 @@ Rules:
   claude session, then "session". A "session" node must have exactly one
   parent.
 - Every node MUST set allowed_tools to a non-empty list drawn ONLY from this
-  exact set: %s
+  exact set: %[3]s
   Pick just the tools that node needs (least privilege). Any tool outside
   this set, an empty list, or a bare "Bash" / "Bash(*)" will be rejected —
   there is no other Bash pattern available, so a node needing a different

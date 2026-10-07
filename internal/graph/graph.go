@@ -10,6 +10,7 @@
 package graph
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -337,6 +338,21 @@ type Node struct {
 	// bound value, resolved away by the file loader with Use. Dead without
 	// `use:` (a load error), and empty on every validated graph; see Use.
 	With map[string]any `yaml:"with" json:"with,omitempty"`
+	// Reuse, when non-empty, names a reusable shape from the menu the planner
+	// was shown (ADR 0038): the id of a fragment trusted code scanned and
+	// admitted, never a path or a file name. It is Use's planner-side
+	// counterpart and is legal in a PLANNER REPLY only — the coordinator
+	// checks it against the offered set (validatePlannedNodeReuse) and trusted
+	// code splices the shape in before the graph runs, so a graph that reaches
+	// Validate with it set came through a path that splices nothing (a graph
+	// file, a saved graph.json, a resumed snapshot) and is refused
+	// (validateReuseSpliced). ParsePlannerReply is the one parse that lets it
+	// through, for the coordinator to judge.
+	Reuse string `yaml:"reuse" json:"reuse,omitempty"`
+	// Bind carries Reuse's slot values — slot name to the string bound into
+	// the shape's prompt. Planner-reply-only on exactly Reuse's terms; see
+	// Reuse.
+	Bind map[string]string `yaml:"bind" json:"bind,omitempty"`
 
 	// timeout is Timeout parsed once, at load, by Validate
 	// (validateNodeTimeouts). Unexported so the parsed form cannot drift from
@@ -410,6 +426,29 @@ func Parse(data []byte) (*Graph, error) {
 	}
 	if err := g.Validate(); err != nil {
 		return nil, err
+	}
+	return g, nil
+}
+
+// ParsePlannerReply is Parse for a planner reply, the one source in which a
+// node may carry `reuse:`/`bind:` (ADR 0038): every structural issue Parse
+// would refuse is refused here too, except the unspliced-reuse backstop,
+// because the coordinator judges a citation against the menu it showed
+// (validatePlannedNodeReuse) and trusted code splices it. The graph it returns
+// is valid in every other respect; the caller must Validate it again once
+// nothing it runs carries a citation, which is what keeps an unspliced reuse
+// node from ever reaching the scheduler.
+func ParsePlannerReply(data []byte) (*Graph, error) {
+	g, err := decode(data)
+	if err != nil {
+		return nil, err
+	}
+	for _, issue := range g.Issues() {
+		var unspliced *UnsplicedReuseError
+		if errors.As(issue, &unspliced) {
+			continue
+		}
+		return nil, issue
 	}
 	return g, nil
 }

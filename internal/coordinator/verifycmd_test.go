@@ -491,7 +491,7 @@ func mustParse(t *testing.T, spec string) *graph.Graph {
 // that is not told keeps writing check nodes whose PASS reads as a build
 // verdict, which is #119's own failure shape.
 func TestPlannerPromptStatesWhoGathersBuildEvidence(t *testing.T) {
-	with := plannerPrompt("build it", nil, true)
+	with := plannerPromptNoMenu(t, "build it", true)
 	if !strings.Contains(with, "independent build verification") {
 		t.Error("with a --verify-cmd, the planner is not told the engine verifies independently")
 	}
@@ -499,7 +499,7 @@ func TestPlannerPromptStatesWhoGathersBuildEvidence(t *testing.T) {
 		t.Error("with a --verify-cmd, the planner is not told the check node must stop short of claiming the build")
 	}
 
-	without := plannerPrompt("build it", nil, false)
+	without := plannerPromptNoMenu(t, "build it", false)
 	if strings.Contains(without, "independent build verification") {
 		t.Error("with no --verify-cmd, the planner is told about a verification that will not happen")
 	}
@@ -514,7 +514,7 @@ func TestPlannerPromptStatesWhoGathersBuildEvidence(t *testing.T) {
 // placeholder where the regex it must copy character-for-character belongs.
 func TestPlannerPromptRendersTheVerdictPattern(t *testing.T) {
 	for _, supplied := range []bool{true, false} {
-		prompt := plannerPrompt("build it", nil, supplied)
+		prompt := plannerPromptNoMenu(t, "build it", supplied)
 		if !strings.Contains(prompt, strconv.Quote(plannedVerdictPattern)) {
 			t.Errorf("verify-cmd supplied=%v: prompt does not carry the verdict pattern the check node must copy", supplied)
 		}
@@ -536,7 +536,7 @@ func TestPlannerPromptRendersTheVerdictPattern(t *testing.T) {
 // rule does not convert every caveat into a halt.
 func TestPlannerPromptGivesTheFailBranchAPlaceForTheCaveat(t *testing.T) {
 	for _, supplied := range []bool{true, false} {
-		prompt := plannerPrompt("build it", nil, supplied)
+		prompt := plannerPromptNoMenu(t, "build it", supplied)
 		if !strings.Contains(prompt, "there is nothing a reader would act on differently") {
 			t.Errorf("verify-cmd supplied=%v: the planner is not told what PASS is reserved for", supplied)
 		}

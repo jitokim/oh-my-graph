@@ -45,9 +45,14 @@ func withoutNonces(prompt string) string {
 // plannerPrompts drives the three planner prompts through FakeRunner — a first
 // attempt, the repair attempt after a refused reply, and a cycle-2
 // continuation — and returns each invocation as the coordinator built it.
+//
+// The invocation directory defaults to an empty temp dir, so the reuse menu
+// (#338) is absent unless a caller's own WithInvocationDir plants a catalog:
+// a golden must not depend on which fragments the checkout running it ships.
 func plannerPrompts(t *testing.T, opts ...Option) (first, repair, continuation runner.NodeInvocation) {
 	t.Helper()
 	ctx := context.Background()
+	opts = append([]Option{WithInvocationDir(t.TempDir())}, opts...)
 
 	fake, _ := newPlannerFake(runner.NodeOutcome{Result: validSpec})
 	if _, err := New(fake, opts...).Plan(ctx, goldenGoal, goldenInputKeys); err != nil {
@@ -112,4 +117,16 @@ func TestPlannerPromptGoldens_OffIsByteIdentical(t *testing.T) {
 	checkPlannerGolden(t, "first", first.Prompt)
 	checkPlannerGolden(t, "repair", repair.Prompt)
 	checkPlannerGolden(t, "continuation", continuation.Prompt)
+}
+
+// #338: the same three prompts with a one-entry menu offered, so a change to
+// the menu block or to where it sits is a reviewed golden diff. The planted
+// shape is named read-and-report, so the verdict-pattern advice's pointer at
+// the menu entry renders too.
+func TestPlannerPromptGoldens_MenuOn(t *testing.T) {
+	dir := plantCatalog(t, map[string]string{"read-and-report": admissibleFragment("read-and-report")})
+	first, repair, continuation := plannerPrompts(t, WithInvocationDir(dir))
+	checkPlannerGolden(t, "first-menu", first.Prompt)
+	checkPlannerGolden(t, "repair-menu", repair.Prompt)
+	checkPlannerGolden(t, "continuation-menu", continuation.Prompt)
 }

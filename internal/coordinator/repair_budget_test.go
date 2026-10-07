@@ -53,7 +53,7 @@ func TestValidatePlannedNodes_ReachLeadsQuotingLeadsPerNode(t *testing.T) {
 		t.Fatalf("the fixture must LOAD — every ADR 0010 rule holds, which is the point: %v", err)
 	}
 
-	issues := validatePlannedNodes(g, spec)
+	issues := validatePlannedNodes(g, spec, nil)
 	if len(issues) != 4 {
 		t.Fatalf("want 2 reach + 1 compacted quoting + 1 per-node refusal, got %d: %v", len(issues), reasons(issues))
 	}
@@ -233,7 +233,7 @@ func TestGraphLevelRefusalFamiliesRenderTheirMeasuredSize(t *testing.T) {
 		if got := len(quoting[0].Reason); got != tc.quoting {
 			t.Errorf("%d lanes: the compacted quoting refusal renders %d bytes, the comments say %d.\n%s", tc.lanes, got, tc.quoting, carryTheNumbers)
 		}
-		if got := len(strings.Join(reasons(validatePlannedNodes(g, "")), "\n")); got != tc.joined {
+		if got := len(strings.Join(reasons(validatePlannedNodes(g, "", nil)), "\n")); got != tc.joined {
 			t.Errorf("%d lanes: the two families joined render %d bytes, the comments say %d.\n%s", tc.lanes, got, tc.joined, carryTheNumbers)
 		}
 		// The claim the budget itself rests on: three such declarers fit, with
@@ -438,7 +438,7 @@ func TestArtifactRefusalIsTheOneDroppedWhenAllThreeFamiliesFire(t *testing.T) {
 		t.Fatalf("the fixture must LOAD: %v", err)
 	}
 
-	issues := reasons(validatePlannedNodes(g, ""))
+	issues := reasons(validatePlannedNodes(g, "", nil))
 	if got := len(strings.Join(issues, "\n")); got <= maxIssuesInPrompt {
 		t.Fatalf("the fixture no longer overruns the budget (%d bytes of %d) — it exists to be cut", got, maxIssuesInPrompt)
 	}
@@ -495,7 +495,7 @@ func TestDroppedArtifactRefusalStillNamesItsClassInTheRepairPrompt(t *testing.T)
 	if err != nil {
 		t.Fatalf("the fixture must LOAD: %v", err)
 	}
-	if got := len(strings.Join(reasons(validatePlannedNodes(g, "")), "\n")); got != 3980 {
+	if got := len(strings.Join(reasons(validatePlannedNodes(g, "", nil)), "\n")); got != 3980 {
 		t.Fatalf("the three families render %d bytes of refusal text, the comments say 3980.\n%s", got, carryTheNumbers)
 	}
 

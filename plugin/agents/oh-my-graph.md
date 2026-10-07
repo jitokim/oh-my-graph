@@ -32,14 +32,14 @@ oh-my-graph auto "<goal>" [--plan-only] [--input k=v ...] [--concurrency N] [--c
                           [--verify-cmd 'CMD'] [--verify-timeout D] [--no-baseline] [--accept-no-build-evidence]
                           [--accept-loaded-user-config]
                           [--max-cycles N] [--max-goal-budget-usd X]
-                          [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-mapping]
+                          [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-mapping] [--no-reuse]
 oh-my-graph lint <graph.yaml>
 oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--concurrency N] [--no-web]
 oh-my-graph runs list
 oh-my-graph show <run-id>
 oh-my-graph watch <run-id>
 oh-my-graph serve [<run-id>] [--port N] [--no-open]
-oh-my-graph chat [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-mapping]
+oh-my-graph chat [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-mapping] [--no-reuse]
 oh-my-graph version
 ```
 
