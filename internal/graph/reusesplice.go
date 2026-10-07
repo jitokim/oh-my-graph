@@ -19,8 +19,9 @@ import (
 // pinned maps each cited name to the bytes of <graphDir>/fragments/<name>.yaml
 // that the caller read and checked against its recorded digest. Those bytes are
 // what gets spliced: the cited file is never read again here, so what was
-// hashed is what runs. A fragment the pinned file itself cites resolves from
-// disk, as a nested use: always does.
+// hashed is what runs. A pinned file whose own body holds a nested use: is
+// refused before anything is resolved (#338): the file it cites was never
+// hashed, so splicing it would run bytes nobody pinned, and it is not read.
 //
 // The returned graph is decoded but NOT validated: the caller runs its own
 // per-node checks over the spliced nodes and then Graph.Validate, in that order.
@@ -80,9 +81,12 @@ func SpliceReuse(spec []byte, graphDir string, pinned map[string][]byte) (*Graph
 		if lf.frag == nil {
 			return nil, lf.errs[0]
 		}
+		if nested := nestedUses(lf.frag); len(nested) > 0 {
+			return nil, fmt.Errorf("the reusable shape %q holds a nested use: (%s), and only the shape's own bytes were pinned, so it is refused rather than the cited fragment read from disk", name, nested[0])
+		}
 		cache[name] = lf
 	}
-	entryPath := filepath.Join(graphDir, "reuse-splice.yaml") // never read: only its directory anchors nested lookups
+	entryPath := filepath.Join(graphDir, "reuse-splice.yaml") // never read: only its directory would anchor a lookup, and none remains
 	outcome := resolveFragmentsWith(&doc, entryPath, cache)
 	if len(outcome.errs) > 0 {
 		return nil, outcome.errs[0]

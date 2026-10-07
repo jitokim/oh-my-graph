@@ -527,3 +527,46 @@ func TestReuseSplice_ReadOnlyToolsAreAdmittedAndSpliced(t *testing.T) {
 		t.Errorf("spliced tools %v, citations %+v", cite.AllowedTools, citations)
 	}
 }
+
+// #338: forced past the menu — each entry built by hand with its file's
+// correct digest — a shape holding a nested use: is refused at the splice with
+// the nested-use reason. The cited read-and-report is then made unreadable (a
+// directory where the file was), so a refusal that came from reading it would
+// be a load error about that file, not this one.
+func TestReuseSplice_NestedUseIsRefusedWithoutReadingTheNestedFile(t *testing.T) {
+	for name, node := range map[string]string{"relay": `node "relay"`, "lane": `node "lane/report"`} {
+		t.Run(name, func(t *testing.T) {
+			files := nestedRelays()
+			files["read-and-report"] = admissibleFragment("read-and-report")
+			dir := plantCatalog(t, files)
+			source := plantedSource(dir, name)
+			forced := []ReuseEntry{{ID: name, Source: source, SHA256: plantedDigest(t, source)}}
+
+			nested := plantedSource(dir, "read-and-report")
+			if err := os.Remove(nested); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(nested, 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			spec := citingSpec(name, `,"bind":{"what":"README.md"}`)
+			g, err := graph.ParsePlannerReply([]byte(spec))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, _, err = spliceReuse(g, []byte(spec), forced)
+			if err == nil {
+				t.Fatal("the splice step accepted the forced record")
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "no longer passes admission ("+string(ReuseSkipNestedUse)+")") ||
+				!strings.Contains(msg, node) || !strings.Contains(msg, `"read-and-report"`) {
+				t.Errorf("err = %v, want the nested-use refusal naming %s and read-and-report", err, node)
+			}
+			if strings.Contains(msg, string(ReuseSkipLoadError)) || strings.Contains(msg, "read-and-report.yaml") {
+				t.Errorf("err = %v reads as a load error about the nested file, so it was read", err)
+			}
+		})
+	}
+}

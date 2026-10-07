@@ -85,10 +85,12 @@ node:
 // TestReuseCatalog_ShippedCorpus is §9.1 measured by the code (#338): of the
 // seven fragments this repository ships, exactly read-and-report is offered,
 // and the other six are skipped for the reasons ADR 0038 §2.2.1 and §9.2 give —
-// three for a slot that reaches a non-prompt field, three for a tool outside
+// two for a slot that reaches a non-prompt field, three for a tool outside
 // the read-only set (pr-publish's first is Bash(git *), an exact allowlist
 // member; the reviews' is Bash(git diff*), a narrowing of one). Each of the latter three also declares permission_mode; the tool
-// rule is checked first, so that is the reason recorded.
+// rule is checked first, so that is the reason recorded. gated-lane cites
+// e2e-verify, review-style and pr-publish with nested use:s, and the
+// nested-use rule runs right after a load error, so that is its reason.
 func TestReuseCatalog_ShippedCorpus(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
@@ -110,7 +112,7 @@ func TestReuseCatalog_ShippedCorpus(t *testing.T) {
 		detail string
 	}{
 		"e2e-verify":      {ReuseSkipNonPromptSlot, `slot "verify_command" lands in success_check.verify.command`},
-		"gated-lane":      {ReuseSkipNonPromptSlot, `slot "tools" lands in allowed_tools`},
+		"gated-lane":      {ReuseSkipNestedUse, `node "gated-lane/e2e" cites the fragment "e2e-verify"`},
 		"repair-round":    {ReuseSkipNonPromptSlot, `slot "review_agent" lands in agent`},
 		"pr-publish":      {ReuseSkipTool, `"Bash(git *)"`},
 		"review-security": {ReuseSkipTool, `"Bash(git diff*)"`},
@@ -130,7 +132,7 @@ func TestReuseCatalog_ShippedCorpus(t *testing.T) {
 			t.Errorf("%s skipped for %q (%s), want %q mentioning %s", name, skip.Reason, skip.Detail, w.reason, w.detail)
 		}
 	}
-	if got := catalog.SkippedByReason(); got[ReuseSkipNonPromptSlot] != 3 || got[ReuseSkipTool] != 3 {
+	if got := catalog.SkippedByReason(); got[ReuseSkipNonPromptSlot] != 2 || got[ReuseSkipTool] != 3 || got[ReuseSkipNestedUse] != 1 {
 		t.Errorf("SkippedByReason = %v", got)
 	}
 
@@ -185,8 +187,9 @@ func TestReuseCatalog_EachRuleKeepsAPlantedFragmentOffTheMenu(t *testing.T) {
 		{
 			// The outer file writes its slot only into the with: of a nested
 			// use:, which reads as harmless; the inner file puts that binding
-			// into an engine-run command. ADR 0029's chain, judged where the
-			// slot finally lands.
+			// into an engine-run command. The relay is refused for the nested
+			// use: itself (#338), before the inner file is read — so where the
+			// slot would have landed is never judged, and need not be.
 			name: "slot forwarded through a nested use: into a non-prompt field",
 			files: map[string]string{
 				"bad": `fragment: bad
@@ -205,7 +208,7 @@ node:
   success_check: { verify: { command: "{{ with.command }}" } }
 `,
 			},
-			reason: ReuseSkipNonPromptSlot, detail: `slot "cmd" lands in success_check.verify.command`,
+			reason: ReuseSkipNestedUse, detail: `node "bad" cites the fragment "runner"`,
 		},
 		{
 			name:   "tool that is a narrowing of a member, not a member",
@@ -258,12 +261,13 @@ node:
 	}
 }
 
-// TestReuseCatalog_SlotForwardedIntoAnInnerPromptIsAdmitted is the transitive
-// rule's negative control (#338): the same relay as above, into an inner shape
-// that puts the binding in its prompt, is inert all the way down — so the
-// non-prompt verdict above came from where the slot landed, not from the relay.
-// The multi-node form also pins how a nodes: entry's contribution renders.
-func TestReuseCatalog_SlotForwardedIntoAnInnerPromptIsAdmitted(t *testing.T) {
+// TestReuseCatalog_RelayIsSkippedEvenIntoAnInnerPrompt (#338): the same relay
+// as above, into an inner shape that puts the binding only in its prompt, would
+// be inert all the way down — and is still skipped as a nested use, because the
+// rule is about which bytes are pinned, not where a slot lands. The inner shape
+// and an unrelated multi-node one stay offered; the latter also pins how a
+// nodes: entry's contribution renders.
+func TestReuseCatalog_RelayIsSkippedEvenIntoAnInnerPrompt(t *testing.T) {
 	catalog := scanPlanted(t, map[string]string{
 		"relay": `fragment: relay
 description: relays a slot to another shape
@@ -288,18 +292,71 @@ nodes:
   - { id: second, depends_on: [first], prompt: "summarise {{ artifacts.first }}", allowed_tools: [Read, Grep] }
 `,
 	})
-	if got := offeredIDs(catalog); !reflect.DeepEqual(got, []string{"asker", "pair", "relay"}) {
-		t.Fatalf("offered %v, want asker, pair and relay; skipped: %+v", got, catalog.Skipped)
+	if got := offeredIDs(catalog); !reflect.DeepEqual(got, []string{"asker", "pair"}) {
+		t.Fatalf("offered %v, want asker and pair; skipped: %+v", got, catalog.Skipped)
+	}
+	if skip := skipsBySource(catalog)["relay"]; skip.Reason != ReuseSkipNestedUse || !strings.Contains(skip.Detail, `node "relay" cites the fragment "asker"`) {
+		t.Errorf("relay skipped for %q (%s), want %q naming its node and asker", skip.Reason, skip.Detail, ReuseSkipNestedUse)
 	}
 	byID := make(map[string]ReuseEntry)
 	for _, entry := range catalog.Offered {
 		byID[entry.ID] = entry
 	}
-	if got := byID["relay"].Binds; !reflect.DeepEqual(got, []string{"what"}) {
-		t.Errorf("relay binds %v", got)
-	}
 	if got, want := byID["pair"].Contributes, "2 nodes: <your-node-id>/first, <your-node-id>/second"; got != want {
 		t.Errorf("pair contributes %q, want %q", got, want)
+	}
+}
+
+// nestedRelays are two planted shapes that cite read-and-report with a nested
+// use: (#338): the single-node form, whose one node writes it, and a
+// multi-node form where only its second entry does.
+func nestedRelays() map[string]string {
+	return map[string]string{
+		"relay": `fragment: relay
+description: relays a target to another shape
+substitutions: [what]
+node:
+  use: read-and-report
+  with: { target: "{{ with.what }}" }
+`,
+		"lane": `fragment: lane
+description: look, then hand over to another shape
+substitutions: [what]
+exit: report
+nodes:
+  - { id: look, prompt: "look at {{ with.what }}", allowed_tools: [Read] }
+  - { id: report, depends_on: [look], use: read-and-report, with: { target: "{{ artifacts.look }}" } }
+`,
+	}
+}
+
+// TestReuseCatalog_NestedUseKeepsAFragmentOffTheMenu (#338): a fragment whose
+// own body holds a use: — on the single-node form's node or on any entry of a
+// nodes: list — is skipped as a nested use, naming the node and the fragment it
+// cites, while the cited read-and-report, planted alongside, stays offered in
+// the same scan. Only the citing file's bytes would be digested and pinned, so
+// a nested file could change between scan and splice with no mismatch.
+func TestReuseCatalog_NestedUseKeepsAFragmentOffTheMenu(t *testing.T) {
+	files := nestedRelays()
+	files["read-and-report"] = admissibleFragment("read-and-report")
+	catalog := scanPlanted(t, files)
+
+	if got := offeredIDs(catalog); !reflect.DeepEqual(got, []string{"read-and-report"}) {
+		t.Fatalf("offered %v, want only read-and-report; skipped: %+v", got, catalog.Skipped)
+	}
+	skips := skipsBySource(catalog)
+	for name, node := range map[string]string{"relay": `node "relay"`, "lane": `node "lane/report"`} {
+		skip, ok := skips[name]
+		if !ok {
+			t.Errorf("%s was not skipped", name)
+			continue
+		}
+		if skip.Reason != ReuseSkipNestedUse || !strings.Contains(skip.Detail, node) || !strings.Contains(skip.Detail, `"read-and-report"`) {
+			t.Errorf("%s skipped for %q (%s), want %q naming %s and read-and-report", name, skip.Reason, skip.Detail, ReuseSkipNestedUse, node)
+		}
+	}
+	if got := catalog.SkippedByReason(); got[ReuseSkipNestedUse] != 2 || len(got) != 1 {
+		t.Errorf("SkippedByReason = %v, want 2 nested use and nothing else", got)
 	}
 }
 
@@ -316,9 +373,9 @@ nodes:
 // body with plannedNodeRefusals, the same function the planner is judged by.
 //
 // Excluded: Use and With. They are refused at Plan's graph.Parse boundary, not
-// by validatePlannedNodes, and inside a fragment a use:/with: is not a refusal
-// at all — it is the ADR 0029 citation chain, which admission follows and
-// judges by where each slot lands (the transitive cases above).
+// by validatePlannedNodes, and inside a fragment a use: is refused by
+// admission's own nested-use rule (#338) before the planner's rules run, while
+// a with: without use: is a load error.
 //
 // The one row whose probe is a whole graph, Feedback, is expressed as a
 // multi-node fragment — its probeGraph's nodes become the fragment's nodes:,

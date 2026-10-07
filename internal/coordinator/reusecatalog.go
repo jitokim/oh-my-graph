@@ -118,16 +118,20 @@ type ReuseSkipReason string
 
 // The rules are applied in this order and a file records the first it fails.
 const (
-	// ReuseSkipLoadError: the file, or a fragment it cites, does not resolve.
+	// ReuseSkipLoadError: the file does not resolve.
 	ReuseSkipLoadError ReuseSkipReason = "load error"
-	// ReuseSkipAdvisory: the loader raised an advisory over the file's
-	// citation chain (§9.3).
+	// ReuseSkipNestedUse: a node of the file's own body cites another fragment
+	// with use:. Only the cited file's bytes are digested and pinned, so a
+	// nested file could change between scan and splice unseen; it is refused
+	// before that file is ever read (#338).
+	ReuseSkipNestedUse ReuseSkipReason = "nested use"
+	// ReuseSkipAdvisory: the loader raised an advisory over the file (§9.3).
 	ReuseSkipAdvisory ReuseSkipReason = "advisory"
 	// ReuseSkipDescription: a description line looks like a fence marker, or
 	// nothing printable is left of it.
 	ReuseSkipDescription ReuseSkipReason = "description"
-	// ReuseSkipNonPromptSlot: a slot lands, possibly through a nested
-	// citation, somewhere other than a prompt: scalar (§2.2's inertness).
+	// ReuseSkipNonPromptSlot: a slot lands somewhere other than a prompt:
+	// scalar (§2.2's inertness).
 	ReuseSkipNonPromptSlot ReuseSkipReason = "non-prompt slot"
 	// ReuseSkipTool: a declared tool is not a member of reuseReadOnlyTools
 	// (§9.2) — exact membership of plannedToolAllowlist is not enough.
@@ -216,6 +220,10 @@ func admitInspection(source string, inspection *graph.FragmentInspection, err er
 	}
 	if err != nil {
 		return skip(ReuseSkipLoadError, err.Error())
+	}
+	if len(inspection.NestedUses) > 0 {
+		return skip(ReuseSkipNestedUse, inspection.NestedUses[0].String()+
+			" — only this file's own bytes are pinned, so a reusable shape may cite no other fragment")
 	}
 	if len(inspection.Advisories) > 0 {
 		return skip(ReuseSkipAdvisory, inspection.Advisories[0].String())

@@ -1542,7 +1542,9 @@ func loadFragmentData(name, source string, data []byte) *loadedFragment {
 // FragmentInspection is what InspectFragment learned about one fragment file
 // by resolving it the way a citing graph would: the facts a catalog of
 // reusable shapes is built from (ADR 0038 §2.2), every one of them derived by
-// the loader and none read out of the file's text by the caller.
+// the loader and none read out of the file's text by the caller. A file whose
+// own body holds a nested use: is not resolved at all: NestedUses says so, and
+// only the fields read off the file itself are set.
 type FragmentInspection struct {
 	// Name is the fragment's name — its `fragment:` key, which the loader has
 	// already held equal to the file's stem.
@@ -1560,22 +1562,57 @@ type FragmentInspection struct {
 	// IDs is a multi-node fragment's declared internal ids, in file order; nil
 	// for the single-node form, which declares none.
 	IDs []string
-	// Advisories is every advisory the resolution raised, over the whole
-	// citation chain: this file's own drift smell and that of any fragment it
-	// cites, since a nested file's body is spliced in with it.
+	// NestedUses is every use: the file's own body writes, in file order. When
+	// it is not empty the inspection stops there: no cited file is opened, and
+	// Advisories, Strays and Nodes are left empty (#338) — a reusable shape is
+	// pinned by the digest of its own bytes, which says nothing about a file it
+	// would pull in.
+	NestedUses []NestedUse
+	// Advisories is every advisory the load and resolution of this one file
+	// raised. A file that cites another is never resolved (NestedUses), so no
+	// other file's advisory can reach this list.
 	Advisories []FragmentAdvisory
-	// Strays is every substitution-slot occurrence that, after the whole chain
-	// was resolved, sits anywhere but inside a node's `prompt:` scalar. Judged
-	// on the RESOLVED nodes, so a slot forwarded through a nested use:'s with:
-	// lands where the inner fragment puts it (ADR 0029), not where the outer
-	// file wrote it.
+	// Strays is every substitution-slot occurrence that, after resolution,
+	// sits anywhere but inside a node's `prompt:` scalar, judged on the
+	// RESOLVED nodes.
 	Strays []SlotLanding
 	// Nodes is the resolved node bodies, decoded, with every slot holding a
-	// neutral placeholder — nil whenever Strays is not empty, because a
-	// placeholder in a typed field (a list, a duration) need not decode. The
-	// citing node is named after the fragment, so a single-node body resolves
-	// under Name and a multi-node one under Name/<internal-id>.
+	// neutral placeholder — nil whenever Strays or NestedUses is not empty,
+	// because a placeholder in a typed field (a list, a duration) need not
+	// decode. The citing node is named after the fragment, so a single-node
+	// body resolves under Name and a multi-node one under Name/<internal-id>.
 	Nodes []Node
+}
+
+// NestedUse is one use: written in a fragment file's own body: the node that
+// writes it — named as inspection names it, the fragment's name for the
+// single-node form and <name>/<internal-id> for an entry of nodes: — and the
+// fragment it cites.
+type NestedUse struct {
+	NodeID   string
+	Fragment string
+}
+
+func (u NestedUse) String() string {
+	return fmt.Sprintf("node %q cites the fragment %q with a nested use:", u.NodeID, u.Fragment)
+}
+
+// nestedUses is every use: the loaded file's own body writes, read off the
+// parsed body alone — nothing the use: names is opened.
+func nestedUses(frag *fragmentFile) []NestedUse {
+	var found []NestedUse
+	if frag.node != nil {
+		if use := mappingValues(frag.node)["use"]; use != nil {
+			found = append(found, NestedUse{NodeID: frag.name, Fragment: strings.TrimSpace(scalarValue(use))})
+		}
+		return found
+	}
+	for i, node := range frag.nodes {
+		if use := mappingValues(node)["use"]; use != nil {
+			found = append(found, NestedUse{NodeID: frag.name + namespaceSeparator + frag.ids[i], Fragment: strings.TrimSpace(scalarValue(use))})
+		}
+	}
+	return found
 }
 
 // SlotLanding is one substitution-slot occurrence outside a prompt: scalar: the
@@ -1605,11 +1642,10 @@ var slotPlaceholderPattern = regexp.MustCompile(`@@reuse-slot:([A-Za-z0-9._-]+)@
 // ADR 0013 gives — from a synthetic citing node that binds every declared slot
 // to a placeholder. The file is read ONCE, by loadFragmentFile, and that load
 // seeds the resolution, so the digest a caller takes of Data is the digest of
-// what was judged. Nested citations resolve through the loader's own
-// machinery, which is what makes the slot judgment transitive.
+// what was judged. A file whose own body holds a nested use: is reported in
+// NestedUses and not resolved: the cited file is never opened (#338).
 //
-// The error is a load error: the file, or a fragment it cites, does not
-// resolve. Graph-level validity is deliberately NOT judged — whether a
+// The error is a load error: the file does not resolve. Graph-level validity is deliberately NOT judged — whether a
 // `handoff: session` body is valid depends on the graph that cites it, which
 // does not exist here.
 func InspectFragment(graphDir, name string) (*FragmentInspection, error) {
@@ -1621,8 +1657,8 @@ func InspectFragment(graphDir, name string) (*FragmentInspection, error) {
 
 // InspectFragmentData is InspectFragment over bytes the caller already read
 // from <graphDir>/fragments/<name>.yaml — the splice-time re-admission of ADR
-// 0038 §2.3, which must judge the bytes it hashed and nothing read later.
-// Nested citations still resolve from disk, exactly as they would at splice.
+// 0038 §2.3, which must judge the bytes it hashed and nothing read later. No
+// other file is read: a nested use: in data is reported, never resolved.
 func InspectFragmentData(graphDir, name string, data []byte) (*FragmentInspection, error) {
 	if err := bareFragmentName(name); err != nil {
 		return nil, err
@@ -1641,13 +1677,20 @@ func bareFragmentName(name string) error {
 
 // inspectLoaded is the shared back half of InspectFragment and
 // InspectFragmentData: resolve the loaded file from a synthetic citing node and
-// read off what the catalog is built from.
+// read off what the catalog is built from. A nested use: in the file's own body
+// returns before resolution, so the file it names is never read.
 func inspectLoaded(graphDir, name string, lf *loadedFragment) (*FragmentInspection, error) {
 	entryPath := filepath.Join(graphDir, "fragment-inspection.yaml") // never read: only its directory anchors the lookup
 	if lf.frag == nil {
 		return nil, lf.errs[0]
 	}
 	frag := lf.frag
+	if nested := nestedUses(frag); len(nested) > 0 {
+		return &FragmentInspection{
+			Name: name, Description: frag.description, Source: frag.source, Data: frag.data,
+			IDs: frag.ids, NestedUses: nested,
+		}, nil
+	}
 
 	citing := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	setKey(citing, "id", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: name})

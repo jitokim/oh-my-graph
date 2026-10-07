@@ -52,64 +52,68 @@ node:
 	}
 }
 
-// TestInspectFragment_StrayIsJudgedWhereTheInnerFragmentPutsIt is the ADR 0029
-// chain (#338): the outer file writes its slot only into a nested use:'s
-// with:, and the inner file puts that binding into success_check.verify — so
-// the stray is reported at the inner field, under the namespaced id, and the
-// inner file's own advisory travels with it.
-func TestInspectFragment_StrayIsJudgedWhereTheInnerFragmentPutsIt(t *testing.T) {
+// TestInspectFragment_NestedUseIsReportedNotResolved (#338): a fragment whose
+// own body holds a use: — on the single-node form's node, or on any entry of a
+// nodes: list — is reported in NestedUses and never resolved, so the file it
+// cites is never opened. Each cited file here is absent or a directory, either
+// of which would be a load error had it been read.
+func TestInspectFragment_NestedUseIsReportedNotResolved(t *testing.T) {
 	dir := inspectDir(t, map[string]string{
 		"outer": `fragment: outer
 description: a loop forwarding a slot
 substitutions: [cmd]
 exit: gate
 nodes:
+  - id: look
+    prompt: look around
+    allowed_tools: [Read]
   - id: gate
+    depends_on: [look]
     use: inner
-    with: { command: "{{ with.cmd }}", unused: x }
+    with: { command: "{{ with.cmd }}" }
 `,
-		"inner": `fragment: inner
-description: a gate
-substitutions: [command, unused]
-node:
-  prompt: check it
-  allowed_tools: [Read]
-  success_check: { verify: { command: "{{ with.command }}" } }
-`,
+		"relay": "fragment: relay\ndescription: x\nnode: { use: gone }\n",
 	})
-
-	got, err := InspectFragment(dir, "outer")
-	if err != nil {
+	if err := os.Mkdir(filepath.Join(dir, "fragments", "inner.yaml"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	want := []SlotLanding{{Slot: "cmd", NodeID: "outer/gate", Field: "success_check.verify.command"}}
-	if !reflect.DeepEqual(got.Strays, want) {
-		t.Errorf("Strays = %v, want %v", got.Strays, want)
-	}
-	if got.Nodes != nil {
-		t.Errorf("Nodes must be nil while a slot is stray, got %+v", got.Nodes)
-	}
-	if !reflect.DeepEqual(got.IDs, []string{"gate"}) {
-		t.Errorf("IDs = %v", got.IDs)
-	}
-	if len(got.Advisories) != 1 || got.Advisories[0].Fragment != "inner" {
-		t.Errorf("Advisories = %v, want the nested file's unused-slot advisory", got.Advisories)
-	}
-}
 
-// TestInspectFragment_LoadErrors (#338): a broken file, a broken nested
-// citation and a missing file are each a load error, not an inspection.
-func TestInspectFragment_LoadErrors(t *testing.T) {
-	dir := inspectDir(t, map[string]string{
-		"nameless":   "description: x\nnode: { prompt: p }\n",
-		"cites-gone": "fragment: cites-gone\ndescription: x\nnode: { use: gone }\n",
-	})
-	for _, name := range []string{"nameless", "cites-gone", "absent", "../escape"} {
-		if got, err := InspectFragment(dir, name); err == nil {
-			t.Errorf("InspectFragment(%q) = %+v, want a load error", name, got)
+	for name, want := range map[string]NestedUse{
+		"outer": {NodeID: "outer/gate", Fragment: "inner"},
+		"relay": {NodeID: "relay", Fragment: "gone"},
+	} {
+		got, err := InspectFragment(dir, name)
+		if err != nil {
+			t.Fatalf("InspectFragment(%q): %v — a load error means the cited file was read", name, err)
+		}
+		if !reflect.DeepEqual(got.NestedUses, []NestedUse{want}) {
+			t.Errorf("%s: NestedUses = %v, want [%v]", name, got.NestedUses, want)
+		}
+		if got.Strays != nil || got.Nodes != nil || got.Advisories != nil {
+			t.Errorf("%s: resolved anyway: strays %v nodes %+v advisories %v", name, got.Strays, got.Nodes, got.Advisories)
+		}
+		data, err := os.ReadFile(filepath.Join(dir, "fragments", name+".yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if again, err := InspectFragmentData(dir, name, data); err != nil || !reflect.DeepEqual(again.NestedUses, got.NestedUses) {
+			t.Errorf("%s: InspectFragmentData = %+v, %v; want the same nested use and no load error", name, again, err)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(dir, "fragments", "gone.yaml")); !os.IsNotExist(err) {
 		t.Fatal("the cited file must not exist for this case to mean anything")
+	}
+}
+
+// TestInspectFragment_LoadErrors (#338): a broken file and a missing file are
+// each a load error, not an inspection.
+func TestInspectFragment_LoadErrors(t *testing.T) {
+	dir := inspectDir(t, map[string]string{
+		"nameless": "description: x\nnode: { prompt: p }\n",
+	})
+	for _, name := range []string{"nameless", "absent", "../escape"} {
+		if got, err := InspectFragment(dir, name); err == nil {
+			t.Errorf("InspectFragment(%q) = %+v, want a load error", name, got)
+		}
 	}
 }

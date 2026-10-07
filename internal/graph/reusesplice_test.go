@@ -117,3 +117,34 @@ func TestSpliceReuse_RefusesUnpinnedAndUse(t *testing.T) {
 		})
 	}
 }
+
+// #338: pinned bytes whose own body holds a nested use: are refused before
+// anything resolves, naming the node and the fragment it cites — for the
+// single-node form and for one entry of a nodes: list. The cited file is
+// garbage on disk, so a refusal that is a load error about it would mean it
+// was read.
+func TestSpliceReuse_RefusesANestedUseWithoutReadingIt(t *testing.T) {
+	graphDir := inspectDir(t, map[string]string{"inner": "{{ not yaml"})
+	for name, tc := range map[string]struct {
+		body, node string
+	}{
+		"relay": {"fragment: relay\ndescription: relays\nsubstitutions: [target]\nnode:\n  use: inner\n  with: { target: \"{{ with.target }}\" }\n", `"relay"`},
+		"pair": {strings.Replace(spliceMulti,
+			"  - id: report\n    depends_on: [look]\n    prompt: \"Report on {{ artifacts.look }}.\"\n",
+			"  - id: report\n    depends_on: [look]\n    use: inner\n", 1), `"pair/report"`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !strings.Contains(tc.body, "use: inner") {
+				t.Fatal("the planted body holds no nested use:")
+			}
+			spec := `{"name":"plan","nodes":[{"id":"check","reuse":"` + name + `","bind":{"target":"a"}}]}`
+			_, err := SpliceReuse([]byte(spec), graphDir, map[string][]byte{name: []byte(tc.body)})
+			if err == nil {
+				t.Fatal("want a refusal")
+			}
+			if msg := err.Error(); !strings.Contains(msg, "nested use:") || !strings.Contains(msg, tc.node) || !strings.Contains(msg, `"inner"`) {
+				t.Errorf("err = %v, want the nested-use refusal naming node %s and \"inner\"", err, tc.node)
+			}
+		})
+	}
+}
