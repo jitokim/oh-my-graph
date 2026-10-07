@@ -1,0 +1,212 @@
+# gated-dev — one gating lane with a HUMAN GATE before it publishes: engine
+# evidence AND a person at the end, reachable by copying a shipped graph
+# (ADR 0039 §6, shape 2; #345).
+#
+#   dev ──▶ e2e ──▶ review ──▶ approve-publish ──▶ check-head ──▶ pr
+#    ▲               │          (type: gate)
+#    └── feedback ───┘ (FINDINGS: re-runs dev once)
+#
+#   - dev implements the task in an isolated worktree and commits as it goes.
+#   - e2e cites `e2e-verify`: the ENGINE runs `verify_command` as its evidence,
+#     so a node that reports PASS without the checks passing does not pass.
+#   - review cites `review-style` with the GATING pair: a narrowed check
+#     (`CLEAN` or `MINOR:` passes, `FINDINGS:` fails — ADR 0043) and a
+#     `feedback:` arc that re-runs dev once with the findings quoted.
+#   - approve-publish is a `type: gate`: the run stops there (exit 2) and a
+#     person reads the review and the e2e verdict before anything is pushed.
+#   - check-head refuses to publish a HEAD the person did not approve.
+#   - pr cites `pr-publish` and opens the pull request.
+#
+# Why this does not cite `gated-lane`. That fragment is this lane minus the
+# gate, but its `pr` node is INTERNAL to it, and a node citing a multi-node
+# fragment may declare wiring only (id, use:, with:, depends_on, cwd,
+# worktree). There is therefore no way to put a node between its review and its
+# pr. So the lane is wired here from the same shipped pieces — `e2e-verify`,
+# `review-style`, `pr-publish` — with the same discipline `gated-lane` carries
+# (graphs/fragments/gated-lane.yaml): an inline dev with phased commits,
+# explicit-path staging and an anchored verdict; the narrowed review check and
+# its arc, shipped together; no `retry:` on the review. Read the reasoning for
+# each of those there.
+#
+# Every node runs in ONE managed worktree, `lane`: the engine makes it at
+# <run-dir>/worktrees/lane on the branch omg/<run-id>/lane, off the HEAD of the
+# repo you invoke from.
+#
+# The pin, and why check-head exists. The engine removes the lane worktree
+# when the run pauses at the gate (its branch is kept, because it carries
+# commits) and re-attaches the branch on resume. Anything kept in that
+# worktree's own git dir is gone by the time the person approves. So the SHA
+# the person approves is recorded by an ENGINE-RUN command, in the shared
+# repo, as a ref named after the lane's per-run branch:
+#
+#   refs/omg-approved/omg/<run-id>/lane
+#
+#   - The ref is per run: two runs of this graph never share one.
+#   - review's `success_check.verify` writes it, and only when review PASSES:
+#     the engine judges `result_matches` before it runs `verify`, so a
+#     `FINDINGS:` review never reaches the command. With a repair round, the
+#     ref therefore holds the HEAD the LAST PASSING review saw.
+#   - check-head's `success_check.verify` compares HEAD with the ref and
+#     deletes the ref only on a match. A missing ref fails, and a HEAD that
+#     moved since the review fails. A check-head that runs again after it
+#     deleted its ref (a `resume --retry-failed` that reaches it after `pr`
+#     failed, say) FAILS CLOSED — there is no approval left to match.
+#   - It cannot be a `verify` on pr: a node's verify runs only after the node,
+#     and by then the pull request is already open.
+#   - A run that stops before check-head, or is rejected, leaves its ref
+#     behind. List them with `git for-each-ref refs/omg-approved` and delete
+#     one with `git update-ref -d <ref>`.
+#
+# Run (from inside the target repo, so the worktree branches off its HEAD):
+#   oh-my-graph run graphs/gated-dev.yaml \
+#     --input repo="$PWD" \
+#     --input task="implement <feature>" \
+#     --input checks="run the project's full checks (build + test + lint)." \
+#     --input verify_command="make local" \
+#     --input focus="Judge correctness as well as style." \
+#     --input publish="Push this worktree's branch and open a DRAFT pull request with \`gh pr create --draft\`. Put the review in the PR body:"
+#
+# The run pauses at approve-publish (exit 2) and prints what you are approving.
+# Then either:
+#   oh-my-graph resume <run-id> --approve approve-publish
+#   oh-my-graph resume <run-id> --reject approve-publish
+# Rejecting ends the run unpublished: check-head and pr never run, and the
+# lane's branch is kept with its commits.
+name: gated-dev
+version: "0.1"
+inputs: [repo, task, checks, verify_command, focus, publish]
+concurrency: 1  # a strict chain — nothing ever runs in parallel
+nodes:
+  - id: dev
+    type: claude-run
+    worktree: lane
+    prompt: |
+      You are in an isolated git worktree of the repo {{ inputs.repo }}, on
+      this run's own branch — fresh on the first pass, and already carrying
+      the previous round's commits on a feedback round. Implement this task,
+      keeping the diff focused and touching ONLY the files this task owns:
+        {{ inputs.task }}
+      Add or update tests. Choose a commit granularity that fits the work —
+      one commit per refactoring unit for refactors, per file for sweeps, per
+      feature slice for new code — and state your choice in the first commit
+      message. Commit as you go, staging only the files you changed, by
+      explicit path (`git add <path> ...`) — never `git add -A`, `git add .`,
+      or `git add -u`. End every commit message with the trailer
+      `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>` (the attribution
+      convention in CONTRIBUTING.md).
+      Your FINAL reply IS the verdict: this node ends the moment you reply, so
+      work you promise to do afterwards never happens. Never end on a plan to
+      continue — report the state that is TRUE AS YOU REPLY. When the change
+      is committed, START your reply with the bare word DONE — those four
+      characters FIRST, no markdown emphasis (`**DONE**` is WRONG), no
+      heading, no preamble — then a one-line summary of what you changed.
+      Anything you need to qualify goes AFTER the verdict, never before it:
+      a line of context ahead of the token fails this node even when the
+      work is done.
+      If it is not finished, do NOT write DONE: start with a bare BLOCKED and
+      the current state, so this lane stops instead of shipping half a task.
+
+      Review findings from the previous round follow — they are empty on the
+      first pass. If present, fix every blocking finding before anything
+      else, and note that this lane's branch already carries the previous
+      round's commits: amend the work, do not restart it. Items under a
+      `Minor:` line are not this round's to fix: leave them unless a blocking
+      fix rewrites the same code anyway — they reach the PR body through the
+      review.
+      {{ feedback.review }}
+    # A fixed grant, not an input: this is a template you copy, and the grant
+    # is the line you are most likely to change when you do. It is a Go
+    # stack's verbs — the same grant backlog-batch's lane A binds — because
+    # an implementer that cannot build or test its own change hands e2e a
+    # guess. A repo in another stack edits this line (e.g. `Bash(npm *)` for
+    # `Bash(go *)`). Whatever it says is announced in the run's disclosure
+    # line at every run, so a widened grant is never silent.
+    allowed_tools: [Read, Edit, Write, "Bash(git *)", "Bash(go *)", "Bash(make *)"]
+    permission_mode: dontAsk
+    timeout: 1h  # the hang guard — generous, so real work is never killed mid-flight
+    handoff: artifact
+    # Anchored, markdown-tolerant (DESIGN.md "Verdict patterns"): an unfinished
+    # dev node that passes takes the lane to the gate with half a change.
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*DONE\b' }
+
+  # The evidence. `verify_command` is run by the ENGINE through `sh -c`, which
+  # is why it is bound from an input and never from an artifact. `lint` warns
+  # here (handoff: session + retry) — advisory and expected: a retried attempt
+  # starts cold, and the fragment's prompt survives exactly that case.
+  - id: e2e
+    use: e2e-verify
+    depends_on: [dev]
+    worktree: lane
+    with:
+      checks: "{{ inputs.checks }}"
+      verify_command: "{{ inputs.verify_command }}"
+
+  # The gating pair, as gated-lane spells it: the narrowed check accepts
+  # `CLEAN` and `MINOR:` and rejects only `FINDINGS:`, and the arc re-runs
+  # dev → e2e → review with the findings in {{ feedback.review }}. `max: 1`:
+  # one unattended repair round; a second belongs to the person at the gate.
+  # No `retry:` — a retried reviewer is told its last reply "did NOT pass",
+  # which biases it toward CLEAN (gated-lane.yaml says why at length).
+  #
+  # The `verify` is the pin, not evidence about the diff. It runs only once
+  # the verdict has passed, and records the HEAD this review judged as
+  # refs/omg-approved/<this lane's branch> (header, "The pin").
+  - id: review
+    use: review-style
+    depends_on: [e2e]
+    worktree: lane
+    with:
+      diff: this worktree's diff vs its base
+      focus: |-
+        {{ inputs.focus }}
+        The e2e verdict was: {{ artifacts.e2e | inline }}
+    success_check:
+      exit_zero: true
+      result_matches: '^[*_`\s]*(MINOR[*_`\s]*:|CLEAN\b)'
+      verify: { command: 'git update-ref "refs/omg-approved/$(git symbolic-ref --short HEAD)" HEAD', timeout: 30s }
+    feedback: { rerun: dev, max: 1 }
+
+  # The human gate. Its description is printed where you decide it, and it
+  # quotes engine facts only: two artifact PATHS (no `| inline`, so no model's
+  # reply is printed at the moment you approve) and where the e2e evidence
+  # record sits.
+  - id: approve-publish
+    type: gate
+    depends_on: [review]
+    worktree: lane
+    description: >-
+      Approve publishing this lane's reviewed HEAD as a pull request. Read the
+      review at {{ artifacts.review }} and the e2e verdict at
+      {{ artifacts.e2e }}; e2e's engine verify record (the command it ran and
+      its exit code) is in this run's state.json beside them. Rejecting ends
+      the run unpublished.
+
+  # The guard between the approval and the push. The model's part is trivial
+  # and read-only; the judgement is the ENGINE's `verify`, which passes only
+  # when HEAD is still the commit the last passing review pinned, and spends
+  # the pin as it passes (header, "The pin").
+  - id: check-head
+    type: claude-run
+    depends_on: [approve-publish]
+    worktree: lane
+    prompt: |
+      Do not change anything. Reply with the bare word DONE as the very first
+      four characters — no markdown emphasis (`**DONE**` is WRONG), no
+      heading, no preamble.
+    allowed_tools: [Read]
+    permission_mode: dontAsk
+    timeout: 5m
+    handoff: artifact
+    success_check:
+      exit_zero: true
+      result_matches: '^[*_`\s]*DONE\b'
+      verify: { command: 'ref="refs/omg-approved/$(git symbolic-ref --short HEAD)"; test "$(git rev-parse HEAD)" = "$(git rev-parse --verify -q "$ref")" && git update-ref -d "$ref"', timeout: 30s }
+
+  - id: pr
+    use: pr-publish
+    depends_on: [check-head]
+    worktree: lane
+    with:
+      publish: |-
+        {{ inputs.publish }}
+          {{ artifacts.review | inline }}

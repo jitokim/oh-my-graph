@@ -1252,17 +1252,18 @@ So a verdict pattern is written in two halves, and both are load-bearing:
   shipped prefix verdict carries the offer: *anything you need to qualify
   goes AFTER the verdict, never before it* — as one unbroken line, so
   `grep -c "Anything you need to qualify" graphs/*.yaml graphs/fragments/*.yaml`
-  is a sweep that cannot silently miss a node. That sweep counts **25
-  declarations, covering 33 runtime nodes** — a fragment states the clause
-  once and every node citing it gets it, which is the point: seven of the 25
-  live in `graphs/fragments/`, in six files, and carry fifteen of the nodes
+  is a sweep that cannot silently miss a node. That sweep counts **26
+  declarations, covering 36 runtime nodes** — a fragment states the clause
+  once and every node citing it gets it, which is the point: seven of the 26
+  live in `graphs/fragments/`, in six files, and carry seventeen of the nodes
   between them.
-  The twenty-fifth is `read-and-report`, and it covers no runtime node yet:
+  One of the seven is `read-and-report`, and it covers no runtime node yet:
   no shipped graph cites it. It exists to be citable by a PLANNED node
   (ADR 0038), which is a different reader from the ones above.
   The gap widened by two when `adr-driven-dev`'s two repair rounds became two
-  `use:` of one multi-node fragment (ADR 0027): the same 33 nodes, four fewer
-  places to correct the sentence in. The
+  `use:` of one multi-node fragment (ADR 0027): the same nodes, four fewer
+  places to correct the sentence in. `gated-dev` (#345) added one declaration
+  and three nodes: its inline `dev`, and the `review` and `pr` it splices. The
   four whole-reply pins
   (`haiku-smoke`'s `write`, the `e2e-verify` fragment, `apply-flags`'s
   `verify`, and `coordinator.plannedVerdictPattern`) say the opposite and must —
