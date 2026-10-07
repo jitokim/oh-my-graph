@@ -443,9 +443,13 @@ var multiNodeUsingKeys = map[string]bool{
 // fragmentFile is one parsed, structurally-checked fragment definition, in
 // either of its two forms.
 type fragmentFile struct {
-	name          string
-	description   string
-	source        string
+	name        string
+	description string
+	source      string
+	// data is the file's bytes exactly as this load read them — the bytes
+	// every judgment below was made on, so a digest of them (InspectFragment)
+	// describes what was judged rather than what a second read happened to see.
+	data          []byte
 	substitutions []string
 	// referenced is the set of substitution points the body actually uses —
 	// a fragment-level fact (the body is the same for every user), computed
@@ -606,8 +610,16 @@ func (n nesting) extendedBy(name string) []string {
 // that follows reports each defect once (the Validate backstop exists for
 // documents that never came through here, not to echo these errors).
 func resolveFragments(doc *yaml.Node, entryPath string) fragmentOutcome {
+	return resolveFragmentsWith(doc, entryPath, make(map[string]*loadedFragment))
+}
+
+// resolveFragmentsWith is resolveFragments over a cache the caller may have
+// seeded. InspectFragment seeds it with the one file it has already read, so
+// the resolution judges those same bytes instead of reading the file again. A
+// seeded slot's advisories are the seeder's to report: loadFragmentCached adds
+// them only on a miss.
+func resolveFragmentsWith(doc *yaml.Node, entryPath string, cache map[string]*loadedFragment) fragmentOutcome {
 	out := fragmentOutcome{loops: make(map[string]string)}
-	cache := make(map[string]*loadedFragment)
 	nodes := findNodesSequence(doc)
 	if nodes == nil {
 		return out
@@ -1507,7 +1519,7 @@ func loadFragmentFile(name, source string) *loadedFragment {
 		}
 	}
 	frag := &fragmentFile{
-		name: name, description: description, source: source,
+		name: name, description: description, source: source, data: data,
 		substitutions: substitutions, referenced: referenced,
 		node: single, ids: ids, declares: declares, exit: exit,
 	}
@@ -1515,6 +1527,163 @@ func loadFragmentFile(name, source string) *loadedFragment {
 		frag.nodes = multi.Content
 	}
 	return &loadedFragment{frag: frag, advisories: advisories}
+}
+
+// FragmentInspection is what InspectFragment learned about one fragment file
+// by resolving it the way a citing graph would: the facts a catalog of
+// reusable shapes is built from (ADR 0038 §2.2), every one of them derived by
+// the loader and none read out of the file's text by the caller.
+type FragmentInspection struct {
+	// Name is the fragment's name — its `fragment:` key, which the loader has
+	// already held equal to the file's stem.
+	Name string
+	// Description is the file's `description:`, trimmed, verbatim otherwise.
+	Description string
+	// Source is the path the loader read, and Data the bytes it read there:
+	// the bytes every judgment in this value was made on.
+	Source string
+	Data   []byte
+	// Binds is the declared substitution points the body actually references,
+	// in declaration order (fragmentFile.referenced). A declared point the body
+	// never uses is an advisory, not a bind.
+	Binds []string
+	// IDs is a multi-node fragment's declared internal ids, in file order; nil
+	// for the single-node form, which declares none.
+	IDs []string
+	// Advisories is every advisory the resolution raised, over the whole
+	// citation chain: this file's own drift smell and that of any fragment it
+	// cites, since a nested file's body is spliced in with it.
+	Advisories []FragmentAdvisory
+	// Strays is every substitution-slot occurrence that, after the whole chain
+	// was resolved, sits anywhere but inside a node's `prompt:` scalar. Judged
+	// on the RESOLVED nodes, so a slot forwarded through a nested use:'s with:
+	// lands where the inner fragment puts it (ADR 0029), not where the outer
+	// file wrote it.
+	Strays []SlotLanding
+	// Nodes is the resolved node bodies, decoded, with every slot holding a
+	// neutral placeholder — nil whenever Strays is not empty, because a
+	// placeholder in a typed field (a list, a duration) need not decode. The
+	// citing node is named after the fragment, so a single-node body resolves
+	// under Name and a multi-node one under Name/<internal-id>.
+	Nodes []Node
+}
+
+// SlotLanding is one substitution-slot occurrence outside a prompt: scalar: the
+// slot, the resolved node it reached, and the field path it landed in.
+type SlotLanding struct {
+	Slot   string
+	NodeID string
+	Field  string
+}
+
+func (l SlotLanding) String() string {
+	return fmt.Sprintf("slot %q lands in %s of node %q", l.Slot, l.Field, l.NodeID)
+}
+
+// slotPlaceholder is the neutral text InspectFragment binds a slot to. It is
+// distinct per slot so a stray can name the slot it came from, and plain text
+// so that where it lands in a prompt it is just prose.
+func slotPlaceholder(slot string) string {
+	return "@@reuse-slot:" + slot + "@@"
+}
+
+// slotPlaceholderPattern recovers the slot names from a resolved scalar.
+var slotPlaceholderPattern = regexp.MustCompile(`@@reuse-slot:([A-Za-z0-9._-]+)@@`)
+
+// InspectFragment resolves the fragment `name` exactly as a graph stored in
+// graphDir would cite it — `<graphDir>/fragments/<name>.yaml`, the one location
+// ADR 0013 gives — from a synthetic citing node that binds every declared slot
+// to a placeholder. The file is read ONCE, by loadFragmentFile, and that load
+// seeds the resolution, so the digest a caller takes of Data is the digest of
+// what was judged. Nested citations resolve through the loader's own
+// machinery, which is what makes the slot judgment transitive.
+//
+// The error is a load error: the file, or a fragment it cites, does not
+// resolve. Graph-level validity is deliberately NOT judged — whether a
+// `handoff: session` body is valid depends on the graph that cites it, which
+// does not exist here.
+func InspectFragment(graphDir, name string) (*FragmentInspection, error) {
+	entryPath := filepath.Join(graphDir, "fragment-inspection.yaml") // never read: only its directory anchors the lookup
+	if !fragmentNamePattern.MatchString(name) {
+		return nil, &FragmentError{Fragment: name,
+			Reason: "a fragment name must be bare (letters, digits, then any of . _ -) — it is the name a use: resolves, so no citation could ever reach this file"}
+	}
+	lf := loadFragmentFile(name, filepath.Join(graphDir, "fragments", name+".yaml"))
+	if lf.frag == nil {
+		return nil, lf.errs[0]
+	}
+	frag := lf.frag
+
+	citing := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	setKey(citing, "id", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: name})
+	setKey(citing, "use", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: name})
+	if len(frag.substitutions) > 0 {
+		with := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		for _, slot := range frag.substitutions {
+			setKey(with, slot, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: slotPlaceholder(slot)})
+		}
+		setKey(citing, "with", with)
+	}
+	root := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	setKey(root, "nodes", &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Content: []*yaml.Node{citing}})
+	doc := &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{root}}
+
+	outcome := resolveFragmentsWith(doc, entryPath, map[string]*loadedFragment{name: lf})
+	if len(outcome.errs) > 0 {
+		return nil, outcome.errs[0]
+	}
+
+	inspection := &FragmentInspection{
+		Name: name, Description: frag.description, Source: frag.source, Data: frag.data,
+		IDs:        frag.ids,
+		Advisories: append(append([]FragmentAdvisory{}, lf.advisories...), outcome.advisories...),
+	}
+	for _, slot := range frag.substitutions {
+		if frag.referenced[slot] {
+			inspection.Binds = append(inspection.Binds, slot)
+		}
+	}
+	for _, nodeMap := range findNodesSequence(doc).Content {
+		id := strings.TrimSpace(scalarValue(mappingValues(nodeMap)["id"]))
+		for i := 0; i+1 < len(nodeMap.Content); i += 2 {
+			key, value := nodeMap.Content[i].Value, nodeMap.Content[i+1]
+			if key == "prompt" && value.Kind == yaml.ScalarNode {
+				continue
+			}
+			inspection.Strays = append(inspection.Strays, slotLandings(value, id, key)...)
+		}
+	}
+	if len(inspection.Strays) > 0 {
+		return inspection, nil
+	}
+	g, err := decodeResolved(doc)
+	if err != nil {
+		return nil, err
+	}
+	inspection.Nodes = g.Nodes
+	return inspection, nil
+}
+
+// slotLandings is every placeholder under one resolved field, with the dotted
+// path it sits at — `success_check.verify.command`, not merely
+// `success_check`, so a reader is told which field took the slot.
+func slotLandings(node *yaml.Node, nodeID, field string) []SlotLanding {
+	var found []SlotLanding
+	switch node.Kind {
+	case yaml.ScalarNode:
+		for _, m := range slotPlaceholderPattern.FindAllStringSubmatch(node.Value, -1) {
+			found = append(found, SlotLanding{Slot: m[1], NodeID: nodeID, Field: field})
+		}
+	case yaml.SequenceNode:
+		for _, item := range node.Content {
+			found = append(found, slotLandings(item, nodeID, field)...)
+		}
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			found = append(found, slotLandings(node.Content[i+1], nodeID, field+"."+node.Content[i].Value)...)
+		}
+	}
+	return found
 }
 
 // judgeMultiNodeIDs reads the ids a multi-node fragment declares — the set
