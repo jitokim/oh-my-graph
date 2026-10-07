@@ -3,10 +3,12 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/jitokim/oh-my-graph/internal/runner"
+	"github.com/jitokim/oh-my-graph/internal/runstate"
 )
 
 // #356: the undeclared-input warning wired onto `run` and `run --dry-run`,
@@ -170,6 +172,45 @@ func TestUndeclaredInput356_DryRunWarnsAndKeepsItsVerdict(t *testing.T) {
 		t.Errorf("dry run spawned %d nodes", len(fake.Invocations()))
 	}
 	if strings.Contains(stdout+stderr, secretValue356) {
+		t.Errorf("the value was printed")
+	}
+}
+
+// The warning changes nothing but stderr: a run whose node fails exits with the
+// same status with and without an undeclared key, and state.json's inputs keep
+// the undeclared key bound beside the declared ones.
+func TestUndeclaredInput356_ExitStatusAndStateInputsUnchanged(t *testing.T) {
+	graphPath := writeGraphFile(t, boundGraph)
+	run := func(extra ...string) (int, map[string]string, string) {
+		home := isolateRunHome(t)
+		fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+			"scan": {SessionID: "s-scan", Result: "FAIL", ExitCode: 1},
+		})
+		fake.KeyFn = func(spec runner.NodeInvocation) string { return strings.Fields(spec.Prompt)[0] }
+		args := append([]string{graphPath, "--input", "repo=/r", "--input", "ticket=T"}, extra...)
+		_, stderr, err := runWithInputs(t, fake, args...)
+		snap, loadErr := runstate.Load(filepath.Join(runDirFor(onlyRunID(t, home)), runstate.SnapshotFileName))
+		if loadErr != nil {
+			t.Fatalf("load snapshot: %v", loadErr)
+		}
+		return exitCodeForError(err), snap.Inputs, stderr
+	}
+
+	baseCode, _, _ := run()
+	code, inputs, stderr := run("--input", "zzz="+secretValue356)
+	if baseCode == 0 {
+		t.Fatalf("the failing node must fail the run; exit code = 0")
+	}
+	if code != baseCode {
+		t.Errorf("exit code = %d with an undeclared key, %d without: the warning must not change it", code, baseCode)
+	}
+	if want := undeclaredLine356(graphPath, "zzz", "--input"); !strings.Contains(stderr, want) {
+		t.Errorf("stderr missing %q:\n%s", want, stderr)
+	}
+	if inputs["zzz"] != secretValue356 || inputs["repo"] != "/r" || inputs["ticket"] != "T" || len(inputs) != 3 {
+		t.Errorf("state.json inputs = %v, want repo, ticket and the undeclared zzz all bound", inputs)
+	}
+	if strings.Contains(stderr, secretValue356) {
 		t.Errorf("the value was printed")
 	}
 }
