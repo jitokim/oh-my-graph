@@ -1,8 +1,8 @@
 # ADR 0038 — A planned node cites a fragment from a menu it did not write
 
-**Status:** Proposed. Decision record only — no code, no schema change, no
-graph shipped with this record. Nothing in `internal/` or `graphs/` moves
-until this is Accepted.
+**Status:** Accepted on 2026-10-07, with the open questions settled in §9.
+Written before its code. §9.6 lists what the implementation PR owes, and the
+prompt-size measurement §4 requires lands in that same PR.
 
 **Where the addresses point.** Read on branch `lane-reuse` at `e767bd9`, the
 `main` this branch left. Every `file:line` below was re-opened against that
@@ -1081,3 +1081,104 @@ This record does not touch and does not decide:
   `lint` accepts exactly one graph, so `./bin/oh-my-graph lint graphs/*.yaml`
   does not run: it exits 1 with `oh-my-graph: lint: unexpected argument
   "graphs/apply-flags.yaml"`. Fourteen YAML files = 8 graphs + 6 fragments.
+
+---
+
+## 9. Acceptance — the open questions, settled (2026-10-07)
+
+Read against `main` at `b2517b7`. The design in §2 is unchanged. This section
+only closes what §2–§6 left open, and corrects what the tree has moved since
+`e767bd9`.
+
+### 9.1 The precondition in §6 is met
+
+§6 forbade building §2 while the admitted set is empty. It is no longer
+empty: `graphs/fragments/read-and-report.yaml` (added by #263, `d742bde`) is
+the seventh fragment and passes both admission tests. Its slots `target` and
+`question` land only in `prompt:`, its `allowed_tools` are `[Read, Grep,
+Glob]`, all exact members of `plannedToolAllowlist`, and it declares no
+`permission_mode`. The other six still fail for the reasons §2.2.1 gives.
+So the first menu has **one entry**. That is small, and it is enough to build
+the mechanism and run §6's falsifiers on real goals.
+
+### 9.2 The committed path proceeds, with disclosure
+
+§3 called this the sharpest open question: on the committed path
+`confirmPlan` is skipped, so nothing blocks a repository-planted fragment.
+**Decision: the committed path keeps reuse on.** The reason is the admission
+tests, not the printout. A fragment that passes both is, by construction, a
+node the planner could have written itself: its open slots reach only
+`prompt:`, its tools are exact members of the planner's own allowlist, and it
+cannot set `permission_mode`. A planted fragment therefore gains no
+capability the planner lacks. What it can do is supply prompt text, and a
+repository can already do that through any file a planned node reads. The
+disclosure §2.5 specifies stays: the printout names the directory, the
+counts, and the id, path and digest of each citation, and
+`reuse-catalog.json` records them. An operator who does not want this passes
+`--no-reuse`.
+
+This holds only while admission stays this strict. Any change that admits a
+fragment with a non-prompt slot, a non-member tool or a `permission_mode`
+reopens this question and needs its own ADR.
+
+### 9.3 A fragment with an advisory is not offered
+
+§4 left open whether a fragment advisory (`lf.advisories`) should suppress
+its catalog entry. **It does.** A fragment the linter warns about is left off
+the menu, and the printout counts it as "skipped (advisory)". Offering the
+planner something the linter already doubts buys nothing.
+
+### 9.4 The allowlist is not widened here
+
+§2.2.1 offered two routes for fragments whose tools are not exact members.
+**Neither is taken in this record.** Widening `plannedToolAllowlist` is its
+own decision with its own ADR. Fragments that want to be on the menu are
+written to fit the allowlist as it is.
+
+### 9.5 Where the block sits in the prompt
+
+§6 named menu position as one cause of a zero-citation result.
+**Decision:** the catalog block goes directly after the planner prompt's
+description of node fields, before its examples. The prompt's existing
+mention of `read-and-report.yaml` in the verdict-pattern advice is rewritten
+to point at the menu entry instead of the file, so that the prompt names no
+fragment path anywhere. If §6's first falsifier fires (0 of 20 cited while at
+least 5 of 20 goals match), moving the block is the first thing to try
+before calling the design wrong.
+
+### 9.6 What the implementation PR owes
+
+One PR, built on `main` at or after `b2517b7`:
+
+- Everything §2 specifies for the first slice: the catalog scan with both
+  admission tests (transitive inertness, exact-string tool membership, no
+  `permission_mode`) plus §9.3's advisory rule, the prompt block, `reuse:`
+  and `bind:`, `validatePlannedNodeReuse` against the offered set held from
+  the render call, the splice before agent mapping and verify attachment,
+  `reuse-catalog.json` with the SHA-256 re-check, the printout, and
+  `--no-reuse`.
+- Explicit dispositions for `reuse:` and `bind:`, so
+  `TestPlannedNodeFieldDispositionsAreComplete` stays green.
+- The refusal at `coordinator.go:639` and the backstop at
+  `internal/graph/validate.go:621` are untouched. `use:` and `with:` stay
+  refused from a planner.
+- Tests for each §2.3 failure case, plus: an unlisted id, an unlisted slot, a
+  missing slot, a `prompt:` or `allowed_tools` written next to `reuse:`, a
+  digest mismatch between scan and splice, a fragment with an advisory, and
+  a planted fragment that fails admission.
+- The prompt-size measurement §4 requires, as a `docs/measurements/` note in
+  the form ADR 0022 used: planner prompt tokens with the menu on and off.
+- The CHANGELOG fragment, per ADR 0042.
+
+§6's falsifiers (20 goals, counted for citations) run after the merge, the
+way #288's convergence count does, and each count is recorded with its run
+ids.
+
+### 9.7 Addresses that moved since `e767bd9`
+
+The symbols in this record are still the addresses that keep. The line
+numbers drifted: on `b2517b7`, `validatePlannedNodes` is at
+`coordinator.go:1020`, `validatePlannedNodeTools` at `:1638`, `plannerPrompt`
+at `:1686`, `plannerPromptTemplate` at `:1902`, and `printPlanForRuntime` at
+`cmd/oh-my-graph/main.go:1355`. "Six fragments" in §1.3, §2.2.1 and §6 now
+reads seven, and "zero of six" reads one of seven.
