@@ -9,7 +9,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 )
 
-// TestOf_LimitPauseRecordChangesNoStatus_358: ADR 0031 §8.2 — the snapshot's
+// TestOf_LimitPauseRecordChangesNoStatus_358 (#358): ADR 0031 §8.2 — the snapshot's
 // limit_pause record is for display, and like gate.paused_at it is not a fact
 // the derivation reads. A limit-paused run is PAUSED because its stream says
 // so, and every leg derives the same status, from the same Facts, with the
