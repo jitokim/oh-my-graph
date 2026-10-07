@@ -307,7 +307,7 @@ func reuseSummary(description string) (string, string) {
 		}
 	}
 	visible := strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+		if unicode.IsControl(r) || fence.IsFormatOrLineSeparator(r) {
 			return ' '
 		}
 		return r

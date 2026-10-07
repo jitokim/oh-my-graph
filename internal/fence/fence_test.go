@@ -199,3 +199,26 @@ func TestLooksLikeMarker(t *testing.T) {
 		}
 	}
 }
+
+// TestIsFormatOrLineSeparator pins the shared rule (#346): every bidi control,
+// zero-width character and BOM is a format character, the line and paragraph
+// separators are in too, and ordinary text — a letter, a space, a dash — is
+// not. Controls are deliberately out: callers pair it with unicode.IsControl.
+func TestIsFormatOrLineSeparator(t *testing.T) {
+	for _, r := range []rune{
+		'\u202a', '\u202b', '\u202c', '\u202d', '\u202e', // bidi embeddings and overrides
+		'\u2066', '\u2067', '\u2068', '\u2069', // bidi isolates
+		'\u200b', '\u200c', '\u200d', '\u200e', '\u200f', // zero-width and marks
+		'\ufeff',           // zero-width no-break space / BOM
+		'\u2028', '\u2029', // line and paragraph separators
+	} {
+		if !IsFormatOrLineSeparator(r) {
+			t.Errorf("IsFormatOrLineSeparator(%U) = false, want true", r)
+		}
+	}
+	for _, r := range []rune{'a', 'Z', '\u00e9', '\ubc30', ' ', '-', '\n', '\x1b', '\u0085'} {
+		if IsFormatOrLineSeparator(r) {
+			t.Errorf("IsFormatOrLineSeparator(%U) = true, want false", r)
+		}
+	}
+}
