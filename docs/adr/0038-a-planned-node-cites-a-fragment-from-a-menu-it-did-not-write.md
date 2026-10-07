@@ -1101,25 +1101,52 @@ Glob]`, all exact members of `plannedToolAllowlist`, and it declares no
 So the first menu has **one entry**. That is small, and it is enough to build
 the mechanism and run §6's falsifiers on real goals.
 
-### 9.2 The committed path proceeds, with disclosure
+### 9.2 The committed path proceeds, with a named residual
 
 §3 called this the sharpest open question: on the committed path
 `confirmPlan` is skipped, so nothing blocks a repository-planted fragment.
-**Decision: the committed path keeps reuse on.** The reason is the admission
-tests, not the printout. A fragment that passes both is, by construction, a
-node the planner could have written itself: its open slots reach only
-`prompt:`, its tools are exact members of the planner's own allowlist, and it
-cannot set `permission_mode`. A planted fragment therefore gains no
-capability the planner lacks. What it can do is supply prompt text, and a
-repository can already do that through any file a planned node reads. The
-disclosure §2.5 specifies stays: the printout names the directory, the
-counts, and the id, path and digest of each citation, and
-`reuse-catalog.json` records them. An operator who does not want this passes
-`--no-reuse`.
+**Decision: the committed path keeps reuse on**, and this section names what
+that costs rather than calling it free.
 
-This holds only while admission stays this strict. Any change that admits a
-fragment with a non-prompt slot, a non-member tool or a `permission_mode`
-reopens this question and needs its own ADR.
+**What admission bounds.** A fragment that passes both tests has open slots
+that reach only `prompt:`, tools that are exact members of
+`plannedToolAllowlist` (today `read-and-report` has `Read`, `Grep`, `Glob`),
+and no `permission_mode`. A planted fragment therefore cannot write a file or
+run a command through its own node.
+
+**What admission does not bound.** A fragment's `prompt:` is the node's
+instructions, not data the node reads. oh-my-graph closes the repository's
+other instruction channels on purpose: runners pass `--setting-sources ""`
+(ADR 0037), so a repository's `CLAUDE.md` and settings never reach a node.
+On the committed path, an admitted fragment is **the one repository-authored
+instruction channel the engine opens without a person seeing it first.** Its
+`description:` is a second, smaller one: §2.2 shows it in the planner's own
+prompt on every `auto` run, confirmed or not.
+
+**The worst case, stated.** A planted fragment fully controls a read-only
+node. That node cannot change anything, but its report flows on: to
+downstream nodes, some of which hold write tools, and to the goal assessor.
+So the residual is a misleading report that steers later nodes or the
+verdict, for example a fragment that tells its node to report "all checks
+passed".
+
+**What contains it.**
+- Downstream nodes receive an upstream report as an artifact **path** they
+  read (`handoff.InterpolateAs`, the `artifacts` kind), so it arrives as data
+  under their own instructions, never spliced into their prompt.
+- The assessor sees node artifacts inside its nonce fence, and since #337 it
+  judges a node's `verify` from the engine's own record, outside the fence,
+  not from what a node says about it.
+- The menu entry is fenced as data in the planner prompt, and its summary is
+  cut to one line of at most 200 bytes, with control characters removed and
+  any line that looks like a fence marker refused at admission (§9.6).
+- The disclosure §2.5 specifies stays: the printout names the directory, the
+  counts, and the id, path and digest of each citation, and
+  `reuse-catalog.json` records them. `--no-reuse` turns the menu off.
+
+This decision holds only while admission stays this strict. Any change that
+admits a fragment with a non-prompt slot, a non-member tool or a
+`permission_mode` reopens it and needs its own ADR.
 
 ### 9.3 A fragment with an advisory is not offered
 
@@ -1166,6 +1193,14 @@ One PR, built on `main` at or after `b2517b7`:
   missing slot, a `prompt:` or `allowed_tools` written next to `reuse:`, a
   digest mismatch between scan and splice, a fragment with an advisory, and
   a planted fragment that fails admission.
+- §9.2's containment, pinned:
+  - A planted, admitted fragment whose prompt tells its node to report "all
+    checks passed": the downstream node gets that report only as an artifact
+    path, and the assessor sees the text only inside its fence.
+  - The menu entry renders inside a fence in the planner prompt, and its
+    summary is one line, at most 200 bytes, with control characters removed.
+  - A fragment whose `description:` contains a line that looks like a fence
+    marker is not admitted.
 - The prompt-size measurement §4 requires, as a `docs/measurements/` note in
   the form ADR 0022 used: planner prompt tokens with the menu on and off.
 - The CHANGELOG fragment, per ADR 0042.
