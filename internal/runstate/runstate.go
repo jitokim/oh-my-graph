@@ -36,12 +36,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
-	"unicode/utf16"
-	"unicode/utf8"
-
-	"github.com/jitokim/oh-my-graph/internal/fence"
 )
 
 // Schema is the current state.json format version. Bump it whenever a change to
@@ -877,15 +872,6 @@ func (e *SchemaMismatchError) Error() string {
 // created 0o700 above, so the enclosing directory no longer hands a co-tenant
 // the rest of the run. This is at rest ONLY: while a node runs, the same prompt
 // text is in its argv (SECURITY.md, "What is exposed while a node runs").
-//
-// state.json holds no raw format character (#346): every rune
-// fence.IsFormatOrLineSeparator reports — a bidi override such as U+202E, a
-// zero-width character such as U+200B, U+2028/U+2029 — is written as a JSON
-// \uXXXX escape (escapeFormatCharacters), wherever in the snapshot it sits: an
-// --input value in Inputs, a node prompt in Graph, a recorded reply. A decode
-// restores the exact runes, so Load, resume and graph.Parse see what was
-// recorded; only the bytes on disk differ, and a byte search of the file — or a
-// terminal that cats it — meets no invisible or reordering character.
 func Write(path string, s Snapshot) error {
 	s.Schema = Schema
 	if s.Conventions != nil {
@@ -896,7 +882,6 @@ func Write(path string, s Snapshot) error {
 	if err != nil {
 		return fmt.Errorf("encode snapshot: %w", err)
 	}
-	data = escapeFormatCharacters(data)
 
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -930,43 +915,6 @@ func Write(path string, s Snapshot) error {
 	return nil
 }
 
-// escapeFormatCharacters rewrites every rune fence.IsFormatOrLineSeparator
-// reports in data, an encoder's JSON output, as a \uXXXX escape — a rune above
-// U+FFFF as its UTF-16 surrogate pair, the only JSON form there is for it. The
-// encoder already escapes U+2028/U+2029 but writes every other format character
-// raw. The rewrite is lossless because JSON's structural characters are all
-// ASCII, so in encoder output such a rune can only sit inside a string, where
-// the escape decodes back to it. graph.Parse's YAML decoder reads a \uXXXX
-// escape but refuses a surrogate pair, so Load hands Graph back with each pair
-// decoded (unescapeSurrogatePairs) and a stored graph re-parses unchanged.
-func escapeFormatCharacters(data []byte) []byte {
-	var out []byte
-	for i := 0; i < len(data); {
-		r, size := utf8.DecodeRune(data[i:])
-		if !fence.IsFormatOrLineSeparator(r) {
-			if out != nil {
-				out = append(out, data[i:i+size]...)
-			}
-			i += size
-			continue
-		}
-		if out == nil {
-			out = append(make([]byte, 0, len(data)+32), data[:i]...)
-		}
-		if r > 0xFFFF {
-			hi, lo := utf16.EncodeRune(r)
-			out = fmt.Appendf(out, `\u%04x\u%04x`, hi, lo)
-		} else {
-			out = fmt.Appendf(out, `\u%04x`, r)
-		}
-		i += size
-	}
-	if out == nil {
-		return data
-	}
-	return out
-}
-
 // Load reads and decodes the snapshot at path. It refuses a snapshot whose Schema
 // is neither Schema nor SchemaWithConventions with a *SchemaMismatchError, so an
 // incompatible format is a clear, named failure rather than a misread. A missing
@@ -985,61 +933,5 @@ func Load(path string) (Snapshot, error) {
 	if s.Schema != Schema && s.Schema != SchemaWithConventions {
 		return Snapshot{}, &SchemaMismatchError{Path: path, Found: s.Schema, Want: Schema, WantAlso: SchemaWithConventions}
 	}
-	s.Graph = unescapeSurrogatePairs(s.Graph)
 	return s, nil
-}
-
-// unescapeSurrogatePairs is the read-side half of escapeFormatCharacters for
-// Graph alone (#346): it rewrites each \uXXXX\uXXXX surrogate-pair escape in
-// the JSON text raw as the rune it encodes, in raw UTF-8. Both forms decode to
-// the same string as JSON, so the result is the same document, and the next
-// Write escapes the rune again; it exists because Graph's reader is
-// graph.Parse, whose YAML decoder refuses a surrogate-pair escape ("found
-// invalid Unicode character escape code") where it accepts the raw rune. A
-// backslash always consumes the byte after it, so an escaped backslash
-// followed by "u" is never mistaken for an escape.
-func unescapeSurrogatePairs(raw json.RawMessage) json.RawMessage {
-	var out []byte
-	for i := 0; i < len(raw); i++ {
-		if raw[i] != '\\' || i+1 >= len(raw) {
-			if out != nil {
-				out = append(out, raw[i])
-			}
-			continue
-		}
-		if r, ok := surrogatePairAt(raw[i:]); ok {
-			if out == nil {
-				out = append(make([]byte, 0, len(raw)), raw[:i]...)
-			}
-			out = utf8.AppendRune(out, r)
-			i += len(`\uXXXX\uXXXX`) - 1
-			continue
-		}
-		if out != nil {
-			out = append(out, raw[i], raw[i+1])
-		}
-		i++
-	}
-	if out == nil {
-		return raw
-	}
-	return out
-}
-
-// surrogatePairAt decodes a \uXXXX\uXXXX high/low surrogate-pair escape at
-// the start of b, reporting false for anything else.
-func surrogatePairAt(b []byte) (rune, bool) {
-	if len(b) < len(`\uXXXX\uXXXX`) || b[1] != 'u' || b[6] != '\\' || b[7] != 'u' {
-		return 0, false
-	}
-	hi, err := strconv.ParseUint(string(b[2:6]), 16, 16)
-	if err != nil {
-		return 0, false
-	}
-	lo, err := strconv.ParseUint(string(b[8:12]), 16, 16)
-	if err != nil {
-		return 0, false
-	}
-	r := utf16.DecodeRune(rune(hi), rune(lo))
-	return r, r != utf8.RuneError
 }

@@ -249,34 +249,6 @@ func TestResume_FormatCharactersAbsentFromShownAndRecordedDescription(t *testing
 	}
 }
 
-// TestResume_StateJSONCarriesNoRawFormatCharacter: #346 — after a run whose
-// --input value carries U+202E, U+2028 and U+200B pauses at a gate and resume
-// approves it, the raw bytes of state.json hold none of the three, while the
-// recorded input still decodes to the exact value the run was launched with.
-func TestResume_StateJSONCarriesNoRawFormatCharacter(t *testing.T) {
-	isolateRunHome(t)
-	const ticket = "a\u202eb\u2028c\u200bd"
-	runID, rec, _ := describedGateFlowRun(t, ticket)
-
-	var err error
-	captureStdout(t, func() {
-		err = executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec, nil)
-	})
-	var paused *schedule.PausedError
-	if !errors.As(err, &paused) || paused.GateID != "final" {
-		t.Fatalf("expected the approved leg to pause at final, got %T: %v", err, err)
-	}
-	raw, snap := loadRunSnapshot(t, runID)
-	for _, r := range []rune{'\u202e', '\u2028', '\u200b'} {
-		if strings.ContainsRune(raw, r) {
-			t.Errorf("state.json carries %U raw", r)
-		}
-	}
-	if got := snap.Inputs["ticket"]; got != ticket {
-		t.Fatalf("recorded input %q, want %q", got, ticket)
-	}
-}
-
 // TestResume_RejectEchoesAndRecordsGateDescription: #346 — --reject echoes the
 // decision with the description and records it on the rejected gate's record.
 func TestResume_RejectEchoesAndRecordsGateDescription(t *testing.T) {
