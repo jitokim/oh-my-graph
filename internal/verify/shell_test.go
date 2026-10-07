@@ -376,6 +376,46 @@ func TestTailBytes_CutsOnARuneBoundary(t *testing.T) {
 	}
 }
 
+// TestRetainedTail_BoundsTheWholeStringAndKeepsTheEnd (#332): the
+// snapshot's verification record keeps the END of a long output, marks the
+// cut, and the marker counts inside the byte bound.
+func TestRetainedTail_BoundsTheWholeStringAndKeepsTheEnd(t *testing.T) {
+	long := "HEAD-SENTINEL\n" + strings.Repeat("x", 3*maxRetainedOutputBytes) + "\nverdict: FAIL"
+
+	got := RetainedTail(long)
+
+	if len(got) > maxRetainedOutputBytes {
+		t.Errorf("retained %d bytes, want at most %d", len(got), maxRetainedOutputBytes)
+	}
+	if !strings.HasSuffix(got, "verdict: FAIL") {
+		t.Errorf("the tail lost the verdict: %q", got[max(0, len(got)-40):])
+	}
+	if !strings.HasPrefix(got, truncationMarker) {
+		t.Errorf("the cut is unmarked: %q", got[:40])
+	}
+	if strings.Contains(got, "HEAD-SENTINEL") {
+		t.Errorf("the head survived the cut")
+	}
+}
+
+// TestRetainedTail_ShortOutputAndRetainedTailAreUntouched (#332): nothing
+// is marked when nothing was cut, and a tail already cut to the bound —
+// a *TimeoutError's Output — re-cuts to a single marker, never two.
+func TestRetainedTail_ShortOutputAndRetainedTailAreUntouched(t *testing.T) {
+	if got := RetainedTail("ok\n"); got != "ok\n" {
+		t.Errorf("short output was altered: %q", got)
+	}
+	once := RetainedTail(strings.Repeat("y", 10*maxRetainedOutputBytes))
+	if twice := RetainedTail(once); twice != once {
+		t.Errorf("RetainedTail is not idempotent")
+	}
+	timeoutTail := tailBytes(strings.Repeat("z", 10*maxRetainedOutputBytes), maxRetainedOutputBytes)
+	got := RetainedTail(timeoutTail)
+	if n := strings.Count(got, truncationMarker); n != 1 || len(got) > maxRetainedOutputBytes {
+		t.Errorf("re-cutting a timeout tail gave %d markers and %d bytes", n, len(got))
+	}
+}
+
 // --- the refusing default ----------------------------------------------------
 
 // TestRefusingVerifier_FailsLoudly proves the default Verifier refuses instead

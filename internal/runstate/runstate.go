@@ -314,6 +314,81 @@ type NodeRecord struct {
 	// verification the node never survived — and it earns its `verified`
 	// qualifier only on the attempt that finally passes.
 	Provenance string `json:"provenance,omitempty"`
+	// Verification is the engine's own record of the node's
+	// success_check.verify command (#332): what it ran, how it exited, and
+	// the end of what it printed. Without it a PASS left nothing in the file
+	// to show the command ever printed anything or exited 0 — the verdict was
+	// the only trace of the evidence it was reached on.
+	//
+	// It describes the attempt whose verdict the node KEPT, so a retried node
+	// carries its final attempt's command and not an earlier one's. It is
+	// absent (nil) on every node that declares no verify, and on a node whose
+	// kept attempt never reached its verify (an earlier predicate failed, or
+	// the spawn did), because no command ran and a record would claim one.
+	//
+	// Additive and optional, exactly like Round, Judged and Provenance:
+	// absent on every run without a verify, so such a run writes byte-identical
+	// state.json and there is NO schema bump. A resumed leg carries an earlier
+	// leg's record forward untouched with the rest of the NodeRecord.
+	Verification *VerificationRecord `json:"verification,omitempty"`
+}
+
+// VerificationStatus is what the ENGINE observed of a success_check.verify
+// command — not the node's verdict, which other predicates also decide. The
+// first two values mean the command ran to a verdict; every other value means
+// it broke before one, and ExitCode is then absent unless the command really
+// exited (VerificationNotJudged).
+type VerificationStatus string
+
+const (
+	// VerificationPassed: the command ran and met every declared expectation.
+	VerificationPassed VerificationStatus = "passed"
+	// VerificationFailed: the command ran and was judged insufficient — the
+	// wrong exit code, or output that did not match output_matches.
+	VerificationFailed VerificationStatus = "failed"
+	// VerificationTimedOut: the command was still running when its own
+	// timeout expired, so it reached no verdict.
+	VerificationTimedOut VerificationStatus = "timed out"
+	// VerificationCancelled: the run itself was cancelled (halt-on-fail,
+	// Ctrl-C) while the command ran.
+	VerificationCancelled VerificationStatus = "cancelled"
+	// VerificationDidNotRun: the command could not be started at all.
+	VerificationDidNotRun VerificationStatus = "did not run"
+	// VerificationInterpolationError: the declared command (or its cwd) did not
+	// interpolate, so nothing was run; Command is then the DECLARED text.
+	VerificationInterpolationError VerificationStatus = "interpolation error"
+	// VerificationNotJudged: the command ran and exited, but its expectations
+	// could not be applied (an invalid output_matches pattern on a hand-built
+	// node). ExitCode is the one it really exited with.
+	VerificationNotJudged VerificationStatus = "not judged"
+)
+
+// VerificationRecord is one success_check.verify execution as the engine saw
+// it (#332). It is a record of observed facts, bounded for retention: the
+// output is a marked tail, never the whole log, because the snapshot is
+// rewritten after every node and read by every consumer of the run.
+type VerificationRecord struct {
+	// Command is the command as run, after interpolation. On an
+	// interpolation error it is the declared text, since no resolved one
+	// exists.
+	Command string `json:"command"`
+	// ExitCode is the command's exit status, or nil when it never exited on
+	// its own (timed out, cancelled, could not start, never interpolated). A
+	// pointer so "absent" is never written as 0 — which would read as a pass
+	// — or as a sentinel like -1.
+	ExitCode *int `json:"exit_code,omitempty"`
+	// ExpectedExitCode is the exit code the node declared (expect_exit,
+	// default 0), so a reader can judge ExitCode without the graph.
+	ExpectedExitCode int `json:"expected_exit_code"`
+	// Duration is the command's wall-clock time, as an integer nanosecond
+	// count like NodeRecord.Duration. Zero when nothing was run.
+	Duration time.Duration `json:"duration"`
+	// Status is what the engine observed; see VerificationStatus.
+	Status VerificationStatus `json:"status"`
+	// OutputTail is the END of the command's combined output, bounded in
+	// bytes (verify.RetainedTail) with the cut marked, because a check
+	// prints its verdict last. Empty when nothing was captured.
+	OutputTail string `json:"output_tail,omitempty"`
 }
 
 // TokenUsage is provider-reported token accounting persisted with a node.

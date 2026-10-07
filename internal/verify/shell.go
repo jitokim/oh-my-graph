@@ -202,6 +202,24 @@ func (v *ShellVerifier) Verify(ctx context.Context, req Request) (Result, error)
 	return Result{ExitCode: exitErr.ExitCode(), Output: output, ScrubbedFromEnv: scrubbed}, nil
 }
 
+// RetainedTail bounds a verification command's output for a record that
+// outlives the call — the snapshot's verification record (#332) — to at most
+// maxRetainedOutputBytes in total, the cut marked and counted inside the bound.
+// The END is kept, because a check prints its verdict last.
+//
+// Counting the marker inside the bound is what makes it idempotent on a
+// *TimeoutError's Output, which tailBytes already cut to the same size: an
+// already-retained tail that fits is returned as is, and one that does not is
+// re-cut past its own marker rather than keeping half of it.
+//
+// Like tailBytes it is for what is RETAINED, never for what is judged.
+func RetainedTail(s string) string {
+	if len(s) <= maxRetainedOutputBytes {
+		return s
+	}
+	return tailBytes(s, maxRetainedOutputBytes-len(truncationMarker))
+}
+
 // tailBytes keeps the last maxBytes of s, marking the cut. The tail is kept
 // rather than the head because a failing command explains itself at the end.
 // The cut is moved forward to the next rune boundary so the result is always
