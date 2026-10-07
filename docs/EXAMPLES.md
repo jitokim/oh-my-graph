@@ -860,7 +860,8 @@ oh-my-graph serve 20260729-101600    # straight to one run, --port to move it
 <p align="center"><em>A real dogfood board, captured 2026-08-06 (KST) — a historical snapshot, not today's numbers: every card is a real run of this repository's own development. The <code>$906.1948</code> in the header was cumulative subscription usage across the project's whole development at that moment — not a per-run price, and not free.</em></p>
 
 It binds to loopback only. It is read-only except for one thing: a run paused
-at a human gate can be approved or rejected from the page. Unlike the live view
+at a human gate can be approved or rejected from the page, which shows the
+gate's description above the buttons when it has one. Unlike the live view
 `run`/`auto` embed, `serve` is the thing you asked for: in a script, a pipe or
 CI it still binds the port and serves — it just opens no browser
 (`--no-open` opts out on a terminal too), and its output is unchanged.
@@ -1375,8 +1376,10 @@ What it may say:
   characters (bidi controls, zero-width characters) and the line and
   paragraph separators are stripped, so an input value cannot repaint the
   prompt you approve from.
-- The web live view's approve/reject buttons do not show the description
-  (web view: #348). A decision made there still records it in `state.json`.
+- The web live view shows the description above the paused gate's
+  approve/reject buttons, in the single-run view and on the dashboard's run
+  pages. It is the same line the pause printed, stored in `state.json` when
+  the run paused, and a decision made from the page records exactly that line.
 
 Spec: [DESIGN.md § Gate nodes and resume](../DESIGN.md#gate-nodes-and-resume-v11).
 
