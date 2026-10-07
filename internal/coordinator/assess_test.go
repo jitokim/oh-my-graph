@@ -58,6 +58,39 @@ func TestAssess_MalformedRepliesAreAssessErrors(t *testing.T) {
 	}
 }
 
+// TestAssessError_QuotesASanitisedReply_349 drives a FakeRunner assessor
+// whose garbage reply carries a CSI colour/cursor sequence and U+202E. The
+// error a person reads quotes it with neither control, the text around them
+// intact and still inside maxOutputInError, while e.Output keeps the raw reply
+// (#349).
+func TestAssessError_QuotesASanitisedReply_349(t *testing.T) {
+	hostile := "before\x1b[31m\x1b[2Amiddle\u202eafter\x1b[0m"
+	for name, reply := range map[string]string{
+		"short": hostile,
+		"long":  hostile + strings.Repeat("\x1b[31mx", 400),
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake, _ := newPlannerFake(runner.NodeOutcome{Result: reply, TotalCostUSD: 0.01})
+			assessErr := assessExpectingError(t, fake, "make the tests green")
+
+			msg := assessErr.Error()
+			if strings.ContainsRune(msg, 0x1b) || strings.ContainsRune(msg, '\u202e') {
+				t.Errorf("the assess error quotes a raw escape or bidi override: %q", msg)
+			}
+			if !strings.Contains(msg, "beforemiddleafter") {
+				t.Errorf("the assess error lost the text around the controls: %q", msg)
+			}
+			_, quoted, _ := strings.Cut(msg, "assessor replied:\n")
+			if len(quoted) > maxOutputInError {
+				t.Errorf("quoted reply is %d bytes, over the %d-byte bound", len(quoted), maxOutputInError)
+			}
+			if assessErr.Output != reply {
+				t.Errorf("e.Output must keep the raw reply, got %q", assessErr.Output)
+			}
+		})
+	}
+}
+
 func TestAssess_EmptyGoalIsAnAssessErrorBeforeAnyCall(t *testing.T) {
 	fake, _ := newPlannerFake(runner.NodeOutcome{Result: assessMetReply})
 	assessExpectingError(t, fake, "  ")
