@@ -181,7 +181,7 @@ func TestReuseMenu_ReuseIsRefusedWhenOffOrNothingOffered(t *testing.T) {
 			fake, _ := newPlannerFake(runnerOutcome(citingSpec("read-and-report", `,"bind":{"target":"README.md"}`)))
 			_, err := New(fake, opts...).Plan(context.Background(), "audit the docs", nil)
 			var planErr *PlanError
-			if !errors.As(err, &planErr) || !strings.Contains(planErr.Reason, `"cite" sets reuse "read-and-report", but no reusable shapes were offered`) {
+			if !errors.As(err, &planErr) || !strings.Contains(planErr.Reason, `"cite" sets reuse, but this plan has nothing it may reuse`) {
 				t.Fatalf("err = %v, want the nothing-offered refusal", err)
 			}
 		})
@@ -226,5 +226,70 @@ func TestReuseMenu_RepairIsJudgedAgainstTheHeldMenu(t *testing.T) {
 	}
 	if len(prompts) != 2 || strings.Contains(prompts[1], "- id: late") {
 		t.Errorf("the repair prompt was re-rendered from a re-scan (%d prompts)", len(prompts))
+	}
+}
+
+// reuseOffLeaks are the strings a planner prompt must not carry with reuse
+// off: the one shipped shape's id, the menu's own wording and the verdict
+// advice's pointer at it, and the shapes vocabulary the planner was never
+// taught.
+var reuseOffLeaks = []string{"read-and-report", reuseMenuMarker, "--- reusable shapes", "on the menu above", "reusable shape"}
+
+// reuseMenuMarker is the first line of the menu block.
+const reuseMenuMarker = "Reusable shapes the operator already keeps."
+
+// #338: with reuse off, NO planner prompt names a shape — not the first call,
+// not its repair, not a goal-loop continuation or that continuation's repair.
+// The leak an end-to-end `auto --no-reuse` check found was the repair: a
+// planner that cites read-and-report anyway is refused, and the refusal the
+// repair prompt quotes back used to repeat the id it cited, so a call that was
+// offered nothing was shown the shape's name. This plans against this
+// checkout's graphs/fragments/, where read-and-report is admissible, so a
+// prompt that reached the catalog or the pointer would carry it.
+func TestReuseOff_NoPlannerPromptNamesAShape(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := scanReuseCatalog(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := offeredEntry(catalog.Offered, reportingShapeID); !ok {
+		t.Fatalf("this checkout no longer offers %s (offered: %v); the test proves nothing without it", reportingShapeID, menuIDs(catalog.Offered))
+	}
+
+	for name, remaining := range map[string]string{"first and repair": "", "continuation and repair": "the README summary is still missing"} {
+		t.Run(name, func(t *testing.T) {
+			fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+				plannerKey: runnerOutcome(citingSpec(reportingShapeID, `,"bind":{"target":"README.md"}`)),
+				"repair":   {Result: validSpec},
+			})
+			var prompts []string
+			fake.KeyFn = func(spec runner.NodeInvocation) string {
+				prompts = append(prompts, spec.Prompt)
+				if strings.Contains(spec.Prompt, repairMarker) {
+					return "repair"
+				}
+				return plannerKey
+			}
+			plan, err := New(fake, WithInvocationDir(root), WithoutReuse()).plan(context.Background(), "summarise the README", nil, remaining)
+			if err != nil {
+				t.Fatalf("plan: %v", err)
+			}
+			if plan.Repaired == nil || len(prompts) != 2 {
+				t.Fatalf("want the citing reply refused and repaired: %d prompts, repaired %v", len(prompts), plan.Repaired)
+			}
+			if remaining != "" && !strings.Contains(prompts[0], remaining) {
+				t.Fatal("the first prompt is not a continuation")
+			}
+			for i, prompt := range prompts {
+				for _, leak := range reuseOffLeaks {
+					if strings.Contains(strings.ToLower(prompt), strings.ToLower(leak)) {
+						t.Errorf("prompt %d of %d names %q with reuse off", i+1, len(prompts), leak)
+					}
+				}
+			}
+		})
 	}
 }

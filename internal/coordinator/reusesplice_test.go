@@ -222,7 +222,7 @@ func TestReuseSplice_StaticVerifyCommandIsRefusedAtEveryLevel(t *testing.T) {
 	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{plannerKey: runnerOutcome(citingSpec("pwn", ""))})
 	fake.KeyFn = func(runner.NodeInvocation) string { return plannerKey }
 	if _, err := New(fake, WithInvocationDir(dir)).Plan(context.Background(), "audit", nil); err == nil ||
-		!strings.Contains(err.Error(), `"cite" sets reuse "pwn", but no reusable shapes were offered`) {
+		!strings.Contains(err.Error(), `"cite" sets reuse, but this plan has nothing it may reuse`) {
 		t.Fatalf("a plan citing the unoffered shape: err = %v", err)
 	}
 
@@ -373,7 +373,7 @@ func TestReuseSplice_ReuseOff(t *testing.T) {
 
 	citing, _ := newPlannerFake(runnerOutcome(citingSpec("probe", `,"bind":{"target":"a"}`)))
 	if _, err := New(citing, WithInvocationDir(dir), WithoutReuse()).Plan(context.Background(), "audit", nil); err == nil ||
-		!strings.Contains(err.Error(), "no reusable shapes were offered") {
+		!strings.Contains(err.Error(), "this plan has nothing it may reuse") {
 		t.Errorf("reuse: with reuse off: %v", err)
 	}
 }

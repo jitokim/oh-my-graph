@@ -1764,10 +1764,14 @@ func validatePlannedNodeTools(node graph.Node) *PlanError {
 // With nothing offered — reuse turned off, or no fragment admitted — the
 // disposition is simply "rejected", and that one refusal is all the node gets:
 // it must write its own prompt and tools, so the advice the other refusals
-// give would point the wrong way.
+// give would point the wrong way. It names the field and never the id the node
+// cited, nor any shape: the repair prompt quotes it back to a call that was
+// offered nothing, and repeating the id there would show that call a shape's
+// name — on this repository, read-and-report under --no-reuse (#338). The node
+// id is enough to find the citation.
 //
-// Every refusal is repairable: its text names the id and lists the menu, so a
-// re-plan carries what it needs to converge.
+// Every other refusal is repairable the same way: its text names the id and
+// lists the menu, so a re-plan carries what it needs to converge.
 func validatePlannedNodeReuse(node graph.Node, offered []ReuseEntry) []*PlanError {
 	if node.Reuse == "" {
 		if node.Bind == nil {
@@ -1779,7 +1783,7 @@ func validatePlannedNodeReuse(node graph.Node, offered []ReuseEntry) []*PlanErro
 	}
 	if len(offered) == 0 {
 		return []*PlanError{{
-			Reason: fmt.Sprintf("planned node %q sets reuse %q, but no reusable shapes were offered to this plan; drop reuse and bind, and write the node's own prompt and allowed_tools", node.ID, node.Reuse),
+			Reason: fmt.Sprintf("planned node %q sets reuse, but this plan has nothing it may reuse; drop reuse and bind, and write the node's own prompt and allowed_tools", node.ID),
 		}}
 	}
 	var refusals []*PlanError

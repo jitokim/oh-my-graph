@@ -158,11 +158,15 @@ func TestReuseCitation_BindWithoutReuseIsRefused(t *testing.T) {
 
 // #338: with nothing offered, reuse: is refused by its disposition case alone
 // — not as an unlisted id, and without the prompt/tools advice, which would
-// point the wrong way when the node has to write both itself.
+// point the wrong way when the node has to write both itself. Nor does it
+// repeat the cited id: the repair prompt quotes it to a call offered nothing.
 func TestReuseCitation_NothingOfferedRefusesReuse(t *testing.T) {
 	refusals := reuseRefusals(t, citingReply(`"reuse":"read-and-report","bind":{"target":"a","question":"b"}`), nil)
-	assertOneRefusal(t, refusals, `"read-and-report"`, "no reusable shapes were offered")
+	assertOneRefusal(t, refusals, "sets reuse, but this plan has nothing it may reuse")
 	if strings.Contains(refusals[0], "not one of the shapes offered") {
 		t.Errorf("nothing offered was reported as an unlisted id: %q", refusals[0])
+	}
+	if strings.Contains(refusals[0], "read-and-report") {
+		t.Errorf("the refusal repeats the unoffered id: %q", refusals[0])
 	}
 }
