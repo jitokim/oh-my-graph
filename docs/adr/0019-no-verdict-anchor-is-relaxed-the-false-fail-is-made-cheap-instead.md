@@ -401,11 +401,13 @@ change than widening what the check accepts.
 
 ## 6. Consequences
 
-- A green `merge-shepherd` run still does not mean anything landed — the
-  verdict is two-valued and `WITHHELD` passes. That was already true and the
-  graph header already says it. Since 2026-08-09 the routine path no longer
-  relies on it: `recheck` waits for the checks, and `WITHHELD` is the fallback
-  for its `UNSETTLED` timeout (see the update above).
+- Before #334 a green `merge-shepherd` run did not mean anything landed —
+  the verdict is two-valued and `WITHHELD` always passed. Since 2026-10-07
+  (#334) `merge`'s engine-run verify passes the node in two cases only: the
+  PR is MERGED at exactly the 40-hex SHA `recheck` answered `RECHECKED`, or
+  `recheck` was `UNSETTLED` and the PR is still OPEN — the deliberate
+  `WITHHELD`. A green run that merged nothing is now reachable by that second
+  path only (see the #334 update above).
 - DESIGN.md's "no flags the engine adds" sentence stands, and so does "no
   `(?m)` in this repo": a pattern *may* set a flag, and none does.
 - `merge` can now read PR state and test ancestry with `git merge-base`. Any
