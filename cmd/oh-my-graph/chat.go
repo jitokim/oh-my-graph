@@ -26,13 +26,17 @@ type chatFlags struct {
 	noAgentMapping    bool
 	noAgents          agentNameFlag
 	noSkillActivation bool
+	// noReuse is `auto --no-reuse` on chat's planning path (ADR 0038 §2.5):
+	// a graph turn renders the same planner prompt, menu included.
+	noReuse bool
 
 	set *flag.FlagSet
 }
 
-// newChatFlags builds a chatFlags with its FlagSet configured. The mapping
-// opt-outs only — --no-agent-mapping, its per-agent form --no-agent, and
-// --no-skill-activation (whose deprecated alias parse rewrites) — because a
+// newChatFlags builds a chatFlags with its FlagSet configured. The opt-outs
+// only — --no-agent-mapping, its per-agent form --no-agent,
+// --no-skill-activation (whose deprecated alias parse rewrites) and
+// --no-reuse (ADR 0038 §2.5) — because a
 // chat graph turn IS an auto run and must honor the same opt-outs. --no-agent
 // is registered here for exactly that reason: a chat turn plans and runs
 // unattended too, so the ceiling an agent mapping costs (agentmap.go) is
@@ -42,6 +46,7 @@ func newChatFlags() *chatFlags {
 	f.set.BoolVar(&f.noAgentMapping, "no-agent-mapping", false, "do not auto-map planned nodes onto your Claude Code agents (~/.claude/agents, ./.claude/agents)")
 	f.set.Var(&f.noAgents, "no-agent", "do not auto-map this ONE agent, by its frontmatter name (repeatable) — the per-agent form of --no-agent-mapping")
 	f.set.BoolVar(&f.noSkillActivation, "no-skill-activation", false, "do not stage your Claude Code skills (~/.claude/skills) for planned nodes")
+	f.set.BoolVar(&f.noReuse, "no-reuse", false, noReuseUsage)
 	return f
 }
 
@@ -52,7 +57,7 @@ func (f *chatFlags) parse(args []string) error {
 		return err
 	}
 	if f.set.NArg() > 0 {
-		return fmt.Errorf("chat: unexpected argument %q (usage: oh-my-graph chat [--no-agent-mapping] [--no-agent <name>] [--no-skill-activation])", f.set.Arg(0))
+		return fmt.Errorf("chat: unexpected argument %q (usage: oh-my-graph chat [--no-agent-mapping] [--no-agent <name>] [--no-skill-activation] [--no-reuse])", f.set.Arg(0))
 	}
 	return nil
 }
@@ -104,6 +109,9 @@ func runChatWith(runtime runner.Runtime, args []string, in io.Reader, out io.Wri
 	} else {
 		fmt.Fprintln(out, "Codex runtime: Claude agent mapping and skill activation are unavailable; each generated plan will show its filesystem sandbox policy before confirmation.")
 	}
+	// Outside the runtime branch: the menu is in the planner prompt, which
+	// both runtimes render.
+	options = append(options, reuseOptions(flags.noReuse)...)
 	// `chat` asks the build-evidence question and never refuses on it (ADR 0030
 	// §2.6): it registers no verification flags, so a refusal here could only
 	// name a flag `chat` rejects — the dead end #198 was. What it gets instead is

@@ -32,12 +32,22 @@ func WithInterviewPrefix(prefix string) Option {
 // repair attempt and every cycle's continuation from what this returns, and
 // one that re-planned without the answers would be answering a different
 // question from the one refused (ADR 0044 §2.2).
-func (c *Coordinator) plannerBase(goal string, inputKeys []string, remaining string) (string, error) {
-	base, err := plannerPromptFor(goal, inputKeys, remaining, c.verifyCommand.Supplied())
+//
+// It is also the ONE place a planning call scans the reuse catalog (ADR 0038):
+// the menu is read here, rendered into the base, and returned with it, so plan
+// holds exactly the offered set this prompt showed and judges the reply — and
+// its repair, which is built from this same base — against that, never a
+// re-scan of the disk.
+func (c *Coordinator) plannerBase(goal string, inputKeys []string, remaining string) (string, ReuseCatalog, error) {
+	catalog, err := c.reuseCatalog()
 	if err != nil {
-		return "", err
+		return "", ReuseCatalog{}, err
 	}
-	return c.interviewPrefix + base, nil
+	base, err := plannerPromptFor(goal, inputKeys, remaining, c.verifyCommand.Supplied(), catalog.Offered)
+	if err != nil {
+		return "", ReuseCatalog{}, err
+	}
+	return c.interviewPrefix + base, catalog, nil
 }
 
 // Interviewer returns the asker internal/interview's Run calls once per

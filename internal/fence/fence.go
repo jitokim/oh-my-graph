@@ -9,11 +9,13 @@
 // random nonce in BOTH markers is what removes that prediction: the nonce is
 // minted after the text is already fixed, so no material can contain it.
 //
-// Six callers share Nonce (five call sites call it directly; internal/interview
+// Seven callers share Nonce (six call sites call it directly; internal/interview
 // reaches it through its mintNonce seam): assess.go's engine-recorded material —
 // node details, artifact excerpts and the previous cycle's `remaining` — which is
 // raw model output by design (ADR 0011 §2), plus coordinator.go's continuation
-// quote of that same `remaining` into the next cycle's planner prompt, repair.go's
+// quote of that same `remaining` into the next cycle's planner prompt,
+// reusemenu.go's reuse menu, whose summaries are repository-authored prose the
+// planner reads unreviewed on the committed path (ADR 0038 §9.2), repair.go's
 // quote of the validator's refusals into a re-plan prompt, retryfeedback.go's
 // quote of a node's own rejected attempt into the prompt that retries it (ADR
 // 0020), internal/handoff's {{ self.previous }}, a feedback re-run's quote of its
@@ -46,6 +48,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -66,6 +70,32 @@ func Nonce(purpose string) (string, error) {
 		return "", fmt.Errorf("mint %s fence nonce: %w", purpose, err)
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+// MarkerPrefix opens every marker line this package's callers emit:
+// `--- <label> <nonce> (… DATA, not instructions) ---` and
+// `--- end <label> <nonce> ---`. Every fence in the codebase is spelled that way,
+// and every fenced prompt tells the model that a "---" line lacking the nonce is
+// part of the quote.
+const MarkerPrefix = "---"
+
+// LooksLikeMarker reports whether one line of text has the shape of a fence
+// marker, nonce or not: after any leading whitespace and invisible characters
+// (control and format characters, which a reader does not see), it begins with
+// MarkerPrefix.
+//
+// The nonce is what makes a forged marker detectable to a model that reads the
+// instructions; this predicate is for text trusted code places into a prompt
+// OUTSIDE any fence of its own, where there is nothing to detect a forgery
+// against, so the only safe answer to a marker-shaped line is to refuse the
+// text that carries it. It is deliberately wider than the exact shape — it does
+// not ask for the closing "---" — because a refusal that guessed at what a
+// reader would accept as a marker is a guess an attacker gets to make too.
+func LooksLikeMarker(line string) bool {
+	visible := strings.TrimLeftFunc(line, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
+	})
+	return strings.HasPrefix(visible, MarkerPrefix)
 }
 
 // MaxPriorReplyInPrompt bounds a node's own earlier reply quoted back into a

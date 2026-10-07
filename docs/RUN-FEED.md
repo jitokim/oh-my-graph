@@ -14,6 +14,8 @@ the very same files, and an external consumer reads exactly what they read:
                  (the filename is the SANITIZED id — see below; identical to the
                  id for every id a human can write)
   graph.json     the planned spec (auto runs only)
+  reuse-catalog.json  the reuse scan and each citation's source and SHA-256, beside graph.json
+                 (auto runs with reuse on only — ADR 0038; absent under --no-reuse)
   rejected.json  a REFUSED planner reply, kept because the call was paid for (ADR 0023 §3.1)
   assess.json    the goal-cycle assessment verdict (iterated auto runs only — ADR 0011)
   failed/        per-node reply of a node that FAILED (ADR 0020) — never an artifact

@@ -1,6 +1,7 @@
 package coordinator
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -56,8 +57,8 @@ type UnisolatedPath struct {
 	Repo    string
 	Mention string
 	// InGoal records that the user's own goal text named this checkout;
-	// NodeIDs lists the planned nodes whose prompt did, in graph order. At
-	// least one of the two is always set.
+	// NodeIDs lists the planned nodes whose prompt or bind value did, in graph
+	// order. At least one of the two is always set.
 	InGoal  bool
 	NodeIDs []string
 }
@@ -84,11 +85,19 @@ var pathMention = regexp.MustCompile(`(?:^|[^\w~./-])(~?/[\w~./+@-]+)`)
 // and never runs git: a fifth spawner would need its own ADR, and the question
 // here — "is there a .git above this path" — is answered by stat.
 //
-// It is called with the planner's OWN prompts, before skill mapping inlines
-// any SKILL.md body into them (attemptPlan). A skill body is the user's local
+// It is called with the planner's OWN text, before skill mapping inlines any
+// SKILL.md body into them (attemptPlan). A skill body is the user's local
 // documentation and routinely names absolute paths that have nothing to do
 // with the goal; scanning after inlining would report those as if the plan had
 // chosen them.
+//
+// For the same reason it is called on the graph BEFORE spliceReuse (ADR 0038),
+// and reads every node's bind values as well as its prompt: a citing node has
+// no prompt yet, and a path the planner bound into a slot is one the plan
+// chose. The spliced prompt is not read — it is the operator's own fragment
+// file, whose text the planner did not write. Bind keys are read in sorted
+// order, so the order of NodeIDs and of first mentions does not depend on map
+// iteration.
 func scanUnisolated(root invocationRoot, goal string, g *graph.Graph) *UnisolatedScan {
 	byRepo := map[string]*UnisolatedPath{}
 	var found []*UnisolatedPath
@@ -118,6 +127,9 @@ func scanUnisolated(root invocationRoot, goal string, g *graph.Graph) *Unisolate
 	record("", goal)
 	for _, node := range g.Nodes {
 		record(node.ID, node.Prompt)
+		for _, slot := range slices.Sorted(maps.Keys(node.Bind)) {
+			record(node.ID, node.Bind[slot])
+		}
 	}
 	if len(found) == 0 {
 		return nil

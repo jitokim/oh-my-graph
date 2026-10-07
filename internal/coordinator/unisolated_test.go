@@ -395,3 +395,57 @@ func TestPlan_SkillBodyPathsAreNotWarnedAbout(t *testing.T) {
 		t.Fatalf("plan.Unisolated = %+v, want nil: the path is inside a skill file, which no node prompt names", plan.Unisolated)
 	}
 }
+
+// #338: a citing node carries no prompt of its own before the splice — its
+// values are in bind — so a checkout the planner named only as a bind value
+// must still warn, attributed to that node.
+func TestPlan_BindValueNamingAForeignCheckoutWarns(t *testing.T) {
+	dir := plantCatalog(t, map[string]string{"probe": admissibleFragment("probe")})
+	other := newCheckout(t, filepath.Join(t.TempDir(), "other-repo"))
+
+	fake, _ := newPlannerFake(runnerOutcome(citingSpec("probe", `,"bind":{"target":"`+other+`/README.md"}`)))
+	plan, err := New(fake, WithInvocationDir(dir)).Plan(context.Background(), "audit the docs", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if plan.Unisolated == nil || len(plan.Unisolated.Paths) != 1 {
+		t.Fatalf("plan.Unisolated = %+v, want one warning for %s", plan.Unisolated, other)
+	}
+	got := plan.Unisolated.Paths[0]
+	if got.Repo != resolveSymlinks(other) {
+		t.Errorf("repo = %s, want %s", got.Repo, other)
+	}
+	if got.InGoal || len(got.NodeIDs) != 1 || got.NodeIDs[0] != "cite" {
+		t.Errorf("inGoal %v nodes %v, want only the citing node cite", got.InGoal, got.NodeIDs)
+	}
+}
+
+// #338: the spliced prompt is the operator's own fragment file, not the
+// planner's text, so a checkout named only there must not warn — the scan runs
+// on the graph before the splice. The splice is asserted to have happened, or
+// the silence would prove nothing.
+func TestPlan_SplicedFragmentPromptPathsAreNotWarnedAbout(t *testing.T) {
+	other := newCheckout(t, filepath.Join(t.TempDir(), "other-repo"))
+	prompt := "Read " + other + "/README.md and report. Start with DONE."
+	dir := plantCatalog(t, map[string]string{"probe": `fragment: probe
+description: read a fixed file and report on it
+node:
+  type: claude-run
+  prompt: "` + prompt + `"
+  allowed_tools: [Read, Grep, Glob]
+`})
+
+	fake, _ := newPlannerFake(runnerOutcome(citingSpec("probe", "")))
+	plan, err := New(fake, WithInvocationDir(dir)).Plan(context.Background(), "audit the docs", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cite, ok := plan.Graph.NodeByID("cite"); !ok || cite.Prompt != prompt {
+		t.Fatalf("cite = %+v, want the fragment's prompt spliced in — the test is meaningless without it", cite)
+	}
+	if plan.Unisolated != nil {
+		t.Fatalf("plan.Unisolated = %+v, want nil: the path is in the fragment's own prompt, which the planner did not write", plan.Unisolated)
+	}
+}

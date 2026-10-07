@@ -43,10 +43,13 @@ func newPlannerFake(outcome runner.NodeOutcome) (*runner.FakeRunner, *runner.Nod
 	return fake, captured
 }
 
-// planExpectingError runs Plan and asserts it failed with a *PlanError.
+// planExpectingError runs Plan and asserts it failed with a *PlanError. It
+// plans from an empty invocation directory, so nothing is offered for reuse
+// (#338) and every probe is judged in that one state whatever the checkout
+// running it ships.
 func planExpectingError(t *testing.T, fake *runner.FakeRunner, goal string) *PlanError {
 	t.Helper()
-	_, err := New(fake).Plan(context.Background(), goal, nil)
+	_, err := New(fake, WithInvocationDir(t.TempDir())).Plan(context.Background(), goal, nil)
 	var planErr *PlanError
 	if !errors.As(err, &planErr) {
 		t.Fatalf("err = %v, want *PlanError", err)
@@ -200,7 +203,7 @@ func TestPlan_PromptRequiresBranchAssertionInCheckNodes(t *testing.T) {
 // property of the repository and survives that; a checked-out HEAD is not.
 func TestPlannerPromptAsksForRepositoryStateNotCheckoutState(t *testing.T) {
 	for _, supplied := range []bool{true, false} {
-		prompt := plannerPrompt("fix the bug and open a PR", nil, supplied)
+		prompt := plannerPromptNoMenu(t, "fix the bug and open a PR", supplied)
 
 		for _, want := range []string{
 			// remote state first, then the ref — both repository-scoped
@@ -254,7 +257,7 @@ func TestPlannerPromptAsksForRepositoryStateNotCheckoutState(t *testing.T) {
 // report from climbing above it.
 func TestPlannerPromptReservesTheWholeReplyPinForAssertingNodes(t *testing.T) {
 	for _, supplied := range []bool{true, false} {
-		prompt := plannerPrompt("audit the corpus and record what you find", nil, supplied)
+		prompt := plannerPromptNoMenu(t, "audit the corpus and record what you find", supplied)
 
 		for _, want := range []string{
 			// who the pin is for
@@ -286,7 +289,7 @@ func TestPlannerPromptReservesTheWholeReplyPinForAssertingNodes(t *testing.T) {
 	// hands out the whole-reply pattern, and plannedVerdictPatternIn still finds
 	// the real one first (the new prose deliberately spells its counter-example
 	// without the "result_matches" marker, so it cannot be picked up instead).
-	prompt := plannerPrompt("audit the corpus and record what you find", nil, false)
+	prompt := plannerPromptNoMenu(t, "audit the corpus and record what you find", false)
 	if got := plannedVerdictPatternIn(t, prompt); got != plannedVerdictPattern {
 		t.Errorf("the pattern the planner is handed is no longer the whole-reply pin: %q", got)
 	}
