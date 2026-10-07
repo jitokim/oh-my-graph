@@ -197,9 +197,11 @@ func resumeGateLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner
 	if snap.Gate.PausedAt == "" {
 		return fmt.Errorf("run %q is not paused (nothing to resume; a failed run is retried with --retry-failed)", flags.runID)
 	}
-	// Rendered once, against the run as the pause left it, so every line this
-	// leg prints about the gate shows the same text the pause did (#346).
-	description, err := snapshotGateDescription(flags.runID, snap, snap.Gate.PausedAt)
+	// Read once — the copy the pause stored, which the web live view also
+	// served (#348), or rendered against the run as the pause left it for an
+	// older snapshot — so every line this leg prints about the gate, and the
+	// gate_description it records, show the same text the pause did (#346).
+	description, err := decidedGateDescription(flags.runID, snap)
 	if err != nil {
 		return fmt.Errorf("resume run %q: %w", flags.runID, err)
 	}
@@ -240,7 +242,7 @@ func resumeRetryLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runne
 	banner := fmt.Sprintf("Resuming run %q (retrying failed nodes: %s)", flags.runID, strings.Join(cleared, ", "))
 	if len(cleared) == 0 {
 		if snap.Gate.PausedAt != "" {
-			description, err := snapshotGateDescription(flags.runID, snap, snap.Gate.PausedAt)
+			description, err := decidedGateDescription(flags.runID, snap)
 			if err != nil {
 				return fmt.Errorf("resume run %q: %w", flags.runID, err)
 			}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/handoff"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
@@ -82,6 +83,22 @@ func snapshotGateDescription(runID string, snap runstate.Snapshot, gateID string
 		h.Seed(nodeID, rec.ArtifactPath, rec.SessionID)
 	}
 	return shownGateDescription(g, h, gateID)
+}
+
+// decidedGateDescription is the description of the gate snap is paused at, as
+// the person deciding it was shown it (#348): the copy the pause stored
+// (runstate.GateState.PausedGateDescription), which is also what the web live
+// view served, so a decision made from the page records exactly the bytes the
+// page showed. A snapshot without a stored copy — written before #348, or
+// paused at a gate with no description — falls back to rendering it, which
+// for the latter is "" anyway. The stored copy is passed through
+// fence.SanitizeTerminalLine once more: a no-op on what the pause wrote, it
+// keeps resume's terminal echo safe from a hand-edited state.json.
+func decidedGateDescription(runID string, snap runstate.Snapshot) (string, error) {
+	if stored := snap.Gate.PausedGateDescription; stored != "" {
+		return fence.SanitizeTerminalLine(stored), nil
+	}
+	return snapshotGateDescription(runID, snap, snap.Gate.PausedAt)
 }
 
 // pausedGateDescription is the shown description of the gate runErr paused
