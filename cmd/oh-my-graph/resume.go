@@ -157,7 +157,9 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner, web browser
 
 	// The refusal `run` gives at load, given again to the graph this run holds
 	// (#346), before either mode and so before anything spawns. A snapshot
-	// whose graph does not parse is left to the modes' own parse to report.
+	// whose graph does not parse is left to the modes to report: each parses
+	// it (or has snapshotGateDescription parse it) before it names a gate or
+	// spawns a node.
 	if g, parseErr := graph.Parse(snap.Graph); parseErr == nil {
 		if err := gateDescriptionRefusal(g); err != nil {
 			return fmt.Errorf("resume run %q: %w", runID, err)

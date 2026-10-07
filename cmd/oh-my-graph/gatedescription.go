@@ -69,12 +69,13 @@ func shownGateDescription(g *graph.Graph, h *handoff.Handoff, gateID string) (st
 // snapshotGateDescription is shownGateDescription for a run known only by its
 // snapshot: the graph it holds, and a Handoff seeded from its records exactly
 // as continueRun seeds a resumed leg's, so an artifact token resolves to the
-// same path the pause printed. A snapshot whose graph does not parse shows no
-// description; the caller's own parse reports that failure.
+// same path the pause printed. A snapshot whose graph does not parse is an
+// error, returned before any gate is named, so a broken snapshot is reported
+// as such on every resume path rather than as a gate-shaped refusal.
 func snapshotGateDescription(runID string, snap runstate.Snapshot, gateID string) (string, error) {
 	g, err := graph.Parse(snap.Graph)
 	if err != nil {
-		return "", nil
+		return "", err
 	}
 	h := handoff.New(runDirFor(runID), snap.Inputs)
 	for nodeID, rec := range snap.Nodes {

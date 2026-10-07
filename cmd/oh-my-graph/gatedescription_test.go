@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/jitokim/oh-my-graph/internal/browser"
+	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/schedule"
@@ -495,5 +497,44 @@ func TestPauseHint_UnloadedGateDescriptionFailsLoudly(t *testing.T) {
 	}
 	if strings.Contains(out, "Paused at gate") {
 		t.Errorf("a pause hint was printed without the description:\n%s", out)
+	}
+}
+
+// TestResume_UnparseableSnapshotGraphReportedBeforeGateRefusal_346: #346 — a
+// paused run whose snapshot graph does not parse is reported as that parse
+// failure, wrapped as `resume run <id>`, whether or not the resume names the
+// paused gate: never a gate-shaped refusal, and before any node runs.
+func TestResume_UnparseableSnapshotGraphReportedBeforeGateRefusal_346(t *testing.T) {
+	for _, args := range [][]string{{"--approve", "approve"}, {}} {
+		t.Run(strings.Join(append([]string{"resume"}, args...), " "), func(t *testing.T) {
+			isolateRunHome(t)
+			runID, _, _ := describedGateFlowRun(t, "T-42")
+			_, snap := loadRunSnapshot(t, runID)
+			// Valid JSON, so state.json still loads, but a dependency on a
+			// node the graph does not hold, so graph.Parse refuses it.
+			snap.Graph = json.RawMessage(`{"name":"gate-flow","nodes":[{"id":"approve","type":"gate","depends_on":["missing"]}]}`)
+			_, parseErr := graph.Parse(snap.Graph)
+			if parseErr == nil {
+				t.Fatal("fixture graph parses; it must not")
+			}
+			if err := runstate.Write(filepath.Join(runDirFor(runID), stateFileName), snap); err != nil {
+				t.Fatalf("write state.json: %v", err)
+			}
+
+			fake := runner.NewFakeRunner(nil)
+			var err error
+			captureStdout(t, func() {
+				err = executeResume(parseResumeFlags(t, append([]string{runID}, args...)), fake, nil)
+			})
+			if want := "resume run \"" + runID + "\": " + parseErr.Error(); err == nil || err.Error() != want {
+				t.Fatalf("got %v, want %q", err, want)
+			}
+			if strings.Contains(err.Error(), "paused at") {
+				t.Errorf("a gate-shaped refusal was reported instead of the parse failure: %v", err)
+			}
+			if n := len(fake.Invocations()); n != 0 {
+				t.Errorf("%d nodes ran on an unparseable snapshot, want 0", n)
+			}
+		})
 	}
 }
