@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,9 +12,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jitokim/oh-my-graph/internal/graph"
+	"github.com/jitokim/oh-my-graph/internal/handoff"
+	"github.com/jitokim/oh-my-graph/internal/ledger"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
+	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/runstatus"
+	"github.com/jitokim/oh-my-graph/internal/schedule"
 )
 
 // testPoll keeps the tail loop's end-of-stream sleep short so follow tests
@@ -743,5 +749,43 @@ func TestFormatWatchElapsed(t *testing.T) {
 		if got := formatWatchElapsed(tc.in); got != tc.want {
 			t.Errorf("formatWatchElapsed(%v) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// TestWatchRun_PrintsAnEngineSanitisedDetail_349 runs a FakeRunner node whose
+// failure cause carries a CSI colour/cursor sequence and U+202E through the
+// real scheduler into a real events.jsonl, then watches that stream. The
+// Detail watch prints went through the engine's capDetail, so neither control
+// reaches the terminal, and the text around them does (#349).
+func TestWatchRun_PrintsAnEngineSanitisedDetail_349(t *testing.T) {
+	const runID = "20261007-000349"
+	dir := t.TempDir()
+	g, err := graph.Parse([]byte("name: hostile\nnodes:\n  - { id: crashed, prompt: crashed }\n"))
+	if err != nil {
+		t.Fatalf("parse graph: %v", err)
+	}
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"crashed": {ExitCode: 1, FailureCause: "before\x1b[31m\x1b[2Amiddle‮after\x1b[0m"},
+	})
+	feed, err := runfeed.NewStreamWriter(filepath.Join(dir, runfeed.FileName), runID)
+	if err != nil {
+		t.Fatalf("open event stream: %v", err)
+	}
+	s := schedule.NewScheduler(fake, schedule.Options{ProgressWriter: io.Discard, EventSink: feed})
+	if err := s.Run(context.Background(), g, handoff.New(t.TempDir(), nil), ledger.New(runID)); err == nil {
+		t.Fatal("expected crashed to fail")
+	}
+	feed.Close()
+
+	var out, warn strings.Builder
+	if err := watchRun(context.Background(), &out, &warn, dir, runID, testPoll); err != nil {
+		t.Fatalf("watchRun returned error: %v", err)
+	}
+	got := out.String()
+	if strings.ContainsRune(got, 0x1b) || strings.ContainsRune(got, '‮') {
+		t.Errorf("watch printed a raw escape or bidi override:\n%q", got)
+	}
+	if !strings.Contains(got, "✗ crashed  FAILED: ") || !strings.Contains(got, "beforemiddleafter") {
+		t.Errorf("watch lost the failure line or the text around the controls:\n%s", got)
 	}
 }

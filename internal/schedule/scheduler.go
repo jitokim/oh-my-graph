@@ -26,6 +26,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/gate"
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/handoff"
@@ -71,8 +72,9 @@ const (
 // verify_failed retry cause must all agree on.
 const predicateVerify = "verify"
 
-// maxDetailRunes is the one shared bound on a detail string — applied at every
-// point a message becomes a ledger/snapshot/event Detail: a verification
+// maxDetailRunes is the one shared bound on a detail string — applied, after
+// capDetail has sanitised the string for the terminal, at every point a
+// message becomes a ledger/snapshot/event Detail: a verification
 // command's output tail (outputTail), every cause in failRecord, a
 // session-limit pause's node list (runFinishedEvent), and both halves of a
 // feedback round's narration (judgeFeedback). Enough to see the
@@ -81,12 +83,23 @@ const predicateVerify = "verify"
 // arbitrarily long).
 const maxDetailRunes = 240
 
-// capDetail bounds a detail string at maxDetailRunes, keeping the TAIL and
-// marking the cut — the same choice tailOf and outputTail make, because this
-// codebase's long strings put the payload last (a stderr complaint, a failing
-// command's output) and the head they lose (the node id, the predicate) is
-// carried separately by every surface that shows a Detail.
+// capDetail sanitises a detail string for the terminal and then bounds it at
+// maxDetailRunes, keeping the TAIL and marking the cut — the same choice
+// tailOf and outputTail make, because this codebase's long strings put the
+// payload last (a stderr complaint, a failing command's output) and the head
+// they lose (the node id, the predicate) is carried separately by every
+// surface that shows a Detail.
+//
+// A Detail carries model-, repo- and verify-controlled text, and it reaches a
+// person's terminal on every surface that shows one — the end-of-run ledger
+// table, `watch`, the serve live view — by way of state.json and
+// events.jsonl. fence.SanitizeTerminalLine runs FIRST, so the bound applies to
+// the cleaned text and an escape sequence can never be cut in half into
+// something that survives (#349). Only the rendered Detail is cleaned: a
+// verdict is still judged on the raw verify.Result.Output, and the
+// feedback/retry evidence quoted to a model keeps its raw text.
 func capDetail(s string) string {
+	s = fence.SanitizeTerminalLine(s)
 	if runes := []rune(s); len(runes) > maxDetailRunes {
 		return "…" + string(runes[len(runes)-maxDetailRunes:])
 	}
