@@ -113,8 +113,11 @@ A bound key the graph's `inputs:` does not declare is still bound, but draws one
 warning naming the key and where it came from, never the value, with a guess
 when a declared name is close (`input "tsak" (from inputs.yaml) is not declared
 in the graph's inputs list; it is bound anyway — did you mean "task"?`). `run`
-prints it at load, `--dry-run` included; `auto` prints it on the plan screen,
-against the planned graph. The exit status does not change.
+prints it at load, `--dry-run` included. `auto` prints it on the plan screen,
+`--plan-only` included, but only for a near miss of a name the planned graph
+declares or references as `{{ inputs.<name> }}`: the planner saw every input
+and may simply not need one, so `auto "..." --input repo=$PWD` stays quiet.
+The exit status does not change.
 
 Engine-run evidence is established per RUN, not per node: `--verify-cmd`
 attaches your command to the sinks of the plan (ADR 0030), and a planned
