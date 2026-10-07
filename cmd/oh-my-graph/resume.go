@@ -195,6 +195,11 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner, web browser
 // whole run.
 func resumeGateLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner.NodeRunner, web browser.Opener) error {
 	if snap.Gate.PausedAt == "" {
+		// A run paused on a limit, not at a gate, is told so from its record
+		// (ADR 0031 §8.3) rather than that it "is not paused".
+		if snap.LimitPause != nil {
+			return fmt.Errorf("run %q is paused on a %s, not at a gate (resume it with --retry-failed)", flags.runID, limitPauseSummary(snap.LimitPause))
+		}
 		return fmt.Errorf("run %q is not paused (nothing to resume; a failed run is retried with --retry-failed)", flags.runID)
 	}
 	// Read once — the copy the pause stored, which the web live view also
@@ -688,6 +693,9 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// PausedAt starts empty: the run is actively continuing, not paused,
 		// until (if at all) this leg pauses again at a later gate.
 		Gate: runstate.GateState{Decisions: decisions},
+		// LimitPause is deliberately NOT carried, for the same reason: the
+		// first write of this leg clears an earlier leg's limit pause, and a
+		// limit this leg hits records its own (ADR 0031 §8.1).
 	})
 
 	// Reopened in append mode, so the resumed leg continues the same
@@ -795,7 +803,7 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	if err != nil {
 		return err
 	}
-	printDescribedPauseHint(os.Stdout, runID, runErr, verifyCmd, description)
+	printDescribedPauseHint(os.Stdout, runID, runErr, verifyCmd, description, recordedLimitPause(runID, runErr))
 
 	return runErr
 }

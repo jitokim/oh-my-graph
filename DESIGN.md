@@ -2103,6 +2103,22 @@ incompatible snapshot is refused rather than misread:
   not change; this field is the one additive exception, of the same class as
   `gate_description`: `omitempty`, schema still 3, and a snapshot not paused
   at a described gate is byte-identical.
+- **a usage-limit pause**, if the leg stopped on one (`limit_pause`, ADR 0031
+  §8, #358): the sorted ids of the limited nodes, the first one's captured
+  cause verbatim, and when the pause was taken. It records the pause, not the
+  nodes — a limited node is still recorded nowhere (ADR 0009). It is written by
+  the scheduler (`Scheduler.execute` → `Recorder.RecordLimitPause`, persisted
+  by `SnapshotRecorder.RecordLimitPause` in one write) once per leg, after
+  in-flight siblings drain and before the gate branch, so a leg that pauses on
+  a limit and at a gate persists both records while the gate still wins the
+  returned error. It is cleared the way `gate.paused_at` is: `continueRun`
+  (`cmd/oh-my-graph/resume.go`) seeds the resumed leg's recorder without it,
+  so that leg's first write drops it, and a limit the leg hits records its
+  own. Display only: `runs list` and the end-of-leg pause hint name the cause
+  from it, and `resume --approve/--reject` on such a run says it is paused on
+  a limit rather than "not paused"; `runstatus` does not read it, nothing a
+  resume re-launches depends on it, and its write is non-fatal, like a node's.
+  `omitempty`, schema still 3.
 
 **One field the snapshot holds but `resume` does not trust**: an auto graph's
 `success_check.verify`. A verification is a command the ENGINE runs, outside
@@ -2136,7 +2152,8 @@ disk always reflects everything finished so far, including a Ctrl-C'd or
 crashed run's progress. Two resume modes read that file: the gate mode only
 continues a run whose snapshot actually recorded a gate pause
 (`Gate.PausedAt != ""`) and refuses anything else with "run is not paused"
-(see `executeResume`'s guard), while `--retry-failed` continues a run whose
+— or, when the snapshot holds a `limit_pause` record, names that limit and
+points to `--retry-failed` (see `resumeGateLeg`'s guard) — while `--retry-failed` continues a run whose
 snapshot recorded failures (see the CLI contract below). A Ctrl-C'd or
 crashed run that recorded neither a pause nor a failure is still neither
 mode's business — resuming that is future work. A snapshot

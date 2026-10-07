@@ -1517,4 +1517,21 @@ writes `try again at Sep 13th, 2026 10:04 PM`; the hint prints
 `resets Sep 13th, 2026 10:04 PM`) — carried, never turned into a clock,
 because it names no timezone.
 
+The pause also says **why**, from a record the run keeps in `state.json`
+(`limit_pause`: the limited node ids, the CLI's message, the time —
+[RUN-FEED](RUN-FEED.md#statejson--the-snapshot), #358). The hint's first line
+carries the CLI's message, cleaned for the terminal — `Session limit reached
+(resets 5:20pm): <the CLI's message>`, then `Resume after 5:20pm with:` and
+the same command. `runs list` prints a line under that run's `PAUSED` hint:
+
+```
+  paused on a usage limit at <node ids>: <the CLI's message>
+```
+
+and `resume --approve`/`--reject` on such a run, which has no gate to decide,
+refuses with `run "<run-id>" is paused on a usage limit at <node ids>: <the
+CLI's message>, not at a gate (resume it with --retry-failed)`. The status is
+still `PAUSED` and every exit code is unchanged; the record is display only,
+and the next resumed leg clears it.
+
 Spec: [ADR 0009](adr/0009-a-session-limit-is-a-pause-not-a-failure.md).

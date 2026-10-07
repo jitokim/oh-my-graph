@@ -695,6 +695,39 @@ type Snapshot struct {
 	// Gate is the run's gate progress: decisions so far and the gate it is paused
 	// at, if any.
 	Gate GateState `json:"gate"`
+	// LimitPause is the run-level record of a usage-limit pause (ADR 0031 §8),
+	// beside the gate pause Gate records. nil — and absent — on every snapshot
+	// whose leg did not stop on a limit. See LimitPause.
+	LimitPause *LimitPause `json:"limit_pause,omitempty"`
+}
+
+// LimitPause records that a leg stopped launching new work because a node's
+// model CLI hit its usage limit (ADR 0009; ADR 0031 §8.1). It records the
+// PAUSE, not the nodes: a limited node is still recorded nowhere in Nodes, so
+// a resume re-launches it exactly as before.
+//
+// It is for display only (§8.2). Nothing reads it to decide anything — not the
+// status (runstatus derives PAUSED from the event stream, as it does for a
+// gate), not what resume re-launches, not an exit code — so it is additive
+// and does not move the stamp: an older binary ignores the key and resumes the
+// run exactly as it always did.
+//
+// Its lifecycle is the gate record's: written at the pause, in the same leg's
+// snapshot, and cleared by a resumed leg, whose recorder is seeded without it
+// (cmd/oh-my-graph/resume.go builds the base field by field, as it does for
+// Gate.PausedAt), so the leg's first write drops it. A leg that pauses on a
+// limit and at a gate holds both records.
+type LimitPause struct {
+	// NodeIDs are the nodes that hit the limit before the drain finished,
+	// sorted — LimitPausedError.NodeIDs.
+	NodeIDs []string `json:"node_ids"`
+	// Cause is the first limited node's captured failure cause, exactly as the
+	// runtime printed it (internal/runner/sessionlimit.go). It is runtime text:
+	// a reader that prints it sanitizes it. Any reset time stays inside it;
+	// nothing parses one out (§8.2).
+	Cause string `json:"cause"`
+	// At is when the pause was taken: after in-flight siblings drained.
+	At time.Time `json:"at"`
 }
 
 // Conventions is what an `auto --conventions` launch staged (ADR 0041 §2.1).

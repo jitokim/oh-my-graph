@@ -137,11 +137,18 @@ type Recorder interface {
 	RecordGateDecision(gateNodeID string, decision runstate.GateDecision) error
 	// RecordPause is called once per Run(), after in-flight siblings have
 	// drained, when the run stops launching new work at gateNodeID. Unlike the
-	// other two methods, a failure here MUST be treated as fatal by the caller:
+	// other methods, a failure here MUST be treated as fatal by the caller:
 	// a pause whose state was not persisted is an unrecoverable stop and must
 	// not be reported as a clean one (DESIGN.md, "a snapshot write failure at a
 	// gate pause is fatal").
 	RecordPause(gateNodeID string) error
+	// RecordLimitPause is called at most once per Run(), after in-flight
+	// siblings have drained, when the leg stopped on a usage limit: it
+	// persists the run-level record of that pause (runstate.LimitPause, ADR
+	// 0031 §8.1). The record is for display only and changes no control flow,
+	// so like RecordNode a failure here is non-fatal — surfaced on the
+	// progress feed, never a change to Run's returned error.
+	RecordLimitPause(pause runstate.LimitPause) error
 }
 
 // noopRecorder is the Recorder default: a scheduler test (or any caller that
@@ -152,6 +159,7 @@ type noopRecorder struct{}
 func (noopRecorder) RecordNode(string, runstate.NodeRecord) error           { return nil }
 func (noopRecorder) RecordGateDecision(string, runstate.GateDecision) error { return nil }
 func (noopRecorder) RecordPause(string) error                               { return nil }
+func (noopRecorder) RecordLimitPause(runstate.LimitPause) error             { return nil }
 
 // EventSink receives one structured runfeed.Event per lifecycle transition —
 // the third destination fed from the same hook points as the ProgressWriter
@@ -787,6 +795,14 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 	limited := append([]string(nil), limitedNodes...)
 	cause := limitCause
 	pauseMu.Unlock()
+	if len(limited) > 0 {
+		// Recorded before the gate branch below, so a leg that pauses at a
+		// gate AND on a limit persists both records (ADR 0031 §8.3), while the
+		// gate still wins the returned error. Non-fatal either way: the record
+		// is for display and changes nothing a resume does.
+		sort.Strings(limited)
+		s.recordLimitPause(limited, cause)
+	}
 	if gateID != "" {
 		// The pause snapshot write happens here — once, after every in-flight
 		// sibling has drained — never from inside the gate's own evaluation,
@@ -803,7 +819,8 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 		// A session-limit pause needs no RecordPause: the limited nodes are
 		// deliberately absent from the snapshot (they never really ran), and
 		// every settled node was already persisted per node, so the state on
-		// disk is exactly what `resume --retry-failed` reads. A gate pause
+		// disk is exactly what `resume --retry-failed` reads — the limit
+		// record written above only says why it stopped. A gate pause
 		// above wins when both happened — the gate needs its human decision
 		// first, and the gate leg re-runs the un-recorded limited nodes
 		// anyway. The limit in turn wins over pruned continue-on-fail
@@ -811,7 +828,6 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 		// unfinished-and-resumable, not finished-and-failed, and the retained
 		// FAIL records still tell the failures' story (a --retry-failed
 		// clears and re-runs them together with the limited nodes).
-		sort.Strings(limited)
 		return &LimitPausedError{NodeIDs: limited, Cause: cause}
 	}
 
@@ -1339,6 +1355,16 @@ func (s *Scheduler) recordSnapshot(node graph.Node, rec ledger.Record, h *handof
 func (s *Scheduler) recordGateDecision(node graph.Node, decision runstate.GateDecision) {
 	if err := s.recorder.RecordGateDecision(node.ID, decision); err != nil {
 		s.logProgress("⚠ %s  gate decision snapshot write failed: %v\n", node.ID, err)
+	}
+}
+
+// recordLimitPause hands the leg's limit pause — the sorted limited node ids,
+// the first one's cause as captured, and the scheduler clock's time — to the
+// injected Recorder, warning (non-fatally) on the progress feed if it fails.
+func (s *Scheduler) recordLimitPause(nodeIDs []string, cause string) {
+	pause := runstate.LimitPause{NodeIDs: nodeIDs, Cause: cause, At: s.now()}
+	if err := s.recorder.RecordLimitPause(pause); err != nil {
+		s.logProgress("⚠ %s  limit pause snapshot write failed: %v\n", strings.Join(nodeIDs, ", "), err)
 	}
 }
 
