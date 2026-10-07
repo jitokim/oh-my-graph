@@ -30,7 +30,7 @@ func statePath(runID string) string {
 	return filepath.Join(runDirFor(runID), stateFileName)
 }
 
-// TestResume_LegPastTheLimitClearsTheRecord_358: ADR 0031 §8.1 — the record
+// TestResume_LegPastTheLimitClearsTheRecord_358 (#358): ADR 0031 §8.1 — the record
 // is written at the limit pause and cleared by the resumed leg that runs past
 // it, while what resume relaunches and every exit code stay as they were.
 func TestResume_LegPastTheLimitClearsTheRecord_358(t *testing.T) {
@@ -69,7 +69,7 @@ func TestResume_LegPastTheLimitClearsTheRecord_358(t *testing.T) {
 	}
 }
 
-// TestResume_LimitAndGateRecordsKeepTheirOwnLifecycles_358: ADR 0031 §8.3 — a
+// TestResume_LimitAndGateRecordsKeepTheirOwnLifecycles_358 (#358): ADR 0031 §8.3 — a
 // run that pauses on a limit and at a gate holds both records, and each is
 // cleared by the leg that runs past it and rewritten by the leg that hits it
 // again, independently of the other:
@@ -159,7 +159,7 @@ func TestResume_LimitAndGateRecordsKeepTheirOwnLifecycles_358(t *testing.T) {
 	}
 }
 
-// TestResume_OlderStateWithoutTheRecordResumesUnchanged_358: a limit-paused
+// TestResume_OlderStateWithoutTheRecordResumesUnchanged_358 (#358): a limit-paused
 // run whose state.json predates the field — the same snapshot with the key
 // removed — resumes exactly as one carrying it: the same nodes relaunch, the
 // same exit code, and no record afterwards.
