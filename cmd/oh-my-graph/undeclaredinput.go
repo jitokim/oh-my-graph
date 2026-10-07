@@ -70,6 +70,25 @@ func undeclaredInputKeys(declared []string, sources map[string]string) []string 
 	return keys
 }
 
+// unwarnedInputSources is a goal loop's per-cycle view of sources (#356):
+// every bound key not yet in warned, for that cycle's plan screen to judge.
+// The ones the cycle's planned graph does not declare are added to warned on
+// the way out, so across the loop each undeclared key warns once — on the
+// first cycle whose plan leaves it out — and a key a later plan declares
+// costs nothing. warned is the loop's own state, owned by its caller.
+func unwarnedInputSources(declared []string, sources map[string]string, warned map[string]bool) map[string]string {
+	pending := make(map[string]string, len(sources))
+	for key, source := range sources {
+		if !warned[key] {
+			pending[key] = source
+		}
+	}
+	for _, key := range undeclaredInputKeys(declared, pending) {
+		warned[key] = true
+	}
+	return pending
+}
+
 // warnUndeclaredInputs prints undeclaredInputWarnings on warnW through
 // warnLine, so each carries the "warning: <graph path>: " prefix the other
 // load-time warnings do — and the bare "warning: " form on a plan screen whose

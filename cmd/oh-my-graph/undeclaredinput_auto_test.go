@@ -138,3 +138,57 @@ func TestAuto356_WarningPrecedesAnyNodeRun(t *testing.T) {
 		t.Errorf("a bound value leaked:\n%s%s", out.String(), stdout)
 	}
 }
+
+// In a goal loop every cycle's plan is judged, but each key warns once across
+// the whole loop: zzz, undeclared by both plans, warns on cycle 1 only;
+// ticket, declared by cycle 1's plan and dropped by cycle 2's, warns on
+// cycle 2; repo, declared by both, never warns.
+func TestAutoGoalLoop356_EachUndeclaredKeyWarnsOnce(t *testing.T) {
+	isolateRunHome(t)
+	const plan1 = `{"name":"cycle-work","version":"1","inputs":["repo","ticket"],"nodes":[` +
+		`{"id":"work","prompt":"work","allowed_tools":["Read"]}]}`
+	fake := newCycleFake(map[string]runner.NodeOutcome{
+		"plan-1":   {Result: plan1, TotalCostUSD: 0.01},
+		"work-1":   {SessionID: "s-work-1", Result: "PASS", ExitCode: 0},
+		"assess-1": {Result: cycleAssessNotMet},
+		"plan-2":   {Result: repoCycleSpec356, TotalCostUSD: 0.01},
+		"work-2":   {SessionID: "s-work-2", Result: "PASS", ExitCode: 0},
+		"assess-2": {Result: cycleAssessMet},
+	})
+
+	flags := commonRunFlags{
+		inputs:       inputFlag{"repo": secretValue356, "ticket": secretValue356, "zzz": secretValue356},
+		inputSources: map[string]string{"repo": "--input", "ticket": "--input", "zzz": "--input"},
+	}
+	var out bytes.Buffer
+	var err error
+	stdout := captureStdout(t, func() {
+		err = planAndExecute(context.Background(), &out, coordinator.New(fake), fake, flags,
+			"add a README section", goalCycleOptions{maxCycles: 2}, false, nil, nil)
+	})
+	if err != nil {
+		t.Fatalf("a met goal must exit clean whatever was bound: %v", err)
+	}
+	all := out.String() + stdout
+
+	cycle2 := strings.Index(all, "— goal cycle 2/2")
+	if cycle2 < 0 {
+		t.Fatalf("the loop never reached cycle 2:\n%s", all)
+	}
+	for key, wantCycle2 := range map[string]bool{"zzz": false, "ticket": true} {
+		line := planScreenLine356(key, "--input")
+		if n := strings.Count(all, line); n != 1 {
+			t.Errorf("%s warned %d times across the loop, want exactly once:\n%s", key, n, all)
+			continue
+		}
+		if inCycle2 := strings.Index(all, line) > cycle2; inCycle2 != wantCycle2 {
+			t.Errorf("%s warned in cycle 2 = %v, want %v:\n%s", key, inCycle2, wantCycle2, all)
+		}
+	}
+	if strings.Contains(all, `input "repo"`) {
+		t.Errorf("repo, declared by both plans, was warned about:\n%s", all)
+	}
+	if strings.Contains(all, secretValue356) {
+		t.Errorf("a bound value leaked:\n%s", all)
+	}
+}
