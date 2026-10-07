@@ -15,7 +15,7 @@ var limitPauseAt = time.Date(2026, 10, 8, 17, 20, 0, 0, time.UTC)
 
 const claudeLimitCause = "You've hit your session limit · resets 5:20pm"
 
-// TestRecordLimitPause_WritesTheRecordInOneSnapshot_358: ADR 0031 §8.1 — the
+// TestRecordLimitPause_WritesTheRecordInOneSnapshot_358 (#358): ADR 0031 §8.1 — the
 // limited nodes (sorted), the cause exactly as captured, and when, all in one
 // write; the limited nodes themselves stay out of Nodes (ADR 0009) and the
 // stamp does not move (§8.2).
@@ -70,7 +70,7 @@ func TestRecordLimitPause_WritesTheRecordInOneSnapshot_358(t *testing.T) {
 	}
 }
 
-// TestRecordLimitPause_NoLimitWritesNoKey_358: a run that never hits a limit
+// TestRecordLimitPause_NoLimitWritesNoKey_358 (#358): a run that never hits a limit
 // writes no limit_pause key, by Write or by the recorder, so its state.json is
 // byte for byte what it was before the record existed.
 func TestRecordLimitPause_NoLimitWritesNoKey_358(t *testing.T) {
@@ -98,7 +98,7 @@ func TestRecordLimitPause_NoLimitWritesNoKey_358(t *testing.T) {
 	}
 }
 
-// TestLoad_OlderSnapshotWithoutLimitPauseLoadsUnchanged_358: a schema-3
+// TestLoad_OlderSnapshotWithoutLimitPauseLoadsUnchanged_358 (#358): a schema-3
 // snapshot written before the field existed loads with no record and every
 // other field intact, and a leg seeded from it writes no key.
 func TestLoad_OlderSnapshotWithoutLimitPauseLoadsUnchanged_358(t *testing.T) {
@@ -141,7 +141,7 @@ func TestLoad_OlderSnapshotWithoutLimitPauseLoadsUnchanged_358(t *testing.T) {
 	}
 }
 
-// TestRecordLimitPause_BesideAGatePauseKeepsBoth_358: ADR 0031 §8.3 — a leg
+// TestRecordLimitPause_BesideAGatePauseKeepsBoth_358 (#358): ADR 0031 §8.3 — a leg
 // that pauses on a limit and at a gate persists both records, whichever is
 // written first, because each write is the whole snapshot.
 func TestRecordLimitPause_BesideAGatePauseKeepsBoth_358(t *testing.T) {
