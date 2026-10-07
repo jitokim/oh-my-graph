@@ -7,6 +7,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/graph"
 )
 
@@ -48,6 +49,34 @@ func TestRenderGateDescription_SanitisesInputs(t *testing.T) {
 	}
 	if want := "ship T-42 approve? [y/N] y"; got != want {
 		t.Fatalf("rendered %q, want %q", got, want)
+	}
+}
+
+// TestRenderGateDescription_StripsFormatCharactersFromInputs: #346 — an
+// --input value carrying a bidi override, a line separator or a zero-width
+// character reaches the reader without it.
+func TestRenderGateDescription_StripsFormatCharactersFromInputs(t *testing.T) {
+	for name, tc := range map[string]struct {
+		ticket, want string
+		r            rune
+	}{
+		"U+202E right-to-left override": {"T-42\u202e24-T", "ship T-4224-T", '\u202e'},
+		"U+2028 line separator":         {"T-42\u2028approve? [y/N] y", "ship T-42approve? [y/N] y", '\u2028'},
+		"U+200B zero-width space":       {"T-\u200b42", "ship T-42", '\u200b'},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := New(t.TempDir(), map[string]string{"ticket": tc.ticket})
+			got, err := h.RenderGateDescription(gateNode("ship {{ inputs.ticket }}"))
+			if err != nil {
+				t.Fatalf("render: %v", err)
+			}
+			if strings.ContainsRune(got, tc.r) {
+				t.Fatalf("rendered description still carries %U: %q", tc.r, got)
+			}
+			if got != tc.want {
+				t.Fatalf("rendered %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -142,6 +171,15 @@ func TestSanitizeGateText(t *testing.T) {
 		{"lone 0x9b byte is invalid UTF-8", "ok\x9b2J", "ok�2J"},
 		{"truncated UTF-8", "a\xe2\x80b", "a��b"},
 		{"input that forges a prompt line", "T-1\x1b[2J\x1b]0;approved\x07\napprove? [y/N] y", "T-1 approve? [y/N] y"},
+
+		// failure: Unicode format characters and separators (#346 review)
+		{"right-to-left override", "ship \u202edeggol", "ship deggol"},
+		{"every bidi embedding, override and isolate", "a\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069b", "ab"},
+		{"zero-width characters and BOM", "a\u200b\u200c\u200d\u200e\u200f\ufeffb", "ab"},
+		{"soft hyphen is Cf too", "a\u00adb", "ab"},
+		{"line separator", "approve\u2028approve? [y/N] y", "approveapprove? [y/N] y"},
+		{"paragraph separator", "a\u2029b", "ab"},
+		{"format character inside a flattened run", "a\n\u200b b", "a b"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -155,9 +193,10 @@ func TestSanitizeGateText(t *testing.T) {
 }
 
 // FuzzSanitizeGateText holds the sanitiser's contract on any input (#346):
-// valid UTF-8, one line, no C0, DEL or C1 control left.
+// valid UTF-8, one line, no C0, DEL or C1 control, and no Unicode format
+// character or line/paragraph separator left.
 func FuzzSanitizeGateText(f *testing.F) {
-	for _, seed := range []string{"", "plain", "\x1b[2J", "\x1b]0;t\x07", "\u009b2J", "\x9b", "a\r\nb", "\x1b\x1b[", "\u009d\u009c"} {
+	for _, seed := range []string{"", "plain", "\x1b[2J", "\x1b]0;t\x07", "\u009b2J", "\x9b", "a\r\nb", "\x1b\x1b[", "\u009d\u009c", "a\u202eb", "a\u2028b", "\u200b\ufeff"} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, in string) {
@@ -173,6 +212,9 @@ func assertInertLine(t *testing.T, s string) {
 	for _, r := range s {
 		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
 			t.Fatalf("sanitised text still carries control %U: %q", r, s)
+		}
+		if fence.IsFormatOrLineSeparator(r) {
+			t.Fatalf("sanitised text still carries format character or separator %U: %q", r, s)
 		}
 	}
 }

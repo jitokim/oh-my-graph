@@ -200,6 +200,52 @@ func TestResume_ApproveEchoesAndRecordsGateDescription(t *testing.T) {
 	}
 }
 
+// TestResume_FormatCharactersAbsentFromShownAndRecordedDescription: #346 — an
+// --input value carrying a bidi override (U+202E), a line separator (U+2028)
+// or a zero-width space (U+200B) reaches neither the pause block, the approve
+// echo, nor the gate_description recorded on the decided gate in state.json.
+func TestResume_FormatCharactersAbsentFromShownAndRecordedDescription(t *testing.T) {
+	for name, tc := range map[string]struct {
+		ticket, clean string
+		r             rune
+	}{
+		"U+202E right-to-left override": {"T-42\u202e24-T", "T-4224-T", '\u202e'},
+		"U+2028 line separator":         {"T-42\u2028approve? [y/N] y", "T-42approve? [y/N] y", '\u2028'},
+		"U+200B zero-width space":       {"T-\u200b42", "T-42", '\u200b'},
+	} {
+		t.Run(name, func(t *testing.T) {
+			isolateRunHome(t)
+			runID, rec, pauseOut := describedGateFlowRun(t, tc.ticket)
+			shown := shownFlowDescription(runID, tc.clean)
+
+			var err error
+			out := captureStdout(t, func() {
+				err = executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec, nil)
+			})
+			var paused *schedule.PausedError
+			if !errors.As(err, &paused) || paused.GateID != "final" {
+				t.Fatalf("expected the approved leg to pause at final, got %T: %v", err, err)
+			}
+			for what, printed := range map[string]string{"pause": pauseOut, "approve echo": out} {
+				if strings.ContainsRune(printed, tc.r) {
+					t.Errorf("%s printout carries %U: %q", what, tc.r, printed)
+				}
+			}
+			if want := "approved gate approve: " + shown + "\n"; !strings.Contains(out, want) {
+				t.Fatalf("approve echo missing\nwant:\n%q\ngot:\n%q", want, out)
+			}
+			_, snap := loadRunSnapshot(t, runID)
+			got := snap.Nodes["approve"].GateDescription
+			if strings.ContainsRune(got, tc.r) {
+				t.Fatalf("recorded gate_description carries %U: %q", tc.r, got)
+			}
+			if got != shown {
+				t.Fatalf("recorded gate_description %q, want %q", got, shown)
+			}
+		})
+	}
+}
+
 // TestResume_RejectEchoesAndRecordsGateDescription: #346 — --reject echoes the
 // decision with the description and records it on the rejected gate's record.
 func TestResume_RejectEchoesAndRecordsGateDescription(t *testing.T) {

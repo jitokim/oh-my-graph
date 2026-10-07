@@ -4,6 +4,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/graph"
 )
 
@@ -52,7 +53,14 @@ func (h *Handoff) RenderGateDescription(gate graph.Node) (string, error) {
 //   - carriage return, every other C0 control, and DEL;
 //   - every C1 control, U+0080 to U+009F. The 8-bit introducers CSI (U+009B),
 //     OSC (U+009D), DCS, SOS, PM and APC take their complete sequence with
-//     them, exactly as their ESC spellings do.
+//     them, exactly as their ESC spellings do;
+//   - every Unicode format character (category Cf) — the bidi embeddings,
+//     overrides and isolates U+202A to U+202E and U+2066 to U+2069, the
+//     zero-width characters U+200B to U+200F and U+FEFF, and the rest of Cf —
+//     and the line and paragraph separators U+2028 and U+2029, by
+//     fence.IsFormatOrLineSeparator. A bidi override could show the approval
+//     text reversed, a zero-width character hides text the reader cannot see,
+//     and a separator breaks the one line on any terminal that honours it.
 //
 // Newline and tab are FLATTENED, not removed: each becomes a space, and a run
 // of them (with any spaces around it) collapses to one, so words either side
@@ -91,6 +99,8 @@ func SanitizeGateText(s string) string {
 			// already one space for this run
 		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f):
 			// a C0 control (CR included), DEL, or a C1 control
+		case fence.IsFormatOrLineSeparator(r):
+			// a bidi control, zero-width character, or U+2028/U+2029
 		default:
 			b.WriteString(s[i : i+size])
 			flattened = false
