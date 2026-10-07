@@ -33,7 +33,7 @@ func (f *conventionsFlag) Set(path string) error {
 type conventionsDisclosure struct {
 	set *conventions.Set
 	// notCarried is `--plan-only`: the preview's natural next step is
-	// `run <graph.json>`, which does not prefix them (ADR 0041 §2.4).
+	// `run <graph.yaml>`, which does not prefix them (ADR 0041 §2.4).
 	notCarried bool
 }
 
@@ -50,7 +50,7 @@ func noteConventions(w io.Writer, d conventionsDisclosure) {
 		files += "s"
 	}
 	if d.notCarried {
-		fmt.Fprintf(w, "  Your conventions (%s, %s bytes) are NOT in the saved graph: `run <graph.json>` does not prefix them. Launch with `auto` to apply them.\n",
+		fmt.Fprintf(w, "  Your conventions (%s, %s bytes) are NOT in the saved graph: `run <graph.yaml>` does not prefix them. Launch with `auto` to apply them.\n",
 			files, groupThousands(set.TotalBytes()))
 	} else {
 		fmt.Fprintf(w, "  Planned nodes are prefixed with your conventions (%s, %s bytes, sha256 %s) — text only: no settings, grants, hooks or MCP servers come with it.\n",

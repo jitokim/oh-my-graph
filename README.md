@@ -91,7 +91,9 @@ needed: Anthropic and OpenAI API-key variables are deleted from child process
 environments so the CLI uses its saved login. The default remains Claude;
 `--runtime codex` applies to the whole run, is saved in `state.json`, and is
 reused by `resume` and browser gate actions. Add `--plan-only` to `auto` to buy
-the plan and read it without executing a node.
+the plan and read it without executing a node. It saves the plan as
+`graph.json` and, beside it, as `graph.yaml`: edit the YAML (to add a human
+gate, a `type: gate` node with its `depends_on`) and `run` that file.
 
 Codex maps `permission_mode: plan` to its read-only sandbox, ordinary modes to
 `workspace-write`, and `bypassPermissions` to `danger-full-access`. That sandbox
@@ -244,7 +246,7 @@ is — and never truncated. A full-size prefix leaves a node's own prompt about
 Linux with `E2BIG` mid-run, not at launch. Like the rest of a prompt, the text is readable from
 the process table while a node runs (SECURITY.md). The plan screen prints each path and hash;
 `--plan-only` says the conventions are not in the saved graph, because
-`run <graph.json>` does not carry them.
+`run <graph.yaml>` does not carry them.
 
 What the goal left out can reach the **planner** as text, when you ask to be
 asked: `auto --interview` (off by default) puts at most five questions to you
