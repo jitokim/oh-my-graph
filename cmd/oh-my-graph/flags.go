@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,8 +20,12 @@ import (
 // register method wires them onto each subcommand's FlagSet so the flag names
 // and usage strings can never drift between the two.
 type commonRunFlags struct {
-	runtime             runner.Runtime
-	inputs              inputFlag
+	runtime runner.Runtime
+	inputs  inputFlag
+	// inputFiles is `--input-file`, repeatable, in argv order (#354). Each
+	// file is loaded as the flag is parsed; bindInputFiles folds them into
+	// inputs once argv is read, so nothing downstream knows a file existed.
+	inputFiles          inputFileFlag
 	concurrency         int
 	continueOnFail      bool
 	noWeb               bool
@@ -86,9 +91,74 @@ type commonRunFlags struct {
 func (c *commonRunFlags) register(set *flag.FlagSet) {
 	c.inputs = make(inputFlag)
 	set.Var(c.inputs, "input", "bind a graph input as key=value (repeatable)")
+	set.Var(&c.inputFiles, "input-file", "bind graph inputs from a flat YAML or JSON map file (repeatable; later files override earlier ones, --input overrides every file)")
 	set.IntVar(&c.concurrency, "concurrency", 0, "max nodes to run at once (0 = use the graph's value; ceiling 10)")
 	set.BoolVar(&c.continueOnFail, "continue-on-fail", false, "prune only a failed node's subtree instead of halting the run (ORs with the graph's on_fail field: either saying continue means continue)")
 	set.BoolVar(&c.noWeb, "no-web", false, "do not serve or open the web live view for this run (it only appears when stdout is a terminal)")
+}
+
+// inputFileFlag collects repeated --input-file paths with their bindings, in
+// argv order. Each file is loaded in Set, so a refusal (loadInputFile) is a
+// flag-parse error exactly as a malformed --input is: same error path, same
+// exit code, before anything runs, plans, writes a run directory or spends.
+type inputFileFlag []inputFile
+
+// inputFile is one --input-file: its path exactly as given, and what it binds.
+type inputFile struct {
+	path     string
+	bindings map[string]string
+}
+
+func (f *inputFileFlag) String() string { return "" }
+
+func (f *inputFileFlag) Set(path string) error {
+	bindings, err := loadInputFile(path)
+	if err != nil {
+		return err
+	}
+	*f = append(*f, inputFile{path: path, bindings: bindings})
+	return nil
+}
+
+// bindInputFiles folds the --input-file bindings into c.inputs (#354): the
+// files in argv order, later over earlier, then every --input over every file
+// wherever it sat in argv. From here on the merged map is the only one — it
+// takes exactly the path --input values always took (inputIssues, the
+// planner's input keys, state.json's inputs), and resume reads it back from
+// the snapshot, never from a file.
+//
+// Every key more than one source set gets one line on w, sorted by key, naming
+// the key and the sources and never a value: an input may carry a token, and a
+// precedence note is no reason to print one.
+func (c *commonRunFlags) bindInputFiles(w io.Writer) {
+	if len(c.inputFiles) == 0 {
+		return
+	}
+	merged := make(inputFlag)
+	sources := make(map[string][]string)
+	for _, file := range c.inputFiles {
+		for key, value := range file.bindings {
+			merged[key] = value
+			sources[key] = append(sources[key], file.path)
+		}
+	}
+	for key, value := range c.inputs {
+		merged[key] = value
+		sources[key] = append(sources[key], "--input")
+	}
+	keys := make([]string, 0, len(sources))
+	for key, from := range sources {
+		if len(from) > 1 {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		from := sources[key]
+		winner, overridden := from[len(from)-1], from[:len(from)-1]
+		fmt.Fprintf(w, "input %q: %s overrides %s\n", key, winner, strings.Join(overridden, ", "))
+	}
+	c.inputs = merged
 }
 
 // runFlags holds the parsed `run` subcommand options. Kept in its own type so
@@ -129,6 +199,7 @@ func (f *runFlags) parse(args []string) error {
 		return fmt.Errorf("run: missing graph file (usage: oh-my-graph run <graph.yaml> [--input k=v ...])")
 	}
 	f.graphPath = graphPath
+	f.bindInputFiles(os.Stderr)
 	return nil
 }
 
@@ -337,7 +408,11 @@ func (f *autoFlags) parse(args []string) error {
 	// refused BEFORE anything is bought (ADR 0016 §2). The coordinator makes the
 	// same check again at plan time — it is a library and cannot assume a CLI
 	// ran first — but by then the money is at the next line.
-	return checkVerifyFlags("auto", f.verifyCommand())
+	if err := checkVerifyFlags("auto", f.verifyCommand()); err != nil {
+		return err
+	}
+	f.bindInputFiles(os.Stderr)
+	return nil
 }
 
 // resumeFlags holds the parsed `resume` subcommand options. Deliberately does
