@@ -5,6 +5,7 @@ package graph_test
 import (
 	"io/fs"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -260,5 +261,85 @@ func TestGatedDevPinsTheApprovedHead_345(t *testing.T) {
 func TestGatedDevPRIsInline_345(t *testing.T) {
 	if fragment, ok := fragmentOf(loadGatedDev(t))["pr"]; ok {
 		t.Errorf("pr is spliced from %q; it must be inline, holding no commit tools", fragment)
+	}
+}
+
+// grantAllows reports whether one allowed_tools entry would permit command,
+// reading a Bash(...) pattern's `*` as "any text" the way the grant does. A
+// bare `Bash` allows every command.
+func grantAllows(entry, command string) bool {
+	if entry == "Bash" {
+		return true
+	}
+	pattern, ok := strings.CutPrefix(entry, "Bash(")
+	if !ok {
+		return false
+	}
+	pattern = strings.TrimSuffix(pattern, ")")
+	quoted := regexp.QuoteMeta(pattern)
+	re := regexp.MustCompile("^" + strings.ReplaceAll(quoted, `\*`, ".*") + "$")
+	return re.MatchString(command)
+}
+
+// TestGatedDevPRHoldsNoCommitGrant_345 checks every entry of pr's declared
+// grant: none is a blanket git or Bash grant, and none would allow a command
+// that moves HEAD after check-head has passed.
+func TestGatedDevPRHoldsNoCommitGrant_345(t *testing.T) {
+	pr := gatedDevNode(t, loadGatedDev(t).Graph, "pr")
+	if len(pr.AllowedTools) == 0 {
+		t.Fatal("pr declares no allowed_tools; the test would check nothing")
+	}
+	headMoving := []string{
+		"git commit -m x",
+		"git commit --amend --no-edit",
+		"git rebase main",
+		"git rebase -i HEAD~2",
+		"git reset --hard HEAD~1",
+		"git reset --soft HEAD~1",
+		"git checkout main",
+		"git checkout -b other",
+	}
+	for _, entry := range pr.AllowedTools {
+		switch entry {
+		case "Bash(git *)", "Bash", "Bash(*)":
+			t.Errorf("pr's allowed_tools holds the blanket grant %q", entry)
+		}
+		for _, command := range headMoving {
+			if grantAllows(entry, command) {
+				t.Errorf("pr's grant %q would allow %q", entry, command)
+			}
+		}
+	}
+}
+
+// TestGatedDevPRDoesNotUsePRPublish_345 checks the resolved graph's pr node
+// against pr-publish's own grant, so a node spliced from it fails here too.
+func TestGatedDevPRDoesNotUsePRPublish_345(t *testing.T) {
+	loaded := loadGatedDev(t)
+	if fragment, ok := fragmentOf(loaded)["pr"]; ok && fragment == "pr-publish" {
+		t.Errorf("pr is spliced from %q", fragment)
+	}
+	for _, r := range loaded.Resolutions {
+		if r.Fragment == "pr-publish" {
+			t.Errorf("the graph resolves the fragment pr-publish (%+v)", r)
+		}
+	}
+}
+
+// TestGatedDevPRDeclaresAVerifyAndCheckHeadNeverDeletesThePin_345: pr's engine
+// verify is what proves the published head, and check-head must leave the pin
+// for it.
+func TestGatedDevPRDeclaresAVerifyAndCheckHeadNeverDeletesThePin_345(t *testing.T) {
+	g := loadGatedDev(t).Graph
+	pr := gatedDevNode(t, g, "pr")
+	if pr.SuccessCheck.Verify == nil || strings.TrimSpace(pr.SuccessCheck.Verify.Command) == "" {
+		t.Error("pr declares no success_check.verify")
+	}
+	check := gatedDevNode(t, g, "check-head")
+	if check.SuccessCheck.Verify == nil {
+		t.Fatal("check-head declares no success_check.verify")
+	}
+	if strings.Contains(check.SuccessCheck.Verify.Command, "update-ref -d") {
+		t.Errorf("check-head's verify deletes the pin: %q", check.SuccessCheck.Verify.Command)
 	}
 }
