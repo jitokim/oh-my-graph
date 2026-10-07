@@ -30,7 +30,8 @@ func TestVerificationRecord_RoundTrips(t *testing.T) {
 		ExpectedExitCode: 3,
 		Duration:         5 * time.Minute,
 		Status:           VerificationTimedOut,
-		OutputTail:       "still waiting",
+		OutputTail:       "…(earlier output truncated)…\nstill waiting",
+		OutputTruncated:  true,
 	}
 	snap := sampleSnapshot()
 	snap.Nodes = map[string]NodeRecord{
@@ -67,6 +68,11 @@ func TestVerificationRecord_RoundTrips(t *testing.T) {
 	// write a 0 or a -1 that a reader could take for an exit.
 	if n := strings.Count(string(raw), `"exit_code"`); n != 1 {
 		t.Errorf("exit_code written %d times, want 1 (the timed-out record must omit it):\n%s", n, raw)
+	}
+	// #332: output_truncated is written for the record whose tail was cut and
+	// omitted for the one kept whole, so an untruncated record is unchanged.
+	if n := strings.Count(string(raw), `"output_truncated": true`); n != 1 {
+		t.Errorf("output_truncated written %d times, want 1 (only the cut record):\n%s", n, raw)
 	}
 }
 

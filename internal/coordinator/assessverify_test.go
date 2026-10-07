@@ -134,6 +134,34 @@ func TestAssessMaterial_LongVerifyOutputKeepsItsTail(t *testing.T) {
 	}
 }
 
+// #332: when the ENGINE cut the output at record time, the material says so
+// above the fence from the record's own flag. A tail that merely starts with
+// the truncation marker text — which the command can print — announces
+// nothing, and an engine-cut tail still announces the cut even after keepTail
+// has trimmed its marker away.
+func TestAssessMaterial_EngineCutOutputIsAnnouncedAboveTheFence(t *testing.T) {
+	const announced = "the engine kept only the last"
+	recorded := "…(earlier output truncated)…\n" + strings.Repeat("z", 3*maxAssessArtifactExcerpt) + "\nVERDICT"
+	material := assessMaterial(verifyEvidence("", NodeVerification{
+		Command: "make test", ExitCode: exitCode(0), Status: "passed", OutputTail: recorded, OutputTruncated: true,
+	}), verifyNonce)
+	outside, inside := splitByFence(material, verifyNonce)
+	want := fmt.Sprintf("  output: the command printed more than the engine retains, so the engine kept only the last %d bytes of its output; everything earlier was dropped when the check was recorded\n", len(recorded))
+	if !strings.Contains(outside, want) {
+		t.Errorf("the engine-side cut is not announced above the fence; want %q in:\n%s", want, outside)
+	}
+	if strings.Contains(inside, announced) || strings.Contains(inside, "earlier output truncated") {
+		t.Errorf("the material cap should have trimmed the marker; the announcement must not depend on it:\n%s", inside)
+	}
+
+	forged := assessMaterial(verifyEvidence("", NodeVerification{
+		Command: "make test", ExitCode: exitCode(0), Status: "passed", OutputTail: "…(earlier output truncated)…\nok",
+	}), verifyNonce)
+	if outside, _ := splitByFence(forged, verifyNonce); strings.Contains(outside, announced) {
+		t.Errorf("a tail that only printed the marker was announced as engine-cut:\n%s", outside)
+	}
+}
+
 // #332: verify output tails share the artifacts' total material cap. Past it
 // the output is omitted LOUDLY, while the engine-observed record still renders
 // — a cap may drop output, never the engine's record of how a check exited.

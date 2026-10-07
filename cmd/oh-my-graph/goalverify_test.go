@@ -10,6 +10,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
+	"github.com/jitokim/oh-my-graph/internal/verify"
 )
 
 // #332: the assessor's material is read back from state.json, so the engine's
@@ -27,6 +28,7 @@ func TestCycleEvidence_CarriesTheEngineVerificationRecord(t *testing.T) {
 		ExpectedExitCode: 0,
 		Status:           runstate.VerificationFailed,
 		OutputTail:       "--- FAIL: TestX\nFAIL",
+		OutputTruncated:  true,
 	}
 	if err := runstate.Write(filepath.Join(runDirFor(runID), stateFileName), runstate.Snapshot{
 		RunID: runID,
@@ -54,7 +56,8 @@ func TestCycleEvidence_CarriesTheEngineVerificationRecord(t *testing.T) {
 		t.Fatal("the check node's verification record did not reach NodeEvidence")
 	}
 	if got.Command != want.Command || got.ExitCode == nil || *got.ExitCode != exit ||
-		got.ExpectedExitCode != want.ExpectedExitCode || got.Status != string(want.Status) || got.OutputTail != want.OutputTail {
+		got.ExpectedExitCode != want.ExpectedExitCode || got.Status != string(want.Status) || got.OutputTail != want.OutputTail ||
+		got.OutputTruncated != want.OutputTruncated {
 		t.Errorf("verification = %+v (exit %v), want %+v (exit %d)", *got, got.ExitCode, want, exit)
 	}
 }
@@ -149,5 +152,45 @@ func TestGoalAssessment_FailingSinkVerifyShowsFailedAndItsExitCode(t *testing.T)
 	})
 	if want := "  command: go test ./...\n  status: failed\n  exit code: 1\n"; !strings.Contains(outside, want) {
 		t.Errorf("failing verify is missing %q outside the fence:\n%s", want, prompt)
+	}
+}
+
+// #332 END TO END: a sink verify that printed ~100KB reaches the assessor
+// tail-only and bounded. The record holds only verify.RetainedTail's tail —
+// built here exactly as the scheduler builds it — and the assessor's material
+// keeps the last line, never the first, and says ABOVE the fence, in the
+// engine's own lines, that the engine kept only the tail of a longer output.
+func TestGoalAssessment_HugeSinkVerifyOutputReachesTheAssessorTailOnly(t *testing.T) {
+	const first, last = "FIRST-LINE-OF-OUTPUT", "LAST-LINE-OF-OUTPUT: VERIFY OK"
+	var huge strings.Builder
+	huge.WriteString(first + "\n")
+	for huge.Len() < 100<<10 {
+		huge.WriteString("progress: compiling package and running its tests\n")
+	}
+	huge.WriteString(last + "\n")
+	tail, cut := verify.RetainedTail(huge.String())
+	exit := 0
+	prompt, outside, inside := assessorPromptForSinkRecord(t, runstate.VerificationRecord{
+		Command: "./verify.sh", ExitCode: &exit, Status: runstate.VerificationPassed,
+		OutputTail: tail, OutputTruncated: cut,
+	})
+
+	if !strings.Contains(inside, last) {
+		t.Errorf("the output's last line did not reach the assessor:\n%s", prompt)
+	}
+	if strings.Contains(prompt, first) {
+		t.Error("the output's first line reached the assessor; only the tail may")
+	}
+	if strings.Count(inside, "progress: compiling") > 100 {
+		t.Errorf("the fenced output is not bounded: %d bytes inside the fences", len(inside))
+	}
+	if len(prompt) > 16<<10 {
+		t.Errorf("assessor prompt is %d bytes for one verify node; the output was not bounded", len(prompt))
+	}
+	if !strings.Contains(outside, "the engine kept only the last") || !strings.Contains(outside, "everything earlier was dropped when the check was recorded") {
+		t.Errorf("the material never says above the fence that the engine kept only the tail:\n%s", outside)
+	}
+	if !strings.Contains(outside, "  command: ./verify.sh\n  status: passed\n  exit code: 0\n") {
+		t.Errorf("the engine record is missing beside the tail:\n%s", outside)
 	}
 }

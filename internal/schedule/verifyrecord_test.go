@@ -74,6 +74,9 @@ func TestVerificationRecord_VerifiedPassRecordsExitZeroAndTail(t *testing.T) {
 	if !strings.HasSuffix(v.OutputTail, "PASS\n") {
 		t.Errorf("output tail = %q, want what the command printed", v.OutputTail)
 	}
+	if v.OutputTruncated {
+		t.Error("an output kept whole was recorded as truncated (#332)")
+	}
 }
 
 // TestVerificationRecord_JudgedFailRecordsTheNonZeroExit (#332): a verify
@@ -168,6 +171,9 @@ func TestVerificationRecord_TimeoutRecordsNoExitCode(t *testing.T) {
 	}
 	if v.OutputTail != "waiting for server…" {
 		t.Errorf("output tail = %q, want the timeout's captured output", v.OutputTail)
+	}
+	if v.OutputTruncated {
+		t.Error("a timeout's whole captured output was recorded as truncated (#332)")
 	}
 	encoded, err := json.Marshal(rec)
 	if err != nil {
@@ -322,6 +328,11 @@ func TestVerificationRecord_LongOutputKeepsTheTailWithinTheBound(t *testing.T) {
 	}
 	if !strings.HasPrefix(tail, "…(earlier output truncated)…") {
 		t.Errorf("the cut is unmarked: %q", tail[:40])
+	}
+	// #332: the record SAYS it holds only a tail, from the engine's own
+	// measurement, so the assessor can be told without reading the marker.
+	if !rec.Verification.OutputTruncated {
+		t.Error("a cut output was not recorded as truncated")
 	}
 }
 

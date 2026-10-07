@@ -389,6 +389,12 @@ type VerificationRecord struct {
 	// bytes (verify.RetainedTail) with the cut marked, because a check
 	// prints its verdict last. Empty when nothing was captured.
 	OutputTail string `json:"output_tail,omitempty"`
+	// OutputTruncated is true when the command printed more than the
+	// retention bound, so OutputTail is only the END of its output. It is
+	// the engine's own measurement at retention time (verify.RetainedTail),
+	// never inferred from the tail's marker, which the command could print
+	// itself. Absent when the whole output was kept.
+	OutputTruncated bool `json:"output_truncated,omitempty"`
 }
 
 // TokenUsage is provider-reported token accounting persisted with a node.

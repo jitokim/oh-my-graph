@@ -382,8 +382,11 @@ func TestTailBytes_CutsOnARuneBoundary(t *testing.T) {
 func TestRetainedTail_BoundsTheWholeStringAndKeepsTheEnd(t *testing.T) {
 	long := "HEAD-SENTINEL\n" + strings.Repeat("x", 3*maxRetainedOutputBytes) + "\nverdict: FAIL"
 
-	got := RetainedTail(long)
+	got, cut := RetainedTail(long)
 
+	if !cut {
+		t.Error("a cut output was not reported as cut")
+	}
 	if len(got) > maxRetainedOutputBytes {
 		t.Errorf("retained %d bytes, want at most %d", len(got), maxRetainedOutputBytes)
 	}
@@ -402,17 +405,35 @@ func TestRetainedTail_BoundsTheWholeStringAndKeepsTheEnd(t *testing.T) {
 // is marked when nothing was cut, and a tail already cut to the bound —
 // a *TimeoutError's Output — re-cuts to a single marker, never two.
 func TestRetainedTail_ShortOutputAndRetainedTailAreUntouched(t *testing.T) {
-	if got := RetainedTail("ok\n"); got != "ok\n" {
-		t.Errorf("short output was altered: %q", got)
+	if got, cut := RetainedTail("ok\n"); got != "ok\n" || cut {
+		t.Errorf("short output was altered or reported cut: %q, cut=%v", got, cut)
 	}
-	once := RetainedTail(strings.Repeat("y", 10*maxRetainedOutputBytes))
-	if twice := RetainedTail(once); twice != once {
+	once, _ := RetainedTail(strings.Repeat("y", 10*maxRetainedOutputBytes))
+	if twice, _ := RetainedTail(once); twice != once {
 		t.Errorf("RetainedTail is not idempotent")
 	}
 	timeoutTail := tailBytes(strings.Repeat("z", 10*maxRetainedOutputBytes), maxRetainedOutputBytes)
-	got := RetainedTail(timeoutTail)
+	got, _ := RetainedTail(timeoutTail)
 	if n := strings.Count(got, truncationMarker); n != 1 || len(got) > maxRetainedOutputBytes {
 		t.Errorf("re-cutting a timeout tail gave %d markers and %d bytes", n, len(got))
+	}
+}
+
+// TestRetainedTail_ReportsTheCutFromTheLengthNotTheMarker (#332): cut is
+// the engine's measurement, so it is exact on a *TimeoutError's Output too —
+// true for one tailBytes cut (even when the cut lands mid-rune), false for one
+// it left whole — and an output that merely PRINTS the marker is not cut.
+func TestRetainedTail_ReportsTheCutFromTheLengthNotTheMarker(t *testing.T) {
+	for _, long := range []string{strings.Repeat("z", 10*maxRetainedOutputBytes), strings.Repeat("é", 10*maxRetainedOutputBytes)} {
+		if _, cut := RetainedTail(tailBytes(long, maxRetainedOutputBytes)); !cut {
+			t.Errorf("a timeout Output tailBytes cut was not reported as cut")
+		}
+	}
+	if _, cut := RetainedTail(tailBytes("still waiting", maxRetainedOutputBytes)); cut {
+		t.Error("a timeout Output tailBytes left whole was reported as cut")
+	}
+	if _, cut := RetainedTail(truncationMarker + "forged\n"); cut {
+		t.Error("an output that printed the marker itself was reported as cut")
 	}
 }
 

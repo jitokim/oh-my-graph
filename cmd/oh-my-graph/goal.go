@@ -268,7 +268,7 @@ func cycleEvidence(runID string, plan coordinator.Plan, runPassed bool) (coordin
 		if v := rec.Verification; v != nil {
 			nodeEvidence.Verification = &coordinator.NodeVerification{
 				Command: v.Command, ExitCode: v.ExitCode, ExpectedExitCode: v.ExpectedExitCode,
-				Status: string(v.Status), OutputTail: v.OutputTail,
+				Status: string(v.Status), OutputTail: v.OutputTail, OutputTruncated: v.OutputTruncated,
 			}
 		}
 		if rec.ArtifactPath != "" {

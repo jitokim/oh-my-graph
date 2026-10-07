@@ -40,8 +40,8 @@ func ranVerificationRecord(command string, v graph.Verification, duration time.D
 		ExpectedExitCode: v.ExpectedExitCode(),
 		Duration:         duration,
 		Status:           status,
-		OutputTail:       verify.RetainedTail(result.Output),
 	}
+	rec.OutputTail, rec.OutputTruncated = verify.RetainedTail(result.Output)
 	if result.ExitCode >= 0 {
 		exitCode := result.ExitCode
 		rec.ExitCode = &exitCode
@@ -66,7 +66,7 @@ func brokenVerificationRecord(command string, v graph.Verification, duration tim
 	switch {
 	case errors.As(err, &timeout):
 		rec.Status = runstate.VerificationTimedOut
-		rec.OutputTail = verify.RetainedTail(timeout.Output)
+		rec.OutputTail, rec.OutputTruncated = verify.RetainedTail(timeout.Output)
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		rec.Status = runstate.VerificationCancelled
 	}

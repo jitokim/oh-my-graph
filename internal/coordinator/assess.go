@@ -141,6 +141,9 @@ type NodeVerification struct {
 	Status string
 	// OutputTail is the end of the command's combined output.
 	OutputTail string
+	// OutputTruncated is the engine's record that the command printed more
+	// than it retains, so OutputTail is only the end of a longer output.
+	OutputTruncated bool
 }
 
 // Assess asks the assessor — the third coordinator call class, beside the
@@ -415,7 +418,11 @@ func assessMaterial(evidence CycleEvidence, nonce string) string {
 // line otherwise, so it can never start a line of its own. The output
 // tail is the command's own text, so it goes INSIDE a nonce-fenced data block
 // exactly like an artifact. It is cut from the head, because a check prints
-// its verdict last, and the cut is announced above the fence. The
+// its verdict last, and every cut is announced above the fence: the one the
+// engine made when it recorded the check (OutputTruncated, measured at
+// retention time, never read off the tail's marker — the command could print
+// that marker itself, and keepTail may cut it away) and the one the material
+// cap makes here. The
 // engine-observed lines render even when the material cap leaves nothing for
 // the tail: a cap may drop output, never the engine's record that a check
 // failed.
@@ -440,6 +447,9 @@ func writeVerificationBlock(b *strings.Builder, id string, v NodeVerification, b
 	case budget <= 0:
 		b.WriteString("  output: omitted (total material cap reached)\n")
 		return 0
+	}
+	if v.OutputTruncated {
+		fmt.Fprintf(b, "  output: the command printed more than the engine retains, so the engine kept only the last %d bytes of its output; everything earlier was dropped when the check was recorded\n", len(v.OutputTail))
 	}
 	tail := keepTail(v.OutputTail, min(maxAssessArtifactExcerpt, budget))
 	if len(tail) < len(v.OutputTail) {
