@@ -2487,7 +2487,7 @@ one, and it answers 409 like any other view that cannot resume.
   glance — the real map is one click away.
 
 ## Auto mode — planned graphs, no hand-written YAML
-`oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--no-baseline] [--accept-no-build-evidence] [--accept-loaded-user-config] [--interview] [--input k=v ...]` is the
+`oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--no-baseline] [--accept-no-build-evidence] [--accept-loaded-user-config] [--interview] [--no-reuse] [--input k=v ...]` is the
 zero-config path; custom
 YAML stays the precise-control path.
 
@@ -2547,6 +2547,65 @@ unchanged, and the plan screen prints `baseline: skipped (--no-baseline) — the
 starting tree was not checked against --verify-cmd`, the only record a
 `--plan-only` preview keeps. A run without the flag writes no key and prints no
 line; the schema stays 3.
+
+**The planner may cite a shape the operator already keeps (ADR 0038, #338).**
+Reuse is ON by default, on `auto` and on `chat`'s planning path, and
+`--no-reuse` (both surfaces, mapped onto `coordinator.WithoutReuse`) turns it
+off.
+
+- **The catalog.** Each planning call scans
+  `<invocation root>/graphs/fragments/*.yaml` ONCE, inside the call that
+  renders the planner prompt (`plannerBase`); the invocation root is
+  `resolveInvocationRoot`'s, the same boundary the unisolated-settings scan
+  uses. A missing directory or an unresolvable root is an empty catalog; a
+  directory that exists and cannot be listed fails the plan before the
+  planner is paid. Each file is admitted or skipped for the FIRST rule it
+  fails, in this order, and the reason is the printout's vocabulary:
+  `load error`; `advisory` (any loader advisory over its citation chain);
+  `description` (a line shaped like a fence marker, or nothing printable
+  left); `non-prompt slot` (a substitution slot lands anywhere but a
+  `prompt:` scalar, nested `use:` followed); `tool not in allowlist` (not an
+  exact `plannedToolAllowlist` member); `permission_mode` (any); and
+  `planner-refused field` (`plannedNodeRefusals`, the function behind the
+  dispositions table below, on every resolved node). On this repository it
+  admits `read-and-report` alone, of seven.
+- **The menu.** The admitted set is rendered directly after the reply shape,
+  fenced as data with a per-call nonce: id, contributes, binds and a summary
+  (one line, at most 200 bytes, control and format characters removed) —
+  never a path. Nothing admitted, or reuse off, omits the block entirely.
+- **`reuse:` and `bind:`.** A planned node may set `reuse` to an id on that
+  menu and `bind` exactly the entry's slots, and nothing else; the
+  dispositions table below states each refusal. The reply and its repair are
+  judged against the set held from the render, never a re-scan. Both fields
+  are legal in a planner reply only: a hand-written graph, a saved
+  `graph.json` and a resumed run refuse them (`validateReuseSpliced`). The
+  refusal of a planner's `use:`/`with:` is unchanged.
+- **The pipeline.** `validatePlannedNodes` → the splice
+  (`spliceReuse`: re-read and re-hash each cited file, re-admit from those
+  bytes, splice with the fragment loader's machinery, then every spliced node
+  through `plannedNodeRefusals` again) → `Graph.Validate` → the
+  unisolated-path scan (over the planner's unspliced graph) → agent mapping →
+  the `--verify-cmd` attachment → skill activation. The splice is the first
+  mutation, so every later step and the saved `graph.json` see the resolved
+  graph. A digest that changed since the menu was rendered fails the plan,
+  naming the node, the shape, the path and both digests, and keeps the reply
+  as `rejected.json`; it is not repairable.
+- **`reuse-catalog.json`.** Written owner-only (0600) beside every accepted
+  plan's `graph.json` — an auto run, a `--plan-only` preview, a declined chat
+  plan, each goal-loop cycle: `dir`, `offered` (id, source, bytes, sha256)
+  and `citations` (node_id, entry_id, source, sha256). With reuse off none is
+  written.
+- **The screen.** With reuse on, the plan printout carries one line naming the
+  directory scanned, the offered count and the skipped counts by reason, then
+  one line per citation with the node, the entry id, the source path and the
+  full SHA-256 the record holds:
+  `reuse: scanned <dir> — 1 offered, 6 skipped (non-prompt slot: 3, tool not in allowlist: 3)`,
+  then `<node> cites <id> — <path> sha256:<hex>`. The scan line prints even
+  when nothing is cited. With reuse off the screen says nothing about reuse,
+  and the run is exactly a run from before the catalog existed.
+
+The prompt-size cost is recorded in
+`docs/measurements/0038-reuse-menu-prompt-size.md`.
 
 Planning a graph is ONE
 planner call through the same NodeRunner seam every node uses (CLIRunner:
@@ -3103,8 +3162,9 @@ renders the planner prompt (`plannerBase`), and shows what it admitted as a
 fenced menu directly after the reply shape — id, contributes, binds and
 summary, never a path — omitted entirely when nothing is admitted. The reply
 and its repair are judged against that held set, never a re-scan.
-`coordinator.WithoutReuse` turns reuse off: no scan, no menu, and `reuse:`
-refused as when nothing is offered.
+`coordinator.WithoutReuse` — the `--no-reuse` flag on `auto` and `chat` —
+turns reuse off: no scan, no menu, and `reuse:` refused as when nothing is
+offered.
 
 A citation that clears validation is spliced FIRST among the post-validation
 mutations (`coordinator/reusesplice.go`), before agent mapping, the verify
@@ -3119,7 +3179,8 @@ one takes ADR 0027's `<id>/` namespace. Every spliced node then goes through
 `plannedNodeRefusals` in full, and the spliced graph through `Graph.Validate`.
 `Plan.Reuse` carries the scan and the citations, and `Plan.WriteReuseRecord`
 writes them to `reuse-catalog.json` (0600) beside `graph.json`; with reuse off
-it is nil and nothing is written.
+it is nil and nothing is written. The plan screen prints the scan and every
+citation (see "Auto mode"), and prints nothing about reuse when it is off.
 
 Both mechanisms apply ONLY to coordinator-planned graphs; hand-written YAML
 (`oh-my-graph run`) is human-authored/reviewed, passes a nil deny list, and is
@@ -3483,7 +3544,7 @@ internal/childenv/childenv.go + _test          the shared "delete billing-switch
 internal/fence/fence.go + _test                the shared data fence: a per-call crypto/rand nonce for both markers of any quote of untrusted text into a prompt, plus the head+tail bound on the quoted material. Its callers live in coordinator, schedule, handoff and interview, and their number is stated in fence.go alone — internal/invariants counts the real ones repo-wide against that one sentence, so a second copy here would be a number nothing checks
 internal/conventions/conventions.go + _test   `auto --conventions` (ADR 0041): read and validate the operator's named files whole or refuse them, render the ordinal+basename prefix, stage it as the run directory's conventions.md, and re-check that copy's SHA-256 for `resume`. Spawns nothing; the scheduler applies the prefix (Options.Conventions)
 internal/interview/interview.go + _test       `auto --interview` and `design` (ADR 0044): the five-question loop over an injected Asker (the package imports no runner), the QUESTION:/ENOUGH reply grammar, the repeat test, the nonce-fenced planner prefix (Render), staging it as interview.md and re-checking that copy's SHA-256 for `resume` (Stage/LoadStaged). Spawns nothing; the coordinator applies the prefix to the planner prompt alone (WithInterviewPrefix)
-internal/coordinator/{coordinator,router,agentmap,agentstage,skillscan,skillstage,goal,assess,repair,verifycmd,unisolated,interviewer}.go + _test + testdata/planner-prompt-*.golden  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping with its definition staged (agentmap.go/agentstage.go — ADR 0022) and skill activation over a staged plugin directory (skillscan.go/skillstage.go — ADR 0017, superseding ADR 0012's inlining); the shared nonce fence (internal/fence, used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go); the interview's planner prefix option and the interviewer asker, built from coordinatorInvocation (interviewer.go — ADR 0044)
+internal/coordinator/{coordinator,router,agentmap,agentstage,skillscan,skillstage,goal,assess,repair,verifycmd,unisolated,interviewer,reusecatalog,reusemenu,reusesplice}.go + _test + testdata/planner-prompt-*.golden  auto mode: goal → planner call (NodeRunner seam) → validated graph + ToolPolicies; chat routing; post-validation subagent mapping with its definition staged (agentmap.go/agentstage.go — ADR 0022) and skill activation over a staged plugin directory (skillscan.go/skillstage.go — ADR 0017, superseding ADR 0012's inlining); the shared nonce fence (internal/fence, used by Assess and by the re-plan); the bounded plan→execute→assess goal loop (goal.go/assess.go — ADR 0011); the bounded re-plan a validation refusal buys (repair.go); the interview's planner prefix option and the interviewer asker, built from coordinatorInvocation (interviewer.go — ADR 0044)
 internal/handoff/{handoff,placeholder_lint,session_lint,verdict_lint,tool_grant_lint,verify_inline_lint,feedback_quote_lint}.go + _test  interpolation, artifact persist/resolve, session pick, Seed for resume — plus the advisory lint sweeps `lint`, `run --dry-run` and the plan screen print — and a plain `run` does NOT (unresolvable {{placeholders}}, session-handoff `--resume` that may not deliver the parent conversation, a prompt demanding a verdict token no `result_matches` reads, a `result_matches` that silently dropped the node's exit-code guard, a node that declares neither an `allowed_tools` grant nor a `success_check.verify` and so can observe no tool denial — #154 — a `success_check.verify.command` splicing a model's own text into the shell command line the engine runs: `{{ artifacts.<id> | inline }}`, whose filterless form would be the engine's own file path, or `{{ feedback.<id> }}`, which has no filterless form — and a feedback loop whose body never quotes `{{ feedback.<declarer> }}`, so the re-run repairs nothing: ADR 0028)
 internal/gate/gate.go + _test                  Decision + PauseController/RecordedController
 internal/runstate/{runstate,recorder,lock}.go + build-tagged flock_{unix,other}.go, pidprobe_{unix,other}.go and fstype_{darwin,linux,other}.go + _test  state.json snapshot — atomic write, schema version, resume load, the `conventions` and `interview` records (hash and counts, never the text) — plus the run lock: an flock(2) a leg holds for its duration (AcquireLock) and a reader may probe without writing anything (ProbeLock — ADR 0015 §1)
