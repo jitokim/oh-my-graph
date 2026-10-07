@@ -343,3 +343,25 @@ func TestGatedDevPRDeclaresAVerifyAndCheckHeadNeverDeletesThePin_345(t *testing.
 		t.Errorf("check-head's verify deletes the pin: %q", check.SuccessCheck.Verify.Command)
 	}
 }
+
+// TestGatedDevPRPromptNamesOnlyGrantedCommands_345: every `git …` or `gh …`
+// command pr's prompt names in backticks is one its grant admits, so a
+// dontAsk node is never told to run what it will be denied.
+func TestGatedDevPRPromptNamesOnlyGrantedCommands_345(t *testing.T) {
+	pr := gatedDevNode(t, loadGatedDev(t).Graph, "pr")
+	spans := regexp.MustCompile("`([^`]+)`").FindAllStringSubmatch(pr.Prompt, -1)
+	named := 0
+	for _, span := range spans {
+		command := span[1]
+		if !strings.HasPrefix(command, "git ") && !strings.HasPrefix(command, "gh ") {
+			continue
+		}
+		named++
+		if !slices.ContainsFunc(pr.AllowedTools, func(entry string) bool { return grantAllows(entry, command) }) {
+			t.Errorf("pr's prompt names %q, which its grant %v does not admit", command, pr.AllowedTools)
+		}
+	}
+	if named == 0 {
+		t.Fatal("pr's prompt names no git or gh command; the test would check nothing")
+	}
+}

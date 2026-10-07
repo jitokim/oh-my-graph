@@ -245,8 +245,8 @@ nodes:
            an earlier run left one there, Read it first, then overwrite it).
         2. Run `gh pr create --title '<one line>' --body-file .omg-pr-body.md`,
            plus any other flag asked for above (such as `--draft`).
-        3. Never `git add` or commit `.omg-pr-body.md`; it is not part of the
-           change. Leave it where it is once the PR is open.
+        3. Leave `.omg-pr-body.md` where it is once the PR is open: it is
+           not part of the change, and the engine removes it.
       Every Bash call is ONE program, run in this working directory: no `cd`,
       `&&`, `;`, `|`, redirect or heredoc. A denied call means the FORM was
       wrong, not the goal: re-issue it in the form above before you give up
