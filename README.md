@@ -109,6 +109,13 @@ one line on stderr naming the sources, never the value
 (`input "task": --input overrides inputs.yaml`). `resume` takes the inputs from
 the run's snapshot and never re-reads the file.
 
+A bound key the graph's `inputs:` does not declare is still bound, but draws one
+warning naming the key and where it came from, never the value, with a guess
+when a declared name is close (`input "tsak" (from inputs.yaml) is not declared
+in the graph's inputs list; it is bound anyway — did you mean "task"?`). `run`
+prints it at load, `--dry-run` included; `auto` prints it on the plan screen,
+against the planned graph. The exit status does not change.
+
 Engine-run evidence is established per RUN, not per node: `--verify-cmd`
 attaches your command to the sinks of the plan (ADR 0030), and a planned
 non-sink node carries no engine-run verify at all — its `PASS` is the
