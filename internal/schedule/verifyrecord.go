@@ -20,6 +20,12 @@ import (
 // exit code. The status already says no verdict was reached, and the exit code
 // is a fact the engine observed; withholding it would make the record claim
 // less than happened, and a reader can tell the two cases apart by Status.
+//
+// A command ended by a signal — killed, OOM-killed, crashed — never exited on
+// its own, and verify reports it as exit code -1 (os.ProcessState's own
+// "no exit code"). That -1 is not an exit code, so it is not recorded: the
+// field stays absent, never faked. The status is still the verdict the node
+// got for it, a failure, because -1 matched no expected code.
 func ranVerificationRecord(command string, v graph.Verification, duration time.Duration, result verify.Result, verdictErr error) *runstate.VerificationRecord {
 	status := runstate.VerificationPassed
 	if verdictErr != nil {
@@ -29,15 +35,18 @@ func ranVerificationRecord(command string, v graph.Verification, duration time.D
 			status = runstate.VerificationNotJudged
 		}
 	}
-	exitCode := result.ExitCode
-	return &runstate.VerificationRecord{
+	rec := &runstate.VerificationRecord{
 		Command:          command,
-		ExitCode:         &exitCode,
 		ExpectedExitCode: v.ExpectedExitCode(),
 		Duration:         duration,
 		Status:           status,
 		OutputTail:       verify.RetainedTail(result.Output),
 	}
+	if result.ExitCode >= 0 {
+		exitCode := result.ExitCode
+		rec.ExitCode = &exitCode
+	}
+	return rec
 }
 
 // brokenVerificationRecord is the snapshot's record of a verification that

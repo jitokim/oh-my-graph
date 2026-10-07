@@ -412,3 +412,36 @@ func TestVerificationRecord_ResumedLegKeepsAnEarlierLegsRecord(t *testing.T) {
 		t.Errorf("verify-free ship recorded %+v", snap.Nodes["ship"].Verification)
 	}
 }
+
+// TestVerificationRecord_SignalKilledRecordsNoExitCode (#332): a command ended
+// by a signal comes back from verify as exit code -1, which is not an exit
+// code. The record leaves exit_code absent — never -1 — and keeps the failed
+// verdict the node really got, so the assessor reads "exit code: none".
+func TestVerificationRecord_SignalKilledRecordsNoExitCode(t *testing.T) {
+	verifier := verify.NewFakeVerifier(map[string]verify.Result{
+		"sh -c 'kill -9 $$'": {ExitCode: -1, Output: "partial output\n"},
+	})
+
+	rec, err := runVerified(t, `{ command: "sh -c 'kill -9 $$'" }`, verifier, Options{})
+
+	if err == nil {
+		t.Fatal("expected the run to fail on the signal-killed verify")
+	}
+	v := rec.Verification
+	if v == nil || v.Status != runstate.VerificationFailed {
+		t.Fatalf("verification = %+v, want status failed", v)
+	}
+	if v.ExitCode != nil {
+		t.Errorf("exit code = %d, want absent for a command that never exited", *v.ExitCode)
+	}
+	if !strings.Contains(v.OutputTail, "partial output") {
+		t.Errorf("output tail = %q, want what the command printed before it died", v.OutputTail)
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"exit_code"`) {
+		t.Errorf("state.json record = %s, want no exit_code", raw)
+	}
+}
