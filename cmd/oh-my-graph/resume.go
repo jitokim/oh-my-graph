@@ -688,6 +688,9 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// PausedAt starts empty: the run is actively continuing, not paused,
 		// until (if at all) this leg pauses again at a later gate.
 		Gate: runstate.GateState{Decisions: decisions},
+		// LimitPause is deliberately NOT carried, for the same reason: the
+		// first write of this leg clears an earlier leg's limit pause, and a
+		// limit this leg hits records its own (ADR 0031 §8.1).
 	})
 
 	// Reopened in append mode, so the resumed leg continues the same
