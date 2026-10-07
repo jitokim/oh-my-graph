@@ -98,7 +98,7 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 			plan = withInterviewCost(plan, flags.interview)
 		}
 		leg.setPlanningAccounting(plan.CostUSD, plan.CostUnknown, plan.Usage)
-		specPath, err := saveGeneratedSpec(runDirFor(runID), plan.Spec)
+		specPath, err := savePlan(runDirFor(runID), plan)
 		if err != nil {
 			return coordinator.CycleEvidence{}, err
 		}

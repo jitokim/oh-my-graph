@@ -832,7 +832,7 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 		runID = newRunID()
 	}
 
-	specPath, err := saveGeneratedSpec(runDirFor(runID), plan.Spec)
+	specPath, err := savePlan(runDirFor(runID), plan)
 	if err != nil {
 		return err
 	}
@@ -872,7 +872,7 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 // state.json, so the plan screen's line is its only record of the skip.
 func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome, baselineSkipped bool, conv *conventions.Set, iv *interview.Result) error {
 	planDir := planDirFor(newRunID())
-	specPath, err := saveGeneratedSpec(planDir, plan.Spec)
+	specPath, err := savePlan(planDir, plan)
 	if err != nil {
 		return err
 	}
@@ -918,7 +918,7 @@ func confirmPlan(out io.Writer, plan coordinator.Plan, runtime runner.Runtime, e
 	if ok {
 		return true, nil
 	}
-	path, saveErr := saveGeneratedSpec(planDirFor(newRunID()), plan.Spec)
+	path, saveErr := savePlan(planDirFor(newRunID()), plan)
 	if saveErr != nil {
 		fmt.Fprintf(os.Stderr, "save the declined plan's spec: %v\n", saveErr)
 		fmt.Fprintln(out, "plan discarded.")
@@ -999,9 +999,10 @@ func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeR
 	if err != nil {
 		return err
 	}
-	// false: a planned graph never resolved a fragment — the coordinator
-	// refuses planner-emitted use:/with: (ADR 0013), so plan.Spec is
-	// fragment-free by construction and stays reusable verbatim.
+	// false: plan.Spec needs no re-encode — the coordinator refuses
+	// planner-emitted use:/with: (ADR 0013), and a reuse: citation was
+	// spliced before plan.Spec was written (ADR 0038 §2.3), so the spec is the
+	// resolved graph and stays reusable verbatim.
 	flags.planningCostUnknown = plan.CostUnknown
 	flags.planningUsage = plan.Usage
 	flags.interviewRecord = interviewRecord
@@ -1274,6 +1275,21 @@ func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Gr
 // instructions verbatim.
 func saveGeneratedSpec(dir string, spec []byte) (string, error) {
 	return saveSpecAs(dir, generatedSpecFileName, spec)
+}
+
+// savePlan saves an accepted plan's spec into dir and, when the plan was made
+// with reuse on, its reuse-catalog.json beside it (ADR 0038 §2.3 C.2): every
+// place a plan's graph.json lands gets the record of what the catalog offered
+// and what the plan took. With reuse off nothing but graph.json is written.
+func savePlan(dir string, plan coordinator.Plan) (string, error) {
+	specPath, err := saveGeneratedSpec(dir, plan.Spec)
+	if err != nil {
+		return "", err
+	}
+	if _, err := plan.WriteReuseRecord(dir); err != nil {
+		return "", err
+	}
+	return specPath, nil
 }
 
 // generatedSpecFileName is the accepted plan's file — the one every consumer
