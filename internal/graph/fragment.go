@@ -440,6 +440,24 @@ var multiNodeUsingKeys = map[string]bool{
 	"id": true, "use": true, "with": true, "depends_on": true, "cwd": true, "worktree": true,
 }
 
+// MultiNodeCitingKeys is multiNodeUsingKeys as a planner reply spells it, in
+// sorted order: reuse and bind stand for use and with, which SpliceReuse
+// renames them to (ADR 0038 §2.3, #338). It is the set a planned node citing a
+// multi-node shape may carry, read from the one list the splice enforces, so
+// the coordinator can refuse anything else before the splice does.
+func MultiNodeCitingKeys() []string {
+	planned := map[string]string{"use": "reuse", "with": "bind"}
+	keys := make([]string, 0, len(multiNodeUsingKeys))
+	for key := range multiNodeUsingKeys {
+		if spelled, renamed := planned[key]; renamed {
+			key = spelled
+		}
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
 // fragmentFile is one parsed, structurally-checked fragment definition, in
 // either of its two forms.
 type fragmentFile struct {

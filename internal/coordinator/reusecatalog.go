@@ -90,6 +90,9 @@ type ReuseEntry struct {
 	// Contributes is singleNodeContribution, or for a multi-node fragment the
 	// count and its declared ids rendered as <your-node-id>/<internal-id>.
 	Contributes string
+	// MultiNode is true when the fragment is the nodes:/exit: form, whose
+	// citing node may carry only graph.MultiNodeCitingKeys.
+	MultiNode bool
 	// Binds is the slots a citation must bind: the declared substitutions the
 	// body actually references.
 	Binds []string
@@ -254,7 +257,7 @@ func admitInspection(source string, inspection *graph.FragmentInspection, err er
 		// wrote — so the body is judged under the id its own file gave it,
 		// exactly as validatePlannedNodeID's own comment frames the rule.
 		node.ID = node.ID[strings.LastIndex(node.ID, "/")+1:]
-		if refusals := plannedNodeRefusals(node, nil); len(refusals) > 0 {
+		if refusals := plannedNodeRefusals(node, nil, nil); len(refusals) > 0 {
 			return skip(ReuseSkipPlannerRefused, refusals[0].Reason)
 		}
 	}
@@ -263,6 +266,7 @@ func admitInspection(source string, inspection *graph.FragmentInspection, err er
 	return ReuseEntry{
 		ID:          inspection.Name,
 		Contributes: reuseContribution(inspection.IDs),
+		MultiNode:   len(inspection.IDs) > 0,
 		Binds:       inspection.Binds,
 		Summary:     summary,
 		Source:      inspection.Source,

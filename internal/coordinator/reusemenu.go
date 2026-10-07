@@ -18,7 +18,8 @@ import (
 
 // reuseMenuTemplate is the block, appended to the reply shape when the menu
 // is non-empty. %[1]s is the fence nonce in both markers, %[2]s the rendered
-// entries, %[3]s the citation example built from the first entry.
+// entries, %[3]s the citation example built from the first entry, and %[4]s
+// the multi-node paragraph, or "" when no entry contributes several nodes.
 const reuseMenuTemplate = `Reusable shapes the operator already keeps. Each is a node (or a group of
 nodes) that has been written, reviewed and run before. Prefer one of these
 over writing an equivalent node yourself. The list is fenced by "---" lines
@@ -38,7 +39,7 @@ A node that sets "reuse" writes no prompt and no allowed_tools of its own:
 the shape supplies both, and the rules below about a node's prompt and
 allowed_tools are met by what it supplies. It still writes its own id and
 depends_on, and every other rule below applies to it unchanged.
-
+%[4]s
 You may write an id that appears above and nothing else. Never a file path,
 never a file name, never a slot that is not in that entry's "binds", never an
 id that is not on this list. Any of those is rejected outright.
@@ -65,7 +66,24 @@ func reuseMenuBlock(offered []ReuseEntry) (string, error) {
 		fmt.Fprintf(&entries, "- id: %s\n  contributes: %s\n  binds: [%s]\n  summary: %s\n",
 			entry.ID, entry.Contributes, strings.Join(entry.Binds, ", "), entry.Summary)
 	}
-	return fmt.Sprintf(reuseMenuTemplate, nonce, entries.String(), reuseCitationExample(offered[0])), nil
+	return fmt.Sprintf(reuseMenuTemplate, nonce, entries.String(), reuseCitationExample(offered[0]), reuseMultiNodeRule(offered)), nil
+}
+
+// reuseMultiNodeRule is the menu's paragraph on citing a shape that
+// contributes several nodes, listing reuseMultiNodeKeys — the keys
+// validatePlannedNodeReuse lets beside such a citation, so the menu and the
+// refusal cannot disagree (#338). "" when every entry is a single node.
+func reuseMultiNodeRule(offered []ReuseEntry) string {
+	for _, entry := range offered {
+		if entry.MultiNode {
+			return `
+A shape whose "contributes" lists several nodes is spliced as those nodes:
+the node that reuses it sets no field outside ` + joinPhrases(reuseMultiNodeKeys) + `,
+and every rule below still applies to those.
+`
+		}
+	}
+	return ""
 }
 
 // reuseCitationExample is one citing node for entry, every slot bound.

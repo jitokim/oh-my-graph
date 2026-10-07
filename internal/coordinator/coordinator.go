@@ -34,6 +34,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/handoff"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/usermodel"
+	"gopkg.in/yaml.v3"
 )
 
 // plannerPermissionMode is the permission mode of every coordinator-owned
@@ -1143,10 +1144,36 @@ func validatePlannedNodes(g *graph.Graph, reply string, offered []ReuseEntry) []
 	// planner is left holding.
 	issues := append(validatePlannedFeedbackReach(g), validatePlannedFeedbackQuoting(g)...)
 	issues = append(issues, validatePlannedArtifactReferences(g)...)
-	for _, node := range g.Nodes {
-		issues = append(issues, plannedNodeRefusals(node, offered)...)
+	declared := plannedNodeKeys(reply)
+	for i, node := range g.Nodes {
+		var keys []string
+		if i < len(declared) {
+			keys = declared[i]
+		}
+		issues = append(issues, plannedNodeRefusals(node, keys, offered)...)
 	}
 	return issues
+}
+
+// plannedNodeKeys is the keys each node of a planner reply wrote, in node
+// order and in the order written: the raw mapping the splice reads, before
+// normalization fills in a default — a decoded node cannot tell an explicit
+// "handoff": "artifact" from no handoff at all, and the splice can. nil when
+// the reply holds no nodes sequence to read.
+func plannedNodeKeys(reply string) [][]string {
+	var raw struct {
+		Nodes []yaml.Node `yaml:"nodes"`
+	}
+	if err := yaml.Unmarshal([]byte(extractJSON(reply)), &raw); err != nil {
+		return nil
+	}
+	declared := make([][]string, len(raw.Nodes))
+	for i, node := range raw.Nodes {
+		for j := 0; j+1 < len(node.Content); j += 2 {
+			declared[i] = append(declared[i], node.Content[j].Value)
+		}
+	}
+	return declared
 }
 
 // plannedNodeRefusals is every per-NODE refusal validatePlannedNodes makes, in
@@ -1162,12 +1189,16 @@ func validatePlannedNodes(g *graph.Graph, reply string, offered []ReuseEntry) []
 // offered set, so a fragment body that itself carries reuse: or bind: is
 // refused by the same disposition case that refuses a plan shown no menu.
 //
+// declared is the keys the planner wrote on this node (plannedNodeKeys), which
+// only a citation of a multi-node shape is judged by; admission and the
+// post-splice checks pass nil, as they pass no offered set.
+//
 // offered is the menu the plan being judged was shown, held from the call that
 // rendered its prompt — never a re-scan. A node citing it (reuse: set) is
 // exempt from exactly two checks, the empty prompt and the empty
 // allowed_tools, because the shape supplies both and is spliced after this
 // runs (ADR 0038 §2.3); every other check applies to it unchanged.
-func plannedNodeRefusals(node graph.Node, offered []ReuseEntry) []*PlanError {
+func plannedNodeRefusals(node graph.Node, declared []string, offered []ReuseEntry) []*PlanError {
 	var refusals []*PlanError
 	add := func(err *PlanError) {
 		if err != nil {
@@ -1193,7 +1224,7 @@ func plannedNodeRefusals(node graph.Node, offered []ReuseEntry) []*PlanError {
 	add(validatePlannedNodeFeedback(node))
 	add(validatePlannedNodeRetry(node))
 	add(validatePlannedNodeTools(node))
-	refusals = append(refusals, validatePlannedNodeReuse(node, offered)...)
+	refusals = append(refusals, validatePlannedNodeReuse(node, declared, offered)...)
 	return refusals
 }
 
@@ -1771,9 +1802,14 @@ func validatePlannedNodeTools(node graph.Node) *PlanError {
 // name — on this repository, read-and-report under --no-reuse (#338). The node
 // id is enough to find the citation.
 //
+// A node citing a MULTI-NODE shape may carry only the keys the splice accepts
+// beside one (reuseMultiNodeKeys), and any other key in declared is refused
+// here, naming it, rather than by the splice, which no re-plan reaches (#338).
+// prompt and allowed_tools are left to their own refusals above.
+//
 // Every other refusal is repairable the same way: its text names the id and
 // lists the menu, so a re-plan carries what it needs to converge.
-func validatePlannedNodeReuse(node graph.Node, offered []ReuseEntry) []*PlanError {
+func validatePlannedNodeReuse(node graph.Node, declared []string, offered []ReuseEntry) []*PlanError {
 	if node.Reuse == "" {
 		if node.Bind == nil {
 			return nil
@@ -1807,6 +1843,17 @@ func validatePlannedNodeReuse(node graph.Node, offered []ReuseEntry) []*PlanErro
 	if !found {
 		return refusals
 	}
+	if entry.MultiNode {
+		for _, key := range declared {
+			if reuseMultiNodeKeySet[key] || key == "prompt" || key == "allowed_tools" {
+				continue
+			}
+			refusals = append(refusals, &PlanError{
+				Reason: fmt.Sprintf("planned node %q sets reuse %q and also sets %s; that shape contributes several nodes, and one node's %s cannot be laid over all of them, so drop %s — a node that reuses it sets no field outside %s",
+					node.ID, node.Reuse, key, key, key, joinPhrases(reuseMultiNodeKeys)),
+			})
+		}
+	}
 	binds := toSet(entry.Binds)
 	var unlisted, missing []string
 	for slot := range node.Bind {
@@ -1832,6 +1879,14 @@ func validatePlannedNodeReuse(node graph.Node, offered []ReuseEntry) []*PlanErro
 	}
 	return refusals
 }
+
+// reuseMultiNodeKeys is every key a node citing a multi-node shape may set,
+// read from the splice's own list (graph.MultiNodeCitingKeys) and never
+// restated here.
+var reuseMultiNodeKeys = graph.MultiNodeCitingKeys()
+
+// reuseMultiNodeKeySet is reuseMultiNodeKeys as a lookup set.
+var reuseMultiNodeKeySet = toSet(reuseMultiNodeKeys)
 
 // offeredEntry finds the menu entry a citation names, by exact id.
 func offeredEntry(offered []ReuseEntry, id string) (ReuseEntry, bool) {

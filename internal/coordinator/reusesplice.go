@@ -139,7 +139,7 @@ func checkSplicedNodes(g *graph.Graph, citations []ReuseCitation) error {
 		}
 		label := node.ID
 		node.ID = node.ID[strings.LastIndex(node.ID, "/")+1:]
-		for _, refusal := range plannedNodeRefusals(node, nil) {
+		for _, refusal := range plannedNodeRefusals(node, nil, nil) {
 			refusals = append(refusals, fmt.Sprintf("spliced node %q (from the reusable shape %q, %s): %s", label, citation.EntryID, citation.Source, refusal.Reason))
 		}
 		if tool, outside := reuseToolOutsideReadOnly(node.AllowedTools); outside {
