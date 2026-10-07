@@ -743,7 +743,8 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string, offe
 	// the coordinator and not in internal/runner — CLIRunner is an exec seam and
 	// stays a pure argv/session/output protocol.
 	plan.Model, plan.ModelWarning = c.chosenModel()
-	// Computed HERE, on the planner's own prompts, and deliberately before the
+	// Computed HERE, on the planner's own text — its prompts and bind values,
+	// in the graph from before the splice — and deliberately before the
 	// post-validation steps below, so what it reads is what the planner
 	// actually wrote and every path it reports is one the plan chose.
 	//
