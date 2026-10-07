@@ -226,7 +226,9 @@ func isRunFailure(err error) bool {
 // beside the prompt they protect. A node with no record (never launched — a
 // pruned or cancelled subtree) contributes nothing, and an artifact that
 // cannot be read back contributes its verdict without content rather than
-// failing the assessment.
+// failing the assessment. A node's engine verification record (#332) is
+// carried across as-is, so the assessor can see what the engine itself
+// observed of the node's success_check.verify.
 func cycleEvidence(runID string, plan coordinator.Plan, runPassed bool) (coordinator.CycleEvidence, error) {
 	snap, err := runstate.Load(filepath.Join(runDirFor(runID), stateFileName))
 	if err != nil {
@@ -262,6 +264,12 @@ func cycleEvidence(runID string, plan coordinator.Plan, runPassed bool) (coordin
 				InputTokens: rec.Usage.InputTokens, CachedInputTokens: rec.Usage.CachedInputTokens,
 				OutputTokens: rec.Usage.OutputTokens, ReasoningOutputTokens: rec.Usage.ReasoningOutputTokens,
 			},
+		}
+		if v := rec.Verification; v != nil {
+			nodeEvidence.Verification = &coordinator.NodeVerification{
+				Command: v.Command, ExitCode: v.ExitCode, ExpectedExitCode: v.ExpectedExitCode,
+				Status: string(v.Status), OutputTail: v.OutputTail,
+			}
 		}
 		if rec.ArtifactPath != "" {
 			if content, readErr := readArtifactBounded(rec.ArtifactPath); readErr == nil {
