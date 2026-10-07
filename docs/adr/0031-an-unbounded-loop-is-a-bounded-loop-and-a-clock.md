@@ -1,7 +1,8 @@
 # ADR 0031 — An unbounded loop is a bounded loop and a clock
 
-- Status: **Proposed.** Nothing in §3 is implemented. This record exists to be
-  argued with before any of it is built.
+- Status: **§3.5 Accepted on 2026-10-07** (see §8, issue #358); §3.1–§3.4
+  and §3.6 stay **Proposed** until §6's second condition has been counted.
+  This record exists to be argued with before the rest is built.
 - **Amended 2026-08-20, same day, by running the thing §3.1 rejected.** Three
   revolutions of a shell supervisor, killed mid-revolution on purpose: one claim
   refuted (a dead run IS observable — ADR 0015 works), one requirement added
@@ -320,3 +321,61 @@ That is what §6 measures before this moves past Proposed.
 - ADR 0030 — refusing rather than defaulting, and exit 3
 - `graphs/merge-shepherd.yaml` — the tail of this loop, already a graph
 - #204 — idle and dead looking the same
+
+---
+
+## 8. Acceptance of §3.5 only (2026-10-07)
+
+Read against `main` at `eee9afe` (v0.17.0 plus #355). Only §3.5 is accepted.
+The `loop` leg and everything that depends on it (§3.1–§3.4, §3.6) stay
+Proposed, for the reason §6.2 gives itself: whether a supervisor that waits
+out limit windows is needed at all depends on how often runs pause on a limit,
+and that cannot be counted until §3.5 records it. So §3.5 is the first slice,
+and it is the measurement's precondition.
+
+### 8.1 What the record is
+
+The snapshot gains an optional run-level record of a limit pause, beside the
+gate pause it already records (`gate.paused_at`, `internal/runstate/recorder.go`):
+the ids of the limited nodes, the captured cause exactly as the runtime printed
+it, and when the pause was taken. It is written at the pause and cleared when a
+resumed leg runs past it, the same lifecycle as the gate record. A limited node
+is still never recorded FAILED or completed (ADR 0009 unchanged).
+
+### 8.2 What it is not
+
+- **Not a new status.** §3.5 says the record "lets `runstatus` name a third
+  state" and §3.6 says the supervisor's state is "not a rework of
+  `runstatus`". Resolved on §3.6's side: `runstatus`'s enumeration (ADR 0023)
+  does not change, a limit-paused run is still `PAUSED`, and the new record is
+  not read by the status derivation, the same way `Facts` deliberately excludes
+  `gate.paused_at`. What changes is that `runs list` and `resume` can say
+  *why* it paused by reading the record, instead of inferring it from absence.
+- **No schema bump.** The field is optional and absent in older snapshots,
+  which is how #337 (`verification`) and #348 (`paused_gate_description`)
+  added theirs. A snapshot without it reads exactly as today, and `resume` of
+  an older run is unaffected. §5's "schema change with a version bump" is
+  superseded by this precedent.
+- **No parsing of the reset time.** The cause is recorded as captured text
+  (§3.3, `internal/runner/sessionlimit.go`). Nothing computes from it.
+- **`runs list --exit-in-flight` keeps its meaning** (ADR 0039 §4): this
+  record changes no exit code.
+
+### 8.3 What the implementation owes
+
+- The record, written at the limit pause and cleared on a resumed leg, with
+  tests for: a Claude session-limit pause, a Codex one, a run that pauses on a
+  limit and then on a gate (both records present, each with its own
+  lifecycle), and an older snapshot without the field resuming unchanged.
+- `runs list` and the pause hint name the cause from the record (sanitized
+  with `fence.SanitizeTerminalLine`, since the cause is runtime text).
+- `docs/RUN-FEED.md` documents the field, and DESIGN.md says where it is
+  written and cleared.
+
+### 8.4 The count §6.2 asks for
+
+From the merge of #358 on, limit pauses are countable from snapshots. The
+count runs for a month of ordinary use, recorded in the project's
+measurement notes. If no run pauses on a limit, §6.2's conclusion applies (the
+shell loop of `main.go`'s `until … --exit-in-flight` example is enough). If
+runs do pause, §3.1–§3.4 come back for acceptance with the count as evidence.
