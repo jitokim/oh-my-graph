@@ -70,6 +70,9 @@ type gatedDevCall struct {
 type gatedDevRunner struct {
 	reviews   []string
 	prCommits bool
+	// prAct, when set, is everything the fake pr agent does in its working
+	// directory, in place of the default push of HEAD (and of prCommits).
+	prAct func(cwd string) error
 
 	mu    sync.Mutex
 	calls []gatedDevCall
@@ -114,6 +117,13 @@ func (r *gatedDevRunner) Run(_ context.Context, spec runner.NodeInvocation) (run
 	case "check-head":
 		result = "DONE"
 	case "pr":
+		if r.prAct != nil {
+			if err := r.prAct(spec.Cwd); err != nil {
+				return runner.NodeOutcome{}, err
+			}
+			result = "PR https://github.com/example/repo/pull/1"
+			break
+		}
 		if r.prCommits {
 			if err := commitWork(spec.Cwd, fmt.Sprintf("unreviewed-%d.txt", seq)); err != nil {
 				return runner.NodeOutcome{}, err
@@ -462,5 +472,171 @@ func TestGatedDev_PRPublishingAnUnapprovedHeadFailsAndKeepsThePin_345(t *testing
 	}
 	if sha, ok := refSHA(t, repo, pinRef(runID)); !ok || sha != pinned {
 		t.Errorf("a failed pr changed the pin: %s is %q (exists %v), want %s", pinRef(runID), sha, ok, pinned)
+	}
+}
+
+// --- 5g. pr's verify judges what was published, not what the agent did --------
+
+// assertPRFailedItsVerify is the outcome every leg below wants: the resumed
+// leg failed, check-head passed, pr's agent ran once and ended with a failing
+// verdict, which only its engine verify can have given it (the fake's reply
+// matches result_matches).
+func assertPRFailedItsVerify(t *testing.T, runID string, resumeErr error, rec *gatedDevRunner) {
+	t.Helper()
+	if resumeErr == nil {
+		t.Error("the resumed leg returned nil; pr's verify must fail it")
+	}
+	if n := len(rec.callsTo("pr")); n != 1 {
+		t.Errorf("pr's agent started %d time(s), want 1", n)
+	}
+	snap := gatedDevSnapshot(t, runID)
+	assertVerdict(t, snap, "check-head", runstate.VerdictPass)
+	assertVerdict(t, snap, "pr", runstate.VerdictFail)
+}
+
+func currentBranch(dir string) (string, error) {
+	return gitOutput(dir, "symbolic-ref", "--short", "HEAD")
+}
+
+func TestGatedDev_PRCommitThenPushFailsAtItsVerifyAndKeepsThePin_345(t *testing.T) {
+	isolateRunHome(t)
+	graphPath := gatedDevGraphPath(t)
+	repo := gatedDevRepo(t)
+	rec := newGatedDevRunner("CLEAN")
+	rec.prAct = func(cwd string) error {
+		if err := commitWork(cwd, "sneaked.txt"); err != nil {
+			return err
+		}
+		_, err := gitOutput(cwd, "push", "-q", "origin", "HEAD")
+		return err
+	}
+	const runID = "gd-pr-commit"
+
+	pausedGatedDev(t, graphPath, repo, runID, rec)
+	pinned, ok := refSHA(t, repo, pinRef(runID))
+	if !ok {
+		t.Fatalf("no pin %s at the pause", pinRef(runID))
+	}
+
+	err := resumeGatedDev(t, runID, "--approve", rec)
+	assertPRFailedItsVerify(t, runID, err, rec)
+	if got := publishedSHA(t, repo, laneBranch(runID)); got == pinned {
+		t.Fatalf("origin's %s is at the pinned %s; nothing else was published, so this proves nothing", laneBranch(runID), pinned)
+	}
+	if sha, ok := refSHA(t, repo, pinRef(runID)); !ok || sha != pinned {
+		t.Errorf("a failed pr changed the pin: %s is %q (exists %v), want %s", pinRef(runID), sha, ok, pinned)
+	}
+}
+
+func TestGatedDev_PRPushingADifferentSHAFailsAtItsVerify_345(t *testing.T) {
+	isolateRunHome(t)
+	graphPath := gatedDevGraphPath(t)
+	repo := gatedDevRepo(t)
+	rec := newGatedDevRunner("CLEAN")
+	var head, pushed string
+	rec.prAct = func(cwd string) error {
+		branch, err := currentBranch(cwd)
+		if err != nil {
+			return err
+		}
+		if head, err = gitOutput(cwd, "rev-parse", "HEAD"); err != nil {
+			return err
+		}
+		// HEAD is left alone; its parent is published instead.
+		if pushed, err = gitOutput(cwd, "rev-parse", "HEAD~1"); err != nil {
+			return err
+		}
+		_, err = gitOutput(cwd, "push", "-q", "origin", pushed+":refs/heads/"+branch)
+		return err
+	}
+	const runID = "gd-pr-other-sha"
+
+	pausedGatedDev(t, graphPath, repo, runID, rec)
+	pinned, ok := refSHA(t, repo, pinRef(runID))
+	if !ok {
+		t.Fatalf("no pin %s at the pause", pinRef(runID))
+	}
+
+	err := resumeGatedDev(t, runID, "--approve", rec)
+	assertPRFailedItsVerify(t, runID, err, rec)
+	if head != pinned {
+		t.Errorf("pr's HEAD was %s, want the pin %s: HEAD must be untouched", head, pinned)
+	}
+	if got := publishedSHA(t, repo, laneBranch(runID)); got != pushed || got == head {
+		t.Errorf("origin's %s is at %s, want the different SHA %s (HEAD %s)", laneBranch(runID), got, pushed, head)
+	}
+	if sha, ok := refSHA(t, repo, pinRef(runID)); !ok || sha != pinned {
+		t.Errorf("a failed pr changed the pin: %s is %q (exists %v), want %s", pinRef(runID), sha, ok, pinned)
+	}
+}
+
+// check-head must not delete the pin: it is still there when pr's agent
+// starts, and only pr's verify removes it, once the published head matches.
+func TestGatedDev_PinSurvivesCheckHeadAndIsDeletedByPRVerify_345(t *testing.T) {
+	isolateRunHome(t)
+	graphPath := gatedDevGraphPath(t)
+	repo := gatedDevRepo(t)
+	rec := newGatedDevRunner("CLEAN")
+	var pinAtPR, headAtPR string
+	var pinErr error
+	rec.prAct = func(cwd string) error {
+		pinAtPR, pinErr = gitOutput(repo, "rev-parse", "--verify", "-q", pinRef("gd-pin-lifetime"))
+		var err error
+		if headAtPR, err = gitOutput(cwd, "rev-parse", "HEAD"); err != nil {
+			return err
+		}
+		_, err = gitOutput(cwd, "push", "-q", "origin", "HEAD")
+		return err
+	}
+	const runID = "gd-pin-lifetime"
+
+	pausedGatedDev(t, graphPath, repo, runID, rec)
+	pinned, ok := refSHA(t, repo, pinRef(runID))
+	if !ok {
+		t.Fatalf("no pin %s at the pause", pinRef(runID))
+	}
+
+	if err := resumeGatedDev(t, runID, "--approve", rec); err != nil {
+		t.Fatalf("resume --approve approve-publish: %v", err)
+	}
+	if pinErr != nil || pinAtPR != pinned {
+		t.Errorf("when pr started the pin was %q (err %v), want %s: check-head must not delete it", pinAtPR, pinErr, pinned)
+	}
+	if headAtPR != pinned {
+		t.Errorf("pr started on %s, want the pin %s", headAtPR, pinned)
+	}
+	assertVerdict(t, gatedDevSnapshot(t, runID), "pr", runstate.VerdictPass)
+	if sha, ok := refSHA(t, repo, pinRef(runID)); ok {
+		t.Errorf("the pin %s still exists (at %s) after the run; pr's verify must delete it", pinRef(runID), sha)
+	}
+}
+
+func TestGatedDev_PinRemovedBeforePRVerifyFailsPRClosed_345(t *testing.T) {
+	isolateRunHome(t)
+	graphPath := gatedDevGraphPath(t)
+	repo := gatedDevRepo(t)
+	rec := newGatedDevRunner("CLEAN")
+	const runID = "gd-pin-removed"
+	rec.prAct = func(cwd string) error {
+		if _, err := gitOutput(repo, "update-ref", "-d", pinRef(runID)); err != nil {
+			return err
+		}
+		_, err := gitOutput(cwd, "push", "-q", "origin", "HEAD")
+		return err
+	}
+
+	pausedGatedDev(t, graphPath, repo, runID, rec)
+	pinned, ok := refSHA(t, repo, pinRef(runID))
+	if !ok {
+		t.Fatalf("no pin %s at the pause", pinRef(runID))
+	}
+
+	err := resumeGatedDev(t, runID, "--approve", rec)
+	assertPRFailedItsVerify(t, runID, err, rec)
+	if got := publishedSHA(t, repo, laneBranch(runID)); got != pinned {
+		t.Errorf("origin's %s is at %s, want the approved %s: the head was published, only the pin was missing", laneBranch(runID), got, pinned)
+	}
+	if sha, ok := refSHA(t, repo, pinRef(runID)); ok {
+		t.Errorf("the pin %s reappeared at %s", pinRef(runID), sha)
 	}
 }
