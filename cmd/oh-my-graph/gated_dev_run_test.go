@@ -173,8 +173,10 @@ func mustGit(t *testing.T, dir string, args ...string) string {
 }
 
 // commitWork writes one file in dir and commits it, staging it by its path.
+// The file names dir, so two runs' lanes never make byte-identical commits
+// (same parent, same tree, same second) that would share one SHA.
 func commitWork(dir, name string) error {
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(name+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(name+" in "+dir+"\n"), 0o644); err != nil {
 		return err
 	}
 	if _, err := gitOutput(dir, "add", name); err != nil {
