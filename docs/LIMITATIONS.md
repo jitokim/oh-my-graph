@@ -390,7 +390,7 @@ has no open issue behind it.
   hash are printed before any node spends.
   <br>**Reach `run`, `chat`, or a `--plan-only` graph.** Only `auto` registers
   the flag. The graph `--plan-only` saves does not hold the conventions, the
-  preview says so, and `run <graph.json>` does not prefix them (a hand-written
+  preview says so, and `run <graph.yaml>` does not prefix them (a hand-written
   `run` node loads your CLI configuration natively anyway). A resumed leg reuses the
   staged copy and refuses to continue if it is missing or altered; `resume`
   registers no `--conventions` to change them. An older binary refuses such a
