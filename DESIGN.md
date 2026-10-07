@@ -362,9 +362,9 @@ A graph's inputs are bound on the command line, on `run` and `auto` only:
   and fails its node at run time, a bound key the graph never quotes is
   accepted as an unused `--input` key is, and `auto`'s planner sees the merged
   keys.
-- **An undeclared key warns, never refuses (#356).** Each bound key the
-  graph's `inputs: [..]` does not name gets one `warning:` line, sorted by key;
-  the key stays bound, and the run and its exit status are exactly what they
+- **An undeclared key warns, never refuses (#356).** On `run`, each bound key
+  the graph's `inputs: [..]` does not name gets one `warning:` line, sorted by
+  key; the key stays bound, and the run and its exit status are exactly what they
   would have been without it. The line names the key (`%q`-quoted, so a file
   key carrying an escape sequence prints escaped) and its **winning** source,
   the same winner the precedence line names first: `--input`, or the
@@ -381,12 +381,24 @@ A graph's inputs are bound on the command line, on `run` and `auto` only:
   undeclared input), and skipping the check there would leave `run` silent
   about a key `lint` calls undeclared. `run` prints the lines on stderr at
   load, beside the other load-time warnings and before anything spawns, and
-  `run --dry-run` prints the same ones. `auto` has no graph until the planner
-  writes one, so the plan screen judges the bound keys against the PLANNED
-  graph's `inputs:` and prints them at the head of its warning block,
-  `--plan-only` included. Across a goal loop every cycle's plan is judged,
-  but each key warns once, on the first cycle whose plan leaves it out; the
-  binding is the same on every cycle. `chat` binds no inputs and judges none.
+  `run --dry-run` prints the same ones: the graph's author declared its
+  inputs, so a key outside them is a likely typo. `auto` warns on a **near
+  miss only**. It has no graph until the planner writes one, so the plan
+  screen judges the bound keys against the names the PLANNED graph declares
+  in `inputs:` or references as `{{ inputs.<name> }}` in any field the engine
+  interpolates (prompt, cwd, `success_check.verify`'s command and cwd, a
+  gate's description), collected by the token scanner `lint` uses. A key
+  within the near-miss distance above of one of those names gets the same
+  line, `did you mean` tail included, at the head of the plan screen's
+  warning block, `--plan-only` included. A key that matches a name exactly,
+  or is near none, prints nothing, and neither does any key when the plan
+  declares and references nothing. The planner saw every bound input and may
+  simply not need one, so undeclared alone is no typo signal there, and
+  judging it as `run` does would warn on every
+  `auto "..." --input repo=$PWD`. Across a goal loop every cycle's plan is
+  judged, but each key warns once, on the first cycle whose plan it nearly
+  matches; a key that printed nothing is not spent, and the binding is the
+  same on every cycle. `chat` binds no inputs and judges none.
 - **Resume reads the snapshot, never the file.** The merged values land in
   `state.json`'s existing inputs (see "Gate nodes and `resume`"); the file is
   not recorded and not re-read.
