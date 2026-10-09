@@ -869,7 +869,7 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 		return noteRejectedPlan(out, planDirFor(newRunID()), err)
 	}
 	if planOnly {
-		return notePlanOnlyPreview(out, plan, flags.runtime, flags.buildEvidence, flags.baselineSkipped, flags.conventions, flags.interview, flags.inputSources)
+		return notePlanOnlyPreview(out, plan, flags.runtime, flags.buildEvidence, flags.baselineSkipped, flags.verifyPins, flags.conventions, flags.interview, flags.inputSources)
 	}
 	// The interview was bought for this plan, so its spend is this run's
 	// planning spend from here on (withInterviewCost). Not on the preview
@@ -894,7 +894,7 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 		return err
 	}
 	if committed {
-		printPlanForRuntime(out, plan, specPath, flags.runtime, flags.buildEvidence, flags.baselineSkipped, conventionsDisclosure{set: flags.conventions}, flags.inputSources)
+		printPlanForRuntime(out, plan, specPath, flags.runtime, flags.buildEvidence, flags.baselineSkipped, flags.verifyPins, conventionsDisclosure{set: flags.conventions}, flags.inputSources)
 	} else {
 		// confirmPlan already printed the topology; only the destination was
 		// unknown until the answer came back.
@@ -935,10 +935,13 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 // baselineSkipped is `auto --no-baseline` (#328). A preview writes no
 // state.json, so the plan screen's line is its only record of the skip.
 //
+// pins is the launch's --verify-cmd pin set (#363): a preview takes them too,
+// so it shows what the run it previews would guard.
+//
 // inputSources is the launch's bound keys and their sources (#356): a key the
 // planned graph does not declare is warned about here, before the preview's
 // natural next step binds it again on `run`.
-func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome, baselineSkipped bool, conv *conventions.Set, iv *interview.Result, inputSources map[string]string) error {
+func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome, baselineSkipped bool, pins *verifyPinSet, conv *conventions.Set, iv *interview.Result, inputSources map[string]string) error {
 	planDir := planDirFor(newRunID())
 	specPath, err := savePlan(planDir, plan)
 	if err != nil {
@@ -951,7 +954,7 @@ func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Ru
 	if _, err := stageInterview(planDir, iv); err != nil {
 		return err
 	}
-	printPlanForRuntime(out, plan, specPath, runtime, evidence, baselineSkipped, conventionsDisclosure{set: conv, notCarried: true}, inputSources)
+	printPlanForRuntime(out, plan, specPath, runtime, evidence, baselineSkipped, pins, conventionsDisclosure{set: conv, notCarried: true}, inputSources)
 	fmt.Fprintf(out,
 		"plan only: no node was executed. The %s still paid for (%s) —\n"+
 			"unlike `run --dry-run`, this is not free — and its plan is kept at %s, and as YAML at %s.\n"+
@@ -984,7 +987,7 @@ func confirmPlan(out io.Writer, plan coordinator.Plan, runtime runner.Runtime, e
 	// No conventions: `chat` registers no --conventions (ADR 0041 §2.6). No
 	// skipped baseline either: `chat` has no --no-baseline (#328), and no
 	// bound inputs to judge: `chat` has no --input.
-	printPlanForRuntime(out, plan, "", runtime, evidence, false, conventionsDisclosure{}, nil)
+	printPlanForRuntime(out, plan, "", runtime, evidence, false, nil, conventionsDisclosure{}, nil)
 	ok, err := confirm()
 	if err != nil {
 		return false, err
@@ -1451,12 +1454,14 @@ func formatUsage(usage runner.TokenUsage) string {
 // screen assertion does not have to name a runtime and an evidence record it is
 // not about.
 func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
-	printPlanForRuntime(w, plan, specPath, runner.RuntimeClaude, nil, false, conventionsDisclosure{}, nil)
+	printPlanForRuntime(w, plan, specPath, runner.RuntimeClaude, nil, false, nil, conventionsDisclosure{}, nil)
 }
 
 // conv is what the screen says about the operator's `--conventions` (ADR
 // 0041 §2.4); its zero value prints nothing. baselineSkipped is `auto
 // --no-baseline` (#328); false, which every surface but auto passes, prints
+// nothing. pins is the launch's --verify-cmd pin set (#363), listed under the
+// attachments it guards; nil, which every surface but auto passes, prints
 // nothing. inputSources is each bound key's winning source
 // (commonRunFlags.inputSources, #356), judged against the input names the
 // PLANNED graph declares or references — on `auto` no graph exists until the
@@ -1464,7 +1469,7 @@ func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 // Only a near miss of one of those names warns: the planner saw every bound
 // input and may simply not need one, so undeclared alone is not a typo signal
 // here. nil prints nothing.
-func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome, baselineSkipped bool, conv conventionsDisclosure, inputSources map[string]string) {
+func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome, baselineSkipped bool, pins *verifyPinSet, conv conventionsDisclosure, inputSources map[string]string) {
 	g := plan.Graph
 	if specPath == "" {
 		fmt.Fprintf(w, "Planned graph %q (%d nodes, planning cost %s):\n", g.Name, len(g.Nodes), formatCost(plan.CostUSD, plan.CostUnknown))
@@ -1517,6 +1522,9 @@ func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, ru
 	// a citation is spliced before either runtime sees the graph (ADR 0038).
 	noteReuse(w, plan.Reuse)
 	noteVerifyAttachments(w, plan.VerifyAttachments)
+	if len(plan.VerifyAttachments) > 0 {
+		noteVerifyPins(w, pins)
+	}
 	noteMissingBuildEvidence(w, evidence)
 	noteSkippedBaseline(w, baselineSkipped)
 	noteReplan(w, plan.Repaired)

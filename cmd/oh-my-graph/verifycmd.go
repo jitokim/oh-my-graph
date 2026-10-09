@@ -193,6 +193,27 @@ func noteVerifyAttachments(w io.Writer, attachments []coordinator.VerifyAttachme
 	}
 }
 
+// noteVerifyPins lists, under the attachments, the absolute path of every file
+// the launch pinned (#363): the files an edit to which fails a verification
+// instead of passing it. A set that pinned nothing is said out loud, because
+// since #367 a command that executes no script resolvable from the launch
+// directory (`make verify`, `cd sub && sh v.sh`) runs entirely unguarded, and
+// silence would read as guarded. nil — `run`, `chat`, a resumed leg — prints
+// nothing.
+func noteVerifyPins(w io.Writer, pins *verifyPinSet) {
+	if pins == nil {
+		return
+	}
+	if len(pins.files) == 0 {
+		fmt.Fprint(w, "    WARNING: verify-cmd has no pinned script — nothing it executes resolves from the launch\n"+
+			"    directory, so an edit to what it runs cannot be detected\n")
+		return
+	}
+	for _, f := range pins.files {
+		fmt.Fprintf(w, "    pinned: %s\n", f.Path)
+	}
+}
+
 // noteMissingBuildEvidence is the other half of the plan screen's build-evidence
 // slot: noteVerifyAttachments states what the engine WILL run at each sink, and
 // this states that it will run nothing. The slot says one or the other and never

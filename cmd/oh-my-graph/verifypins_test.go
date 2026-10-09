@@ -497,3 +497,88 @@ func TestRunAuto_InterpolatedCommandIsStillGuarded_363(t *testing.T) {
 		})
 	}
 }
+
+// (k) The plan screen lists, under the build-evidence block, the absolute
+// path of every file the launch pinned (#363) — for a script handed to an
+// interpreter and for one run by path alike (#367).
+func TestRunAuto_PlanScreenListsPinnedPaths_363(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the evidence command here is a shell script")
+	}
+	for _, command := range []string{"sh v.sh", "./v.sh", "sh v.sh && ./w.sh"} {
+		t.Run(command, func(t *testing.T) {
+			isolateRunHome(t)
+			dir := t.TempDir()
+			t.Chdir(dir)
+			writeFile(t, filepath.Join(dir, "v.sh"), "#!/bin/sh\nexit 0\n")
+			writeFile(t, filepath.Join(dir, "w.sh"), "#!/bin/sh\nexit 0\n")
+
+			out, err := runBaselineAuto(t, oneCycle(), greenBaselineFor(command), osStdin(), "add a README section", "--verify-cmd", command)
+
+			if err != nil {
+				t.Fatalf("an untouched verify script must pass: %v\n%s", err, out)
+			}
+			pins := loadSnapshot(t, soleRunID(t)).VerifyPins
+			if len(pins) == 0 {
+				t.Fatalf("%q pinned nothing", command)
+			}
+			block := out[strings.Index(out, "build evidence (--verify-cmd)"):]
+			for _, pin := range pins {
+				if !filepath.IsAbs(pin.Path) {
+					t.Errorf("pin path %q is not absolute", pin.Path)
+				}
+				if want := "\n    pinned: " + pin.Path + "\n"; !strings.Contains(block, want) {
+					t.Errorf("plan screen does not list %q under the build-evidence block:\n%s", want, out)
+				}
+			}
+			if strings.Contains(out, "verify-cmd has no pinned script") {
+				t.Errorf("a command that pinned %d file(s) printed the no-pin warning:\n%s", len(pins), out)
+			}
+		})
+	}
+}
+
+// (l) `cd sub && sh v.sh` pins nothing — paths resolve from the launch
+// directory only, and v.sh is only in sub/ (#367) — so the plan screen warns
+// that nothing is guarded instead of staying silent, and the run's
+// verification still passes.
+func TestRunAuto_UnpinnableCommandWarnsAndPasses_363(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the evidence command here is a shell script")
+	}
+	isolateRunHome(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "sub", "v.sh"), "#!/bin/sh\nexit 0\n")
+	command := "cd sub && sh v.sh"
+
+	out, err := runBaselineAuto(t, oneCycle(), greenBaselineFor(command), osStdin(), "add a README section", "--verify-cmd", command)
+
+	if err != nil {
+		t.Fatalf("an unpinnable command must still verify: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "verify-cmd has no pinned script") {
+		t.Errorf("plan screen does not warn that nothing is pinned:\n%s", out)
+	}
+	if strings.Contains(out, "    pinned: ") {
+		t.Errorf("plan screen lists a pin for a command that pinned nothing:\n%s", out)
+	}
+	snap := loadSnapshot(t, soleRunID(t))
+	if snap.VerifyPins != nil {
+		t.Errorf("verify_pins = %+v, want none", snap.VerifyPins)
+	}
+	wantSinkPass(t, snap.Nodes["work"])
+}
+
+// A surface with no pin set — `run`, `chat`, a resumed leg — prints neither
+// a pin nor the warning (#363).
+func TestNoteVerifyPins_NilSetPrintsNothing_363(t *testing.T) {
+	var out strings.Builder
+	noteVerifyPins(&out, nil)
+	if out.Len() != 0 {
+		t.Errorf("a nil set printed %q", out.String())
+	}
+}

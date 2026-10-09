@@ -112,7 +112,7 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 		// share its build-evidence answer: the question was asked once, before
 		// cycle 1, and a cycle that CREATES a build system does not retroactively
 		// gate its own run (ADR 0030 §3.5, §6).
-		printPlanForRuntime(out, plan, specPath, flags.runtime, flags.buildEvidence, flags.baselineSkipped, conventionsDisclosure{set: flags.conventions},
+		printPlanForRuntime(out, plan, specPath, flags.runtime, flags.buildEvidence, flags.baselineSkipped, flags.verifyPins, conventionsDisclosure{set: flags.conventions},
 			unwarnedInputSources(plannedInputNames(plan.Graph), flags.inputSources, warnedInputs))
 
 		// Unreachable in v1 production — `auto` passes a nil confirm and
