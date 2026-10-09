@@ -23,6 +23,11 @@
 > `codex` CLI you already have logged in — so it starts inside your own
 > settings, CLAUDE.md, MCP servers and skills.
 
+<p align="center">
+  <img src="assets/auto-demo.gif" alt="Terminal recording of a real oh-my-graph auto run: the goal 'add a slugify() function to textutil.py, with unit tests' with --verify-cmd 'python3 -m unittest -q'. The command passes on the starting tree, the planner writes a 2-node graph (implement, then review), both nodes run, the engine runs the tests itself at the review node, and the ledger shows implement as PASS (exit-only) and review as PASS (verified), total cost $0.28" width="100%" />
+</p>
+<p align="center"><em>A real <code>auto</code> run on v0.17.0, played at 2× speed. The goal becomes a 2-node plan. The engine runs your <code>--verify-cmd</code> on the starting tree and again at the sink, and the ledger says which PASS was <code>verified</code> and which was only an exit code. Total cost $0.28.</em></p>
+
 ## What it is
 
 You describe the work as a DAG in YAML — or hand `auto` a goal and let it plan
