@@ -2013,9 +2013,11 @@ func noteSkillActivation(w io.Writer, scan *coordinator.SkillScan, activation *c
 				"    The tokens above are charged either way.\n"+
 				"  ceiling: UNCHANGED — for every planned node in this run, excluded ones included since\n"+
 				"    2026-08-12. Their settings, CLAUDE.md, hooks and MCP servers do not load (ADR 0004\n"+
-				"    layer 1 stays \"\"); a declared scope like Bash(git *) is enforced. The only change\n"+
-				"    activation makes is that the Skill tool exists for the node(s) named above, which is\n"+
-				"    the one half an EXCLUDED node still differs in — see its lines above.\n"+
+				"    layer 1 stays \"\"). A call matching the node's allowed-tool rules runs; under the\n"+
+				"    default permission mode (auto) a call outside them is not denied outright but goes\n"+
+				"    to the CLI's own classifier, which approves or denies it. The only change activation\n"+
+				"    makes is that the Skill tool exists for the node(s) named above, which is the one\n"+
+				"    half an EXCLUDED node still differs in — see its lines above.\n"+
 				"  The staged corpus is re-materialized and verified before every node spawn, so a node\n"+
 				"    cannot leave a skill behind for a later one. Your own skill files are read once, at\n"+
 				"    staging: editing them mid-run neither changes this run nor stops it.\n"+
