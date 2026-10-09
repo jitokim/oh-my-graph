@@ -68,6 +68,14 @@ They spend plan allowance and require the selected CLI to be logged in. They
 are manual, local-only steps — **never** add either to CI, and don't submit a
 PR that wires one into a workflow.
 
+Each smoke runs in its own fresh, empty directory, created with `mktemp -d`
+inside `SMOKE_DIR`. `SMOKE_DIR` defaults to `/tmp/omg-smoke` and is a parent,
+not the run directory. Nothing is deleted: the target prints the directory, so
+you can inspect the `haiku.txt` it wrote. The two smokes used to share
+`/tmp/omg-smoke`, and the `write` node's check only asks whether `haiku.txt`
+exists, so a later smoke could pass on the file an earlier smoke wrote
+([#364](https://github.com/jitokim/oh-my-graph/issues/364)).
+
 ## Branch and PR conventions
 
 - Branch names: `feat/...`, `fix/...`, `chore/...`, `docs/...` — matching the
@@ -320,7 +328,11 @@ Maintainer checklist for cutting a release:
   the current version's section as well as Unreleased. The Contributors line
   is computed from `git log`, so it needs nothing from you.
 - **`make smoke` and `make smoke-codex` before tagging.** Run both real-CLI
-  smokes locally as the last gate — neither runs in CI.
+  smokes locally as the last gate — neither runs in CI. Each runs in its own
+  fresh directory inside `SMOKE_DIR` (default `/tmp/omg-smoke`, a parent);
+  nothing is deleted, and the target prints the directory so you can inspect
+  `haiku.txt`. A shared directory let a later smoke pass on a file an earlier
+  smoke wrote: in v0.17.0 the codex smoke could not have failed.
 - **One scoped deep meta-review per release, on a rotating subject** (tests →
   docs → security). Pick the release's subject and ask one targeted question
   about that area's blind spots, rather than adding another generic review
