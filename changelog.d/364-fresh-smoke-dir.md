@@ -1,3 +1,0 @@
-### Fixed
-
-- **`make smoke` and `make smoke-codex` each run in a fresh, empty directory.** Both targets used to share `SMOKE_DIR`'s default `/tmp/omg-smoke`, and the haiku-smoke `write` node's engine check is only `test -f haiku.txt`, so a later smoke could pass on the file an earlier smoke wrote: in the v0.17.0 release the codex smoke ran 30 s after the claude smoke in that same directory, and its verified PASS could not have failed. Each target now creates its own directory with `mktemp -d` inside `SMOKE_DIR`, which is now a parent, passes it as `--input dir`, and prints it so you can inspect `haiku.txt`. Nothing is deleted. The `graphs/haiku-smoke.yaml` header and CONTRIBUTING.md say the same. ([#364](https://github.com/jitokim/oh-my-graph/issues/364))
