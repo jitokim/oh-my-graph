@@ -2787,18 +2787,28 @@ starting tree was not checked against --verify-cmd`, the only record a
 `--plan-only` preview keeps. A run without the flag writes no key and prints no
 line; the schema stays 3.
 
-**A `--verify-cmd` is evidence only while the files it names are the ones the
-user meant (#363).** A planned node with the stock Edit grant can rewrite
+**A `--verify-cmd` is evidence only while the script it executes is the one
+the user meant (#363).** A planned node with the stock Edit grant can rewrite
 `./check.sh`, so `auto` pins the command line once per invocation
 (`pinVerifyCommand`, `cmd/oh-my-graph/verifypins.go`), right after
 `flags.verifyCommand()` and before the build-evidence answer and the baseline —
 whether or not `--no-baseline` skips it. `verify.PinCommand` splits the line
-into shell words (quotes removed, operators dropped, the target of an output
-redirection skipped, nothing expanded) and pins each that resolves against the
-process cwd, every symlink followed, to an existing readable regular file:
-`Word`, absolute `Path`, SHA-256 `Digest`. A word naming nothing pinnable is
-skipped, and there is no `PATH` lookup. The check is a decorator around the
-engine's `verify.Verifier`, `verify.PinningVerifier`: for every Request — the
+into command segments on `&&`, `||`, `;` and `|` (quotes removed, the target
+of a redirection skipped, nothing expanded) and pins, per segment, the one
+file it executes (#367): past leading `NAME=value` words and the wrappers
+`env`, `exec`, `command`, `nice` and `time` (by basename), an interpreter
+command word (`sh`, `bash`, `zsh`, `dash`, `python`, `python3`, `python3.N`,
+`node`, `ruby`, `perl`) pins nothing when the segment holds `-c`, else its
+first following word that is an existing readable regular file and nothing
+after it; any other command word is pinned only if it contains a `/`. Each
+resolves against the process cwd, every symlink followed: `Word`, absolute
+`Path`, SHA-256 `Digest`. The interpreter binary is never pinned, there is no
+`PATH` lookup, a `cd` inside the command is not tracked, and an argument the
+command reads or writes (`| tee log.txt`, `--junitxml log.txt`) stays
+unpinned, so the command cannot fault on its own output. The plan screen lists
+each pinned `Path` under the build-evidence block, or warns `verify-cmd has no
+pinned script` when the set is empty (`noteVerifyPins`). The check is a
+decorator around the engine's `verify.Verifier`, `verify.PinningVerifier`: for every Request — the
 verifier it wraps runs nothing but the pinned command, and the scheduler's `{{ }}`
 interpolation means a Request's command need not equal the pinned string — it
 re-resolves and re-hashes every pin, against `Request.Cwd` or
@@ -2817,9 +2827,9 @@ an edit cycle 1 made can never become cycle 2's pin. The set is recorded as
 `state.json`'s `verify_pins` (`runstate.VerifyPin`: `word`, `path`, `sha256`;
 optional, schema 3), and `resume` rebuilds the guard from that record
 (`resumedVerifyPins`) instead of taking new pins, so a file changed while the
-run was stopped faults on the resumed leg. A nil set — `run`, `chat`, an auto
-run without `--verify-cmd` or whose line names no file — leaves the bare
-`ShellVerifier` in place. `internal/schedule` is unchanged: a `Verifier` error
+run was stopped faults on the resumed leg. A nil or empty set — `run`, `chat`, an
+auto run without `--verify-cmd` or whose line executes no pinnable file —
+leaves the bare `ShellVerifier` in place. `internal/schedule` is unchanged: a `Verifier` error
 was already a verify fault (`verifyFault`), never a judged result, so the
 decorator needed no new path through the scheduler. There is no snapshot copy
 of a pinned file — the check can refuse a changed file, never run the original
