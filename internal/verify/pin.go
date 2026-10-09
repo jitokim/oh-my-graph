@@ -68,9 +68,12 @@ type PinChangedError struct {
 	Reason string
 }
 
+// Error names the file LAST: a node's recorded detail keeps only the tail of
+// a long fault (the scheduler's capDetail), and the file is the one part a
+// reader cannot recover from anything else on the record.
 func (e *PinChangedError) Error() string {
-	return fmt.Sprintf("verify command %q: pinned file %s changed since launch: %s — "+
-		"the run cannot treat this verification as evidence", e.Command, e.Path, e.Reason)
+	return fmt.Sprintf("verify command %q cannot be evidence: %s; pinned file %s changed since launch",
+		e.Command, e.Reason, e.Path)
 }
 
 // PinningVerifier wraps a Verifier and checks a pinned command's files

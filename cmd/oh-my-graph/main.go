@@ -572,6 +572,13 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 	// that is what makes a preview refuse identically to the run it previews,
 	// with no special case and no planner call bought.
 	verifyCommand := flags.verifyCommand()
+	// The files the command line names, pinned here — once per invocation,
+	// before the baseline runs it and before any cycle could edit them — so a
+	// verification whose pinned file has since changed is a fault naming the
+	// file, never a PASS (#363). The one set guards the baseline and every
+	// cycle's sinks; nothing re-pins, so an edit cycle 1 made cannot become
+	// cycle 2's pin. Taken whether or not --no-baseline skips the baseline.
+	flags.verifyPins = pinVerifyCommand(verifyCommand)
 	evidence, err := answerBuildEvidence(os.Stdout, verifyCommand, flags.buildDeclaration(), ".")
 	if err != nil {
 		return err
@@ -618,7 +625,7 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 	if flags.noBaseline {
 		flags.baselineSkipped = true
 		fmt.Fprintf(os.Stdout, "Baseline: skipped (--no-baseline); --verify-cmd '%s' is still the command at every sink.\n", verifyCommand.Command)
-	} else if err := runBaseline(ctx, os.Stdout, verifier, verifyCommand, flags.goal); err != nil {
+	} else if err := runBaseline(ctx, os.Stdout, flags.verifyPins.guard(verifier), verifyCommand, flags.goal); err != nil {
 		return err
 	}
 	// Once per goal, before cycle 1, and never again: every later cycle's
@@ -1226,11 +1233,15 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 		resumeVerifyCmd = injectedVerifyCommand(g)
 	}
 
+	// Guarded by the launch's --verify-cmd pins (#363); a run with none —
+	// every `run` of a hand-written graph — gets the bare ShellVerifier.
+	verifier := flags.verifyPins.guard(verify.NewShellVerifier())
+
 	scheduler := schedule.NewScheduler(nodeRunner, schedule.Options{
 		Concurrency:           flags.concurrency,
 		ContinueOnFail:        flags.continueOnFail,
 		Gate:                  gateControllerFor(flags.autoApprove),
-		Verifier:              verify.NewShellVerifier(),
+		Verifier:              verifier,
 		Worktrees:             worktrees,
 		ToolPolicies:          toolPolicies,
 		Model:                 flags.plannedModel,
@@ -1331,6 +1342,7 @@ func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Gr
 		Conventions:           conventionsRecord(flags.conventions),
 		Interview:             flags.interviewRecord,
 		Baseline:              baselineRecord(flags.baselineSkipped),
+		VerifyPins:            flags.verifyPins.record(),
 	}
 	return runstate.NewSnapshotRecorder(statePath, base), nil
 }

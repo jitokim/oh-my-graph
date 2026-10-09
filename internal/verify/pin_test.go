@@ -63,8 +63,9 @@ func wantPinFault(t *testing.T, err error, path string) {
 	if pinErr.Path != path {
 		t.Errorf("PinChangedError.Path = %q, want %q", pinErr.Path, path)
 	}
-	if msg := err.Error(); !strings.Contains(msg, path) || !strings.Contains(msg, "changed since launch") {
-		t.Errorf("error %q must name %s and say it changed since launch", msg, path)
+	// The file comes last: a node's recorded detail keeps only a fault's tail.
+	if msg := err.Error(); !strings.HasSuffix(msg, "pinned file "+path+" changed since launch") {
+		t.Errorf("error %q must END by naming %s and saying it changed since launch", msg, path)
 	}
 }
 
