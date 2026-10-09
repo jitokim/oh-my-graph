@@ -185,10 +185,11 @@ command's own exit status cannot override it. There is no re-pin; to accept a
 change, start a new run. The check refuses a changed file; it never runs a
 saved original in its place. What is not pinned (an inline `-c` script, a file
 the script sources, reads or writes, the `Makefile` behind `make verify`, the
-command behind a wrapper other than `env`, `exec`, `command`, `nice` and
-`time`, a program found on `PATH`, a path that only resolves after a `cd`
-inside the command, an edit made and reverted entirely during a verification)
-is in [LIMITATIONS](docs/LIMITATIONS.md).
+test files `go test ./...` runs, the command behind a wrapper other than
+`env`, `exec`, `command`, `nice` and `time`, a program found on `PATH`, a path
+that only resolves after a `cd` inside the command — give the script by
+absolute path or from the launch directory — and an edit made and reverted
+entirely during a verification) is in [LIMITATIONS](docs/LIMITATIONS.md).
 
 ### Codex planned-node isolation
 
