@@ -107,15 +107,24 @@ has no open issue behind it.
   goes on to reach then runs on API-key authentication and is billed to the API,
   which is the thing the scrub exists to prevent. The guarantee is about the
   environment oh-my-graph builds; a key your own command puts back is yours.
-- **`--verify-cmd` pins only the files its command line names.** `auto` pins
-  each word of the line that resolves to an existing readable regular file
-  (SECURITY.md, "Auto-planned graphs"), and nothing else. Not a file the script
-  sources or calls, not the `Makefile` behind `make verify`, not the test files
-  `go test ./...` runs, and not a program found on `PATH` — there is no `PATH`
-  lookup, so `make`, `go` and `npm` pin nothing. A command line that names no
-  file (`go test ./...`) pins nothing at all, and a node can still edit what that
-  command executes. Name the script you want held, and keep the logic that
-  decides PASS in it.
+- **`--verify-cmd` pins only the script each command executes.** For each
+  command of the line (split on `&&`, `||`, `;`, `|`), `auto` pins one file
+  (SECURITY.md, "Auto-planned graphs"): the script handed to an interpreter
+  (`sh`, `bash`, `zsh`, `dash`, `python`, `python3`, `python3.N`, `node`,
+  `ruby`, `perl`), or a command written as a path (`./verify.sh`), past any
+  leading `env`, `exec`, `command`, `nice`, `time` and `NAME=value` words.
+  Nothing else. Not an inline `sh -c '...'` script; not a file the script
+  sources, reads or writes (`| tee log.txt`, `--junitxml report.xml`); not the
+  `Makefile` behind `make verify` or the test files `go test ./...` runs; not
+  what runs behind a wrapper missing from that list; and not a program found on
+  `PATH` — there is no `PATH` lookup, so `make`, `go` and `npm` pin nothing.
+  Paths resolve from the launch directory only, and a `cd` inside the command
+  is not tracked: `cd sub && sh v.sh` looks for `v.sh` in the launch
+  directory, not in `sub`. Give the script by absolute path or from the launch
+  directory. The
+  launch screen lists every pinned path, and warns `verify-cmd has no pinned
+  script` when there is none — a node can then edit what the command executes.
+  Keep the logic that decides PASS in a script the line executes.
 
   The check runs immediately before and immediately after each verification,
   so an edit made and reverted entirely while the command is running is not
