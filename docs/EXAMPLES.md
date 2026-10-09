@@ -741,7 +741,9 @@ list, so their absence is implied rather than measured — the one key oh-my-gra
 reads back out of that file by name is `model`, which is passed as a flag and
 grants nothing, ADR 0037), they run under
 `--strict-mcp-config` (whether that closes MCP is not something anyone has
-measured), and a declared scope like `Bash(git *)` is enforced — the only change
+measured), a call matching the node's allowed-tool rules runs, and under the
+default permission mode (`auto`) a call outside them is not denied outright but
+goes to the CLI's own classifier, which approves or denies it — the only change
 activation makes is that the `Skill` tool exists for the nodes it reaches. What
 that costs is printed before the run: every staged skill with its size and
 SHA-256, and the prompt tokens the corpus adds to **every** activation-eligible
