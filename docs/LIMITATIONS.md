@@ -107,6 +107,23 @@ has no open issue behind it.
   goes on to reach then runs on API-key authentication and is billed to the API,
   which is the thing the scrub exists to prevent. The guarantee is about the
   environment oh-my-graph builds; a key your own command puts back is yours.
+- **`--verify-cmd` pins only the files its command line names.** `auto` pins
+  each word of the line that resolves to an existing readable regular file
+  (SECURITY.md, "Auto-planned graphs"), and nothing else. Not a file the script
+  sources or calls, not the `Makefile` behind `make verify`, not the test files
+  `go test ./...` runs, and not a program found on `PATH` — there is no `PATH`
+  lookup, so `make`, `go` and `npm` pin nothing. A command line that names no
+  file (`go test ./...`) pins nothing at all, and a node can still edit what that
+  command executes. Name the script you want held, and keep the logic that
+  decides PASS in it.
+
+  The check runs immediately before and immediately after each verification,
+  so an edit made and reverted entirely while the command is running is not
+  seen. And there is no re-pin: a pinned file you changed on purpose — mid-run,
+  or between a run and its `resume`, which checks the recorded pins rather than
+  taking new ones — faults every later verification of the run. To accept the
+  change, start a new run.
+  ([#363](https://github.com/jitokim/oh-my-graph/issues/363))
 - **A PASS row does not say *which* outcome passed.** A node whose verdict is a
   two-valued alternation (DESIGN.md, "Verdict patterns") passes on either of
   its legitimate answers, and the ledger has one column for both. `merge-shepherd`
