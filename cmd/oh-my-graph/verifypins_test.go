@@ -89,15 +89,31 @@ func oneCycle() *runner.FakeRunner {
 	})
 }
 
-// wantSinkPinFault asserts the sink's record is a FAIL whose detail names
-// file as the pinned file that changed, and whose verification is not a pass.
+// selfWriteHint is what a pin fault found by the post-check of one
+// verification adds before the file (#367).
+const selfWriteHint = "is this a file the command itself writes?"
+
+// wantSinkPinFault asserts the sink's record is a FAIL whose detail ENDS by
+// naming file as the pinned file that changed since launch — no self-write
+// hint, the change came between verifications — and whose verification is
+// not a pass.
 func wantSinkPinFault(t *testing.T, rec runstate.NodeRecord, file string) {
+	t.Helper()
+	wantSinkFaultEnding(t, rec, "changed since launch: pinned file "+file)
+	if strings.Contains(rec.Detail, selfWriteHint) {
+		t.Errorf("a change made between verifications carries the self-write hint: %q", rec.Detail)
+	}
+}
+
+// wantSinkFaultEnding asserts the sink's record is a FAIL whose detail ends
+// with tail and whose verification is not a pass.
+func wantSinkFaultEnding(t *testing.T, rec runstate.NodeRecord, tail string) {
 	t.Helper()
 	if rec.Verdict != runstate.VerdictFail {
 		t.Errorf("sink verdict = %q, want FAIL — a changed pinned file is never a PASS (detail %q)", rec.Verdict, rec.Detail)
 	}
-	if want := "pinned file " + file + " changed since launch"; !strings.Contains(rec.Detail, want) {
-		t.Errorf("sink detail %q does not name the file: want %q", rec.Detail, want)
+	if !strings.HasSuffix(rec.Detail, tail) {
+		t.Errorf("sink detail %q does not end %q", rec.Detail, tail)
 	}
 	if rec.Verification == nil || rec.Verification.Status == runstate.VerificationPassed {
 		t.Errorf("sink verification = %+v, want a record that did not pass", rec.Verification)
@@ -214,14 +230,15 @@ func TestRunAuto_RepointedSymlinkFaults_363(t *testing.T) {
 	rec := loadSnapshot(t, soleRunID(t)).Nodes["work"]
 	wantSinkPinFault(t, rec, resolved(t, original))
 	// The detail keeps the fault's tail, which ends with the new target.
-	if !strings.Contains(rec.Detail, string(filepath.Separator)+"b.sh; pinned file") {
+	if !strings.Contains(rec.Detail, string(filepath.Separator)+"b.sh; changed since launch") {
 		t.Errorf("detail %q does not say where the path now points", rec.Detail)
 	}
 }
 
 // (e) A file edited DURING the verification — here the verify script, by
 // itself, which exits 0 — faults from the post-check. (Its arguments are
-// not pinned since #367, so the script must rewrite itself.)
+// not pinned since #367, so the script must rewrite itself.) The fault asks
+// whether the command writes the file, and still ends with the file (#367).
 func TestRunAuto_EditDuringVerificationFaults_363(t *testing.T) {
 	isolateRunHome(t)
 	dir := t.TempDir()
@@ -233,7 +250,7 @@ func TestRunAuto_EditDuringVerificationFaults_363(t *testing.T) {
 	if err == nil {
 		t.Fatal("a verification that edited its own pinned file must fault")
 	}
-	wantSinkPinFault(t, loadSnapshot(t, soleRunID(t)).Nodes["work"], resolved(t, script))
+	wantSinkFaultEnding(t, loadSnapshot(t, soleRunID(t)).Nodes["work"], selfWriteHint+" pinned file "+resolved(t, script))
 }
 
 // (f) An edit between cycle 1 and cycle 2 of a --max-cycles run faults cycle

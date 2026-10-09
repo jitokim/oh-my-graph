@@ -131,14 +131,25 @@ type PinChangedError struct {
 	// Reason says what changed: a re-pointed path, a missing or unreadable
 	// file, or different content.
 	Reason string
+	// DuringVerify is set when the pre-check of the same Verify call passed
+	// and the post-check failed: the file changed while the command ran, so
+	// the likeliest writer is the command itself (#367). A change found by the
+	// pre-check — an edit between verifications, or before a resume — leaves
+	// it false.
+	DuringVerify bool
 }
 
 // Error names the file LAST: a node's recorded detail keeps only the tail of
 // a long fault (the scheduler's capDetail), and the file is the one part a
-// reader cannot recover from anything else on the record.
+// reader cannot recover from anything else on the record. So the self-write
+// hint goes before it.
 func (e *PinChangedError) Error() string {
-	return fmt.Sprintf("verify command %q cannot be evidence: %s; pinned file %s changed since launch",
-		e.Command, e.Reason, e.Path)
+	when := "changed since launch:"
+	if e.DuringVerify {
+		when = "changed while the command ran — is this a file the command itself writes?"
+	}
+	return fmt.Sprintf("verify command %q cannot be evidence: %s; %s pinned file %s",
+		e.Command, e.Reason, when, e.Path)
 }
 
 // PinningVerifier wraps a Verifier and checks a pinned command's files
@@ -175,28 +186,34 @@ func (p *PinningVerifier) Verify(ctx context.Context, req Request) (Result, erro
 	if err != nil {
 		return Result{}, fmt.Errorf("verify command %q: cannot resolve its pinned files: %w", req.Command, err)
 	}
-	if err := p.check(dir); err != nil {
+	if err := p.check(dir, false); err != nil {
 		return Result{}, err
 	}
 	result, verifyErr := p.inner.Verify(ctx, req)
-	if err := p.check(dir); err != nil {
+	if err := p.check(dir, true); err != nil {
 		return Result{}, err
 	}
 	return result, verifyErr
 }
 
 // check re-resolves every pin against dir, returning the first that changed.
-func (p *PinningVerifier) check(dir string) error {
+// afterRun is the post-check: the pre-check of the same call passed, so a
+// change it finds happened while the command ran.
+func (p *PinningVerifier) check(dir string, afterRun bool) error {
 	for _, pin := range p.pins {
 		path, digest, err := digestWord(pin.Word, dir)
+		var reason string
 		switch {
 		case err != nil:
-			return &PinChangedError{Command: p.command, Path: pin.Path, Reason: fmt.Sprintf("it is gone or unreadable (%v)", err)}
+			reason = fmt.Sprintf("it is gone or unreadable (%v)", err)
 		case path != pin.Path:
-			return &PinChangedError{Command: p.command, Path: pin.Path, Reason: fmt.Sprintf("%q now resolves to %s", pin.Word, path)}
+			reason = fmt.Sprintf("%q now resolves to %s", pin.Word, path)
 		case digest != pin.Digest:
-			return &PinChangedError{Command: p.command, Path: pin.Path, Reason: fmt.Sprintf("its content changed (sha256 %s at launch, %s now)", pin.Digest, digest)}
+			reason = fmt.Sprintf("its content changed (sha256 %s at launch, %s now)", pin.Digest, digest)
+		default:
+			continue
 		}
+		return &PinChangedError{Command: p.command, Path: pin.Path, Reason: reason, DuringVerify: afterRun}
 	}
 	return nil
 }

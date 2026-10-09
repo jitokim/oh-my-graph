@@ -52,9 +52,37 @@ func pinnedPaths(pins []PinnedFile) []string {
 	return out
 }
 
-// wantPinFault asserts err is a *PinChangedError naming path and saying it
-// changed since launch.
+// selfWriteHint is the question a change found by the post-check carries
+// (#367): the file changed while only the command was running.
+const selfWriteHint = "is this a file the command itself writes?"
+
+// wantPinFault asserts err is a pre-check *PinChangedError: it names path
+// LAST, says the file changed since launch, and carries no self-write hint —
+// the change happened between verifications, not during one (#363, #367).
 func wantPinFault(t *testing.T, err error, path string) {
+	t.Helper()
+	pinErr := wantPinFaultEndingWith(t, err, path)
+	if pinErr.DuringVerify || strings.Contains(err.Error(), selfWriteHint) {
+		t.Errorf("a pre-check fault carries the self-write hint: %q", err)
+	}
+	if want := "changed since launch: pinned file " + path; !strings.HasSuffix(err.Error(), want) {
+		t.Errorf("error %q must end %q", err, want)
+	}
+}
+
+// wantSelfWriteFault asserts err is a post-check *PinChangedError: the hint
+// that the command may write the file itself, then path LAST (#367).
+func wantSelfWriteFault(t *testing.T, err error, path string) {
+	t.Helper()
+	pinErr := wantPinFaultEndingWith(t, err, path)
+	if want := selfWriteHint + " pinned file " + path; !pinErr.DuringVerify || !strings.HasSuffix(err.Error(), want) {
+		t.Errorf("error %q (DuringVerify %v) must end %q", err, pinErr.DuringVerify, want)
+	}
+}
+
+// wantPinFaultEndingWith asserts err is a *PinChangedError for path whose
+// message ends with it: a node's recorded detail keeps only a fault's tail.
+func wantPinFaultEndingWith(t *testing.T, err error, path string) *PinChangedError {
 	t.Helper()
 	var pinErr *PinChangedError
 	if !errors.As(err, &pinErr) {
@@ -63,10 +91,10 @@ func wantPinFault(t *testing.T, err error, path string) {
 	if pinErr.Path != path {
 		t.Errorf("PinChangedError.Path = %q, want %q", pinErr.Path, path)
 	}
-	// The file comes last: a node's recorded detail keeps only a fault's tail.
-	if msg := err.Error(); !strings.HasSuffix(msg, "pinned file "+path+" changed since launch") {
-		t.Errorf("error %q must END by naming %s and saying it changed since launch", msg, path)
+	if msg := err.Error(); !strings.HasSuffix(msg, "pinned file "+path) {
+		t.Errorf("error %q must END with the file %s", msg, path)
 	}
+	return pinErr
 }
 
 func TestPinCommand_RecordsWordPathAndDigest(t *testing.T) {
@@ -251,9 +279,10 @@ func TestPinningVerifier_RepointedSymlinkFaults(t *testing.T) {
 	}
 }
 
-// TestPinningVerifier_EditDuringVerifyFaultsAfter (#363): a file changed while
-// the command runs — after the pre-check passed — is caught by the post-check,
-// and the inner verifier's exit 0 is discarded rather than reported.
+// TestPinningVerifier_EditDuringVerifyFaultsAfter (#363, #367): a file changed
+// while the command runs — after the pre-check passed — is caught by the
+// post-check, the inner verifier's exit 0 is discarded rather than reported,
+// and the fault asks whether the command writes the file itself.
 func TestPinningVerifier_EditDuringVerifyFaultsAfter(t *testing.T) {
 	dir := t.TempDir()
 	script := writeFile(t, dir, "check.sh", okScript)
@@ -273,12 +302,35 @@ func TestPinningVerifier_EditDuringVerifyFaultsAfter(t *testing.T) {
 	})
 	got, err = NewPinningVerifier(editing, command, PinCommand(command, dir)).
 		Verify(context.Background(), Request{Command: command, Cwd: dir})
-	wantPinFault(t, err, resolved(t, script))
+	wantSelfWriteFault(t, err, resolved(t, script))
 	if !reflect.DeepEqual(got, Result{}) {
 		t.Errorf("result = %+v, want none: a post-check fault replaces the exit-0 Result", got)
 	}
 	if n := editing.InvocationCount(command); n != 1 {
 		t.Errorf("inner verifier ran %d times, want 1 (the pre-check passed)", n)
+	}
+}
+
+// TestPinningVerifier_EditBetweenVerificationsHasNoSelfWriteHint (#363,
+// #367): a file edited after one verification passed and before the next —
+// by a node, not the command — is a pre-check fault, so it says the file
+// changed since launch and does not suggest the command wrote it.
+func TestPinningVerifier_EditBetweenVerificationsHasNoSelfWriteHint(t *testing.T) {
+	dir := t.TempDir()
+	script := writeFile(t, dir, "check.sh", okScript)
+	const command = "./check.sh"
+	inner := NewFakeVerifier(map[string]Result{command: {ExitCode: 0}})
+	v := NewPinningVerifier(inner, command, PinCommand(command, dir))
+
+	if _, err := v.Verify(context.Background(), Request{Command: command, Cwd: dir}); err != nil {
+		t.Fatalf("first verification: err = %v, want the inner result", err)
+	}
+	writeFile(t, dir, "check.sh", "#!/bin/sh\n# a node was here\nexit 0\n")
+	_, err := v.Verify(context.Background(), Request{Command: command, Cwd: dir})
+
+	wantPinFault(t, err, resolved(t, script))
+	if n := inner.InvocationCount(command); n != 1 {
+		t.Errorf("inner verifier ran %d times, want only the first", n)
 	}
 }
 

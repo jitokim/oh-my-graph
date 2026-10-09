@@ -2806,8 +2806,11 @@ the process cwd, immediately before the inner verification (a fault runs
 nothing) and immediately after it (a fault discards the inner result, exit 0
 included). A changed digest, a re-pointed path, or a file gone or unreadable is
 a `*verify.PinChangedError` — `verify command "CMD" cannot be evidence: <what
-changed>; pinned file <abs path> changed since launch`, the path last so the
-scheduler's tail-keeping detail cap keeps it. One set guards the baseline
+changed>; changed since launch: pinned file <abs path>`, the path last so the
+scheduler's tail-keeping detail cap keeps it. A change the post-check finds
+(the pre-check of the same call passed) says `changed while the command ran —
+is this a file the command itself writes? pinned file <abs path>` instead
+(`DuringVerify`, #367). One set guards the baseline
 (`runBaseline` gets the wrapped verifier, so a pin fault there is a red
 baseline, exit 5) and every cycle's sinks (`executeGraph`); nothing re-pins, so
 an edit cycle 1 made can never become cycle 2's pin. The set is recorded as
