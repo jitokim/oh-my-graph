@@ -38,7 +38,8 @@ type PinnedFile struct {
 // against dir:
 //
 //   - Leading NAME=value words and the wrappers env, exec, command, nice and
-//     time (by basename, so /usr/bin/env too) are skipped to the command word.
+//     time (bare or by absolute path, so /usr/bin/env too, but never a
+//     relative path such as ./bin/time) are skipped to the command word.
 //   - If the command word's basename is an interpreter (sh, bash, python3.12,
 //     node, ...), a segment holding -c pins nothing (an inline script), nor
 //     does one holding a shell's short-option cluster with a c in it (-ec) or
@@ -93,7 +94,7 @@ var nodeInlineModes = map[string]bool{"--test": true, "-e": true, "--eval": true
 // an inline or runner mode executes no file the pin can name.
 func executedFile(segment []string, dir string) (word, path, digest string, ok bool) {
 	i := 0
-	for i < len(segment) && (isAssignment(segment[i]) || commandWrappers[filepath.Base(segment[i])]) {
+	for i < len(segment) && (isAssignment(segment[i]) || isWrapper(segment[i])) {
 		i++
 	}
 	if i == len(segment) {
@@ -152,6 +153,13 @@ func isShortOptionCluster(word string) bool {
 		}
 	}
 	return true
+}
+
+// isWrapper reports whether word is one of the commandWrappers, written bare
+// (env) or as an absolute path (/usr/bin/env). A relative path is never one:
+// ./bin/time is a script in the tree, run by path, whatever its basename.
+func isWrapper(word string) bool {
+	return commandWrappers[filepath.Base(word)] && (!strings.Contains(word, "/") || filepath.IsAbs(word))
 }
 
 // isAssignment reports whether word is a NAME=value environment assignment.

@@ -457,11 +457,15 @@ func TestPinCommand_PinsTheExecutedScript(t *testing.T) {
 	dir := t.TempDir()
 	sh := writeFile(t, dir, "v.sh", okScript)
 	py := writeFile(t, dir, "v.py", "print('ok')\n")
+	// A script named like a wrapper, run by relative path, is the command word.
+	wrapperNamed := writeFile(t, dir, "time", okScript)
 	for _, tc := range []struct {
 		command string
 		script  string
 	}{
 		{"cd /tmp && sh " + sh, sh},
+		{"./time", wrapperNamed},
+		{"env ./time", wrapperNamed},
 		{"/usr/bin/env sh v.sh", sh},
 		{"env X=1 sh v.sh", sh},
 		{"X=1 nice exec sh v.sh", sh},
