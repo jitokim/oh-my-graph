@@ -214,6 +214,16 @@ type Plan struct {
 	// the graph, so a human approving a plan must be shown what will run and
 	// where. Every entry names a node in Graph.
 	VerifyAttachments []VerifyAttachment
+	// ExitZeroAdded are the planned nodes trusted code gave `exit_zero: true`
+	// because their success_check declared a `result_matches` without it
+	// (#371, exitzero.go) — in the graph's declared order, empty when every
+	// verdict already carried the guard. Exit-zero is the default only for a
+	// node with NO check, so without this a planned verdict would leave that
+	// node's exit code unchecked. The step only ever makes a check stricter,
+	// but it still changes the graph the human approves and graph.json
+	// replays, so the ids are recorded here rather than added silently. Every
+	// entry names a node in Graph.
+	ExitZeroAdded []string
 	// Unisolated is the plan-time warning that this plan's text names a local
 	// git checkout OUTSIDE the invocation repository — a directory auto
 	// provisions no worktree in and takes no lock on (unisolated.go, and
@@ -764,6 +774,21 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string, offe
 	// the more to a plan that was valid, and it is the planner's own reply, not
 	// a half-mapped rebuild.
 	if err := c.applyAgentMapping(&plan); err != nil {
+		return Plan{}, accounting, &planRefusal{err: err, spec: []byte(spec)}
+	}
+	// Strictly after validation, like the mapping above: the planner's own
+	// success_check passed validatePlannedNodes as written, and only then does
+	// trusted code pair every `result_matches` with `exit_zero` (#371). It
+	// writes plan.Spec, so it sits before attachVerifyCommand, which re-encodes
+	// whatever graph it is handed and so carries the guard into the final Spec
+	// that `--plan-only` prints and `run`/`resume` replay — and, like every
+	// spec-writer, before applySkillActivation, whose notice must never reach
+	// a re-encode.
+	//
+	// Not repairable: a failure here is a re-parse of a graph Validate already
+	// accepted with one predicate added, so it is a bug in trusted code that no
+	// further paid planner call can fix.
+	if err := c.requireExitZero(&plan); err != nil {
 		return Plan{}, accounting, &planRefusal{err: err, spec: []byte(spec)}
 	}
 	// Last of the SPEC-WRITING mutations, so the command lands in the graph
