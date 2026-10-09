@@ -2097,10 +2097,20 @@ func noteExclusionCost(w io.Writer, excluded []string) {
 // hand-written graph, and that is worth one line up front rather than a
 // puzzling failure ten minutes in.
 //
+// What the paragraph claims about the declared scope is deliberately no more
+// than layer 2 delivers since ADR 0034. It used to say "a declared scope like
+// Bash(git *) is enforced rather than merely requested" (ADR 0004's E1), which
+// was true under `dontAsk` and is not under `auto`: a call matching no allow
+// rule is no longer denied outright but put to the CLI's own classifier, which
+// approves or denies it (SECURITY.md). So it now says only that none of your
+// standing grants apply, that a call matching the node's own rules runs, and
+// that an unmatched one meets that classifier under the default mode — a node
+// may declare another permission_mode, hence "default".
+//
 // mapped no longer narrows the CEILING half, and that is ADR 0022's whole
-// effect on this function. This paragraph makes two claims — "a declared scope
-// like Bash(git *) is enforced rather than merely requested" (ADR 0004's E1,
-// this project's headline claim) and "your CLAUDE.md, hooks and MCP servers are
+// effect on this function. This paragraph makes two claims — "none of your
+// standing permission grants apply" (layer 1, so the node's own rules are what
+// a call is matched against) and "your CLAUDE.md, hooks and MCP servers are
 // unavailable to them" (a cost). From 2026-08-12 both hold for EVERY planned
 // node, mapped included, because a mapped node no longer loads any settings:
 // its agent definition comes from a directory oh-my-graph staged, not from
@@ -2120,9 +2130,11 @@ func noteExclusionCost(w io.Writer, excluded []string) {
 // the policies, so every sentence below stays true of every run that reads it.
 func noteCeiling(w io.Writer, mapped bool) {
 	fmt.Fprint(w,
-		"  Planned nodes run isolated: none of your user/project/local settings load, so a declared\n"+
-			"  scope like Bash(git *) is enforced rather than merely requested — and your CLAUDE.md,\n"+
-			"  hooks and MCP servers are unavailable to them. See SECURITY.md for what this does not cover.\n",
+		"  Planned nodes run isolated: none of your user/project/local settings load, so none of your\n"+
+			"  standing permission grants apply — and your CLAUDE.md, hooks and MCP servers are unavailable\n"+
+			"  to them. A call matching a node's allowed-tool rules runs; under the default permission mode\n"+
+			"  (auto) a call outside them is not denied outright but goes to the CLI's own classifier,\n"+
+			"  which approves or denies it. See SECURITY.md for what this does not cover.\n",
 	)
 	if mapped {
 		fmt.Fprint(w,
