@@ -214,6 +214,16 @@ type Plan struct {
 	// the graph, so a human approving a plan must be shown what will run and
 	// where. Every entry names a node in Graph.
 	VerifyAttachments []VerifyAttachment
+	// ExitZeroAdded are the planned nodes trusted code gave `exit_zero: true`
+	// because their success_check declared a `result_matches` without it
+	// (#371, exitzero.go) — in the graph's declared order, empty when every
+	// verdict already carried the guard. Exit-zero is the default only for a
+	// node with NO check, so without this a planned verdict would leave that
+	// node's exit code unchecked. The step only ever makes a check stricter,
+	// but it still changes the graph the human approves and graph.json
+	// replays, so the ids are recorded here rather than added silently. Every
+	// entry names a node in Graph.
+	ExitZeroAdded []string
 	// Unisolated is the plan-time warning that this plan's text names a local
 	// git checkout OUTSIDE the invocation repository — a directory auto
 	// provisions no worktree in and takes no lock on (unisolated.go, and
@@ -764,6 +774,21 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string, offe
 	// the more to a plan that was valid, and it is the planner's own reply, not
 	// a half-mapped rebuild.
 	if err := c.applyAgentMapping(&plan); err != nil {
+		return Plan{}, accounting, &planRefusal{err: err, spec: []byte(spec)}
+	}
+	// Strictly after validation, like the mapping above: the planner's own
+	// success_check passed validatePlannedNodes as written, and only then does
+	// trusted code pair every `result_matches` with `exit_zero` (#371). It
+	// writes plan.Spec, so it sits before attachVerifyCommand, which re-encodes
+	// whatever graph it is handed and so carries the guard into the final Spec
+	// that `--plan-only` prints and `run`/`resume` replay — and, like every
+	// spec-writer, before applySkillActivation, whose notice must never reach
+	// a re-encode.
+	//
+	// Not repairable: a failure here is a re-parse of a graph Validate already
+	// accepted with one predicate added, so it is a bug in trusted code that no
+	// further paid planner call can fix.
+	if err := c.requireExitZero(&plan); err != nil {
 		return Plan{}, accounting, &planRefusal{err: err, spec: []byte(spec)}
 	}
 	// Last of the SPEC-WRITING mutations, so the command lands in the graph
@@ -2104,12 +2129,15 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
   When the assertion holds, instruct the node that its whole reply is
   exactly the four bare characters PASS and nothing else, with no markdown
   emphasis ("**PASS**" is WRONG), no heading, no backticks and no preamble;
-  FAIL otherwise. Give that node "success_check": {"result_matches": %s} —
+  FAIL otherwise. Give that node
+  "success_check": {"exit_zero": true, "result_matches": %s} —
   copy that pattern character for character, doubled backslashes included,
   since your reply is parsed as JSON. It stays anchored at both ends, so a
   commit that never reached the intended branch fails the run instead of
   passing silently, while tolerating the markdown a model wraps a bare
-  verdict in unbidden.
+  verdict in unbidden. Keep "exit_zero": true beside it: a node's exit
+  code is checked by default only while it declares no "success_check" at
+  all, so a "result_matches" written alone stops checking it.
   That leaves the node one judgement, so let its prompt settle it in
   advance: PASS is reserved for the case where the assertion holds AND
   there is nothing a reader would act on differently — then the whole
@@ -2137,9 +2165,10 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
   A node that must produce a report gets one of two things instead.
   EITHER no "success_check" at all, which is the normal choice, since that
   node's output IS the evidence its reader judges. OR a PREFIX verdict —
-  a "result_matches" anchored at the START only, carrying no trailing
-  dollar sign, and wrapping the token in the SAME decoration class the
-  whole-reply pin above carries rather than leaving a bare "^RECORDED" —
+  "exit_zero": true beside a "result_matches" anchored at the START only,
+  carrying no trailing dollar sign, and wrapping the token in the SAME
+  decoration class the whole-reply pin above carries rather than leaving a
+  bare "^RECORDED" —
   a model writes "**RECORDED**" unbidden, a bare anchor fails on it, and
   that false FAIL is the very thing this rule exists to stop. The node's
   prompt must ALSO name the decorated spelling as wrong. So the report
@@ -2242,9 +2271,10 @@ prose before or after:
   claude — never as one of the user's subagents. success_check.verify is a
   shell command the ENGINE runs, outside every guard above, so a planned
   node may never declare one: "success_check": {"verify": ...} is rejected
-  outright. Use "exit_zero" or "result_matches" instead and put the command
-  the node should run in that node's own prompt, with the matching Bash
-  pattern in its allowed_tools.
+  outright. Use "exit_zero" instead, with a "result_matches" beside it
+  (never alone) when the node owes a verdict, and put the command the node
+  should run in that node's own prompt, with the matching Bash pattern in
+  its allowed_tools.
 - "retry" is optional and rarely worth setting. If you do set it, its "on"
   list may contain ONLY these exact tokens: %[5]s. Any other
   spelling is rejected outright.

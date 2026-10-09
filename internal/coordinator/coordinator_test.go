@@ -295,12 +295,71 @@ func TestPlannerPromptReservesTheWholeReplyPinForAssertingNodes(t *testing.T) {
 	}
 }
 
+// TestPlannerPromptPairsResultMatchesWithExitZero pins #371: every
+// success_check the planner prompt shows or describes with result_matches also
+// carries exit_zero. Exit-zero is the default only while a node declares NO
+// check (graph.SuccessCheck.IsZero), so a prompt handing out result_matches
+// alone taught the planner to delete the exit-code guard — and
+// handoff.LintVerdicts then warned about the planner's own graph at launch.
+// Driven through Plan on FakeRunner so every rendering is covered: the first
+// attempt, the repair and the goal loop's continuation, with and without a
+// --verify-cmd.
+func TestPlannerPromptPairsResultMatchesWithExitZero(t *testing.T) {
+	for _, supplied := range []bool{false, true} {
+		var opts []Option
+		if supplied {
+			opts = append(opts, WithVerifyCommand(VerifyCommand{Command: "make test"}))
+		}
+		first, repair, continuation := plannerPrompts(t, opts...)
+		for name, prompt := range map[string]string{"first": first.Prompt, "repair": repair.Prompt, "continuation": continuation.Prompt} {
+			if strings.Contains(prompt, `{"result_matches"`) {
+				t.Errorf("verify-cmd supplied=%v, %s prompt: shows a success_check that opens with result_matches alone", supplied, name)
+			}
+			literals := 0
+			for rest := prompt; ; {
+				i := strings.Index(rest, `"success_check": {`)
+				if i == -1 {
+					break
+				}
+				rest = rest[i:]
+				literal, _, _ := strings.Cut(rest, "}")
+				rest = rest[len(`"success_check": {`):]
+				if !strings.Contains(literal, `"result_matches"`) {
+					continue
+				}
+				literals++
+				if !strings.Contains(literal, `"exit_zero": true`) {
+					t.Errorf("verify-cmd supplied=%v, %s prompt: success_check without exit_zero: %s}", supplied, name, literal)
+				}
+			}
+			if literals == 0 {
+				t.Errorf("verify-cmd supplied=%v, %s prompt: no success_check literal with result_matches — the whole-reply pin is gone", supplied, name)
+			}
+			for _, want := range []string{
+				// the whole-reply pin, with the guard named beside it
+				`"success_check": {"exit_zero": true, "result_matches": `,
+				// and why, so the planner does not drop it on its own check
+				`a "result_matches" written alone stops checking it`,
+				// the prefix-verdict offer to a reporting node
+				`"exit_zero": true beside a "result_matches" anchored at the START only`,
+				// the alternative offered in place of a planner-authored verify
+				`with a "result_matches" beside it
+  (never alone)`,
+			} {
+				if !strings.Contains(prompt, want) {
+					t.Errorf("verify-cmd supplied=%v, %s prompt: missing %q", supplied, name, want)
+				}
+			}
+		}
+	}
+}
+
 // plannedVerdictPatternIn extracts the result_matches regex the planner prompt
 // hands out and decodes it the way the planner's JSON reply would be decoded,
 // so the test sees the pattern the engine would end up compiling.
 func plannedVerdictPatternIn(t *testing.T, prompt string) string {
 	t.Helper()
-	const marker = `"success_check": {"result_matches": `
+	const marker = `"success_check": {"exit_zero": true, "result_matches": `
 	i := strings.Index(prompt, marker)
 	if i == -1 {
 		t.Fatalf("planner prompt lost the result_matches gate entirely")
@@ -470,7 +529,7 @@ func TestPlan_PromptForbidsPlannedVerifyCommands(t *testing.T) {
 		// the wrong form, and that it is refused rather than ignored
 		`"success_check": {"verify": ...} is rejected`,
 		// what to reach for instead — the same two the refusal names
-		`Use "exit_zero" or "result_matches" instead`,
+		`Use "exit_zero" instead, with a "result_matches" beside it`,
 	} {
 		if !strings.Contains(captured.Prompt, want) {
 			t.Errorf("planner prompt does not forbid success_check.verify: missing %q", want)

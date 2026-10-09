@@ -106,7 +106,6 @@
         "review"
       ],
       "handoff": "artifact",
-      "success_check": {},
       "description": "Approve publishing this lane's reviewed HEAD as a pull request. Read the review at {{ artifacts.review }} and the e2e verdict at {{ artifacts.e2e }}; e2e's engine verify record (the command it ran and its exit code) is in this run's state.json beside them. Rejecting ends the run unpublished.",
       "worktree": "lane"
     },

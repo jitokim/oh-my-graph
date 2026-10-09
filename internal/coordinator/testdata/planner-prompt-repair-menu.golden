@@ -75,9 +75,10 @@ Rules:
   claude — never as one of the user's subagents. success_check.verify is a
   shell command the ENGINE runs, outside every guard above, so a planned
   node may never declare one: "success_check": {"verify": ...} is rejected
-  outright. Use "exit_zero" or "result_matches" instead and put the command
-  the node should run in that node's own prompt, with the matching Bash
-  pattern in its allowed_tools.
+  outright. Use "exit_zero" instead, with a "result_matches" beside it
+  (never alone) when the node owes a verdict, and put the command the node
+  should run in that node's own prompt, with the matching Bash pattern in
+  its allowed_tools.
 - "retry" is optional and rarely worth setting. If you do set it, its "on"
   list may contain ONLY these exact tokens: nonzero_exit, run_error, timeout, output_error, budget_exceeded, verify_failed, result_mismatch. Any other
   spelling is rejected outright.
@@ -165,12 +166,15 @@ Rules:
   When the assertion holds, instruct the node that its whole reply is
   exactly the four bare characters PASS and nothing else, with no markdown
   emphasis ("**PASS**" is WRONG), no heading, no backticks and no preamble;
-  FAIL otherwise. Give that node "success_check": {"result_matches": "^[*_`\\s]*PASS[*_`\\s]*$"} —
+  FAIL otherwise. Give that node
+  "success_check": {"exit_zero": true, "result_matches": "^[*_`\\s]*PASS[*_`\\s]*$"} —
   copy that pattern character for character, doubled backslashes included,
   since your reply is parsed as JSON. It stays anchored at both ends, so a
   commit that never reached the intended branch fails the run instead of
   passing silently, while tolerating the markdown a model wraps a bare
-  verdict in unbidden.
+  verdict in unbidden. Keep "exit_zero": true beside it: a node's exit
+  code is checked by default only while it declares no "success_check" at
+  all, so a "result_matches" written alone stops checking it.
   That leaves the node one judgement, so let its prompt settle it in
   advance: PASS is reserved for the case where the assertion holds AND
   there is nothing a reader would act on differently — then the whole
@@ -198,9 +202,10 @@ Rules:
   A node that must produce a report gets one of two things instead.
   EITHER no "success_check" at all, which is the normal choice, since that
   node's output IS the evidence its reader judges. OR a PREFIX verdict —
-  a "result_matches" anchored at the START only, carrying no trailing
-  dollar sign, and wrapping the token in the SAME decoration class the
-  whole-reply pin above carries rather than leaving a bare "^RECORDED" —
+  "exit_zero": true beside a "result_matches" anchored at the START only,
+  carrying no trailing dollar sign, and wrapping the token in the SAME
+  decoration class the whole-reply pin above carries rather than leaving a
+  bare "^RECORDED" —
   a model writes "**RECORDED**" unbidden, a bare anchor fails on it, and
   that false FAIL is the very thing this rule exists to stop. The node's
   prompt must ALSO name the decorated spelling as wrong. So the report
