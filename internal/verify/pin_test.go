@@ -337,28 +337,26 @@ func TestPinningVerifier_RelativeWordResolvesAgainstRequestCwd(t *testing.T) {
 	wantPinFault(t, err, resolved(t, script))
 }
 
-// TestPinningVerifier_OtherCommandPassesThrough (#363): only the pinned command
-// is guarded. A different command reaches the inner verifier unchecked even
-// while the pinned file is edited; the pinned command itself still faults.
-func TestPinningVerifier_OtherCommandPassesThrough(t *testing.T) {
+// TestPinningVerifier_InterpolatedRequestIsStillGuarded (#363): the scheduler
+// interpolates {{ }} tokens before the verifier sees the command, so the
+// Request's Command need not equal the pinned string. It is still guarded:
+// unchanged it reaches the inner verifier, edited it faults without running.
+func TestPinningVerifier_InterpolatedRequestIsStillGuarded(t *testing.T) {
 	dir := t.TempDir()
 	script := writeFile(t, dir, "check.sh", okScript)
-	const pinned, other = "./check.sh", "./check.sh --other"
-	inner := NewFakeVerifier(map[string]Result{
-		pinned: {ExitCode: 0},
-		other:  {ExitCode: 4, Output: "other\n"},
-	})
+	const pinned, interpolated = "./check.sh --within {{ self.timeout }}", "./check.sh --within 5m0s"
+	inner := NewFakeVerifier(map[string]Result{interpolated: {ExitCode: 0, Output: "ok\n"}})
 	v := NewPinningVerifier(inner, pinned, PinCommand(pinned, dir))
-	writeFile(t, dir, "check.sh", "#!/bin/sh\nexit 0 # edited\n")
 
-	got, err := v.Verify(context.Background(), Request{Command: other, Cwd: dir})
-	if err != nil || got.ExitCode != 4 || got.Output != "other\n" {
-		t.Errorf("other command: (%+v, %v), want the inner result unchecked", got, err)
+	got, err := v.Verify(context.Background(), Request{Command: interpolated, Cwd: dir})
+	if err != nil || got.Output != "ok\n" {
+		t.Fatalf("unchanged file: (%+v, %v), want the inner result", got, err)
 	}
-	_, err = v.Verify(context.Background(), Request{Command: pinned, Cwd: dir})
+	writeFile(t, dir, "check.sh", "#!/bin/sh\nexit 0 # edited\n")
+	_, err = v.Verify(context.Background(), Request{Command: interpolated, Cwd: dir})
 	wantPinFault(t, err, resolved(t, script))
-	if n := inner.InvocationCount(pinned); n != 0 {
-		t.Errorf("pinned command reached the inner verifier %d times, want 0", n)
+	if n := inner.InvocationCount(interpolated); n != 1 {
+		t.Errorf("inner verifier ran %d times, want only the unchanged run", n)
 	}
 }
 

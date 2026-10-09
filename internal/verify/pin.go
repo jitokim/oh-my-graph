@@ -77,8 +77,13 @@ func (e *PinChangedError) Error() string {
 }
 
 // PinningVerifier wraps a Verifier and checks a pinned command's files
-// immediately before and immediately after the inner verification. A Request
-// for any other command passes straight through.
+// immediately before and immediately after every inner verification. It
+// guards every Request rather than only one whose Command equals the pinned
+// string: the scheduler interpolates {{ }} tokens before the verifier sees the
+// command, so an equality test would let `./check.sh {{ self.timeout }}` run
+// unchecked. It is only ever wrapped around a verifier that runs nothing but
+// the pinned command — the auto baseline, a planned graph's sinks (no planned
+// node may carry a verify of its own), and their resume.
 type PinningVerifier struct {
 	inner   Verifier
 	command string
@@ -98,7 +103,7 @@ func NewPinningVerifier(inner Verifier, command string, pins []PinnedFile) *Pinn
 // runs nothing; a post-check fault discards whatever the inner verifier
 // returned, exit 0 included.
 func (p *PinningVerifier) Verify(ctx context.Context, req Request) (Result, error) {
-	if req.Command != p.command || len(p.pins) == 0 {
+	if len(p.pins) == 0 {
 		return p.inner.Verify(ctx, req)
 	}
 	dir, err := verifyDir(req.Cwd)

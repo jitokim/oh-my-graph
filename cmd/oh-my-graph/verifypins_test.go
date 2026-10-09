@@ -466,3 +466,36 @@ func TestVerifyPinSet_NilGuardsNothing_363(t *testing.T) {
 		t.Errorf("a command naming no file wrapped the verifier: %T", got)
 	}
 }
+
+// (a') A --verify-cmd carrying a {{ }} token is interpolated at the sink, so
+// the Request the verifier sees is not the string that was pinned. It is
+// still the user's command, and an edit to the file it names still faults;
+// left alone, it still passes.
+func TestRunAuto_InterpolatedCommandIsStillGuarded_363(t *testing.T) {
+	for _, edit := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unchanged", true: "edited"}[edit], func(t *testing.T) {
+			isolateRunHome(t)
+			script := writeVerifyScript(t, 0)
+			command := script + " --within {{ self.timeout }}"
+			fake := oneCycle()
+			if edit {
+				onNodeCall(fake, "work-1", func() { writeFile(t, script, editedScript) })
+			}
+
+			out, err := runBaselineAuto(t, fake, greenBaselineFor(command), osStdin(), "add a README section", "--verify-cmd", command)
+
+			rec := loadSnapshot(t, soleRunID(t)).Nodes["work"]
+			if !edit {
+				if err != nil {
+					t.Fatalf("an untouched verify script must pass: %v\n%s", err, out)
+				}
+				wantSinkPass(t, rec)
+				return
+			}
+			if err == nil {
+				t.Fatalf("an interpolated command whose script was edited succeeded:\n%s", out)
+			}
+			wantSinkPinFault(t, rec, resolved(t, script))
+		})
+	}
+}

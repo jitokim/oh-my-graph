@@ -2798,8 +2798,10 @@ redirection skipped, nothing expanded) and pins each that resolves against the
 process cwd, every symlink followed, to an existing readable regular file:
 `Word`, absolute `Path`, SHA-256 `Digest`. A word naming nothing pinnable is
 skipped, and there is no `PATH` lookup. The check is a decorator around the
-engine's `verify.Verifier`, `verify.PinningVerifier`: for a Request carrying the
-pinned command it re-resolves and re-hashes every pin, against `Request.Cwd` or
+engine's `verify.Verifier`, `verify.PinningVerifier`: for every Request — the
+verifier it wraps runs nothing but the pinned command, and the scheduler's `{{ }}`
+interpolation means a Request's command need not equal the pinned string — it
+re-resolves and re-hashes every pin, against `Request.Cwd` or
 the process cwd, immediately before the inner verification (a fault runs
 nothing) and immediately after it (a fault discards the inner result, exit 0
 included). A changed digest, a re-pointed path, or a file gone or unreadable is
