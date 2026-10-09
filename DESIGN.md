@@ -1369,7 +1369,13 @@ So a verdict pattern is written in two halves, and both are load-bearing:
   is stated with it, so the rule does not convert every remark into a halted
   run: an observation a reader would not act on is not a reason to withhold
   `PASS`. The pattern itself is unchanged — the caveat found a home in the
-  prompt, not in a relaxed anchor (#264).
+  prompt, not in a relaxed anchor (#264). Every `success_check` that prompt
+  hands out with a `result_matches` — this whole-reply pin, the prefix
+  verdict a report node may take instead, and the alternative it names to a
+  planner-authored `verify` — spells `"exit_zero": true` beside the pattern,
+  and says why: a `result_matches` written alone stops checking the exit code
+  (#371). The prompt is the instruction; trusted code pairs the two after
+  validation either way (see "Planned-node fields are deny-by-default").
 - **The pattern is the backstop.** Wrap the token in the decoration class
   ``[*_`\s]`` — emphasis, code span, whitespace — while keeping the anchor:
   ``'^[*_`\s]*PASS'`` for a prefix verdict, ``'^[*_`\s]*PASS[*_`\s]*$'`` when
@@ -1729,6 +1735,10 @@ exit-code guard a node had for free while it declared no check at all
 (`SuccessCheck.IsZero`), so a "fix" that adds a predicate can remove one.
 They stay advisories: neither can judge whether a payload is shaped tightly
 enough to reject a promise, which is the part that still needs a reader.
+The second never fires on a graph `auto` planned: trusted code gives every
+planned `result_matches` its `exit_zero` after validation
+(`coordinator.requireExitZero`, #371), so the warning is left to a
+hand-written graph, which nothing rewrites.
 
 The engine's matching semantics stay deliberately dumb — normalizing the reply
 in Go (trim, strip emphasis, case-fold) would change what every existing
@@ -2856,7 +2866,7 @@ off.
   every spliced node through `plannedNodeRefusals`, the read-only tool rule
   and the no-`permission_mode` rule again) → `Graph.Validate` → the
   unisolated-path scan (over the planner's unspliced graph) → agent mapping →
-  the `--verify-cmd` attachment → skill activation. The splice is the first
+  the `exit_zero` pairing → the `--verify-cmd` attachment → skill activation. The splice is the first
   mutation, so every later step and the saved `graph.json` see the resolved
   graph. A digest that changed since the menu was rendered fails the plan,
   naming the node, the shape, the path and both digests, and keeps the reply
@@ -3419,6 +3429,28 @@ the field: trusted code may attach a `verify:` strictly *after* validation, from
 the user-supplied `--verify-cmd` string, and does
 (`coordinator.attachVerifyCommand`, ADR 0016 §2).
 
+Trusted code also adds one predicate of its own after validation, and only in
+the stricter direction. A planned node whose `success_check` declares a
+`result_matches` and no `exit_zero` would leave its exit code unchecked —
+exit-zero is the default only while a node declares no check at all
+(`SuccessCheck.IsZero`) — so `coordinator.requireExitZero`
+(`internal/coordinator/exitzero.go`, #371) sets `exit_zero: true` on every such
+node. It removes and rewrites nothing: `result_matches` stays as the planner
+wrote it, a node with no `success_check` and a node that already sets
+`exit_zero` are untouched, and an explicit `"exit_zero": false` is normalised
+too, since it decodes the same as an absent key and honouring it would let an
+unreviewed plan opt a node out of the guard. It runs in `attemptPlan` after
+agent mapping and before the `--verify-cmd` attachment and skill activation,
+re-parsing the changed graph through `graph.Parse`, so the plan screen,
+`graph.json` and the `--plan-only` plan all carry it, on the first attempt,
+the re-plan and every goal-loop cycle. A plan that needs nothing keeps its
+spec byte for byte. The change is never silent: `Plan.ExitZeroAdded` records
+the ids, and the plan screen prints one line per node
+(`noteExitZeroAdded`), just before the verify-attachment notes —
+`note: node <id>: exit_zero: true added beside its result_matches (a planned
+check is never weaker than the exit code)`. A hand-written graph is never
+rewritten; its `result_matches` without `exit_zero` stays a lint advisory.
+
 The general rule, because this class of hole recurs every time the schema grows:
 **every field on `graph.Node` must have an explicit disposition in
 `validatePlannedNodes` — allowed, constrained, or rejected.** Adding a field to
@@ -3439,7 +3471,7 @@ turns that rule into a build failure. Current dispositions:
 | `cwd` | rejected |
 | `agent` | **rejected** |
 | `worktree` | **rejected** (the engine would run `git worktree add` on an unreviewed plan's say-so — see "Worktree isolation") |
-| `success_check.verify` | **rejected when planner-authored** (`exit_zero`/`result_matches` allowed); trusted code may set it strictly after validation, from the user-supplied `--verify-cmd` string (`coordinator.attachVerifyCommand`, ADR 0016 §2) |
+| `success_check.verify` | **rejected when planner-authored** (`exit_zero`/`result_matches` allowed; a `result_matches` without `exit_zero` gains `exit_zero: true` after validation, `coordinator.requireExitZero`, #371); trusted code may set it strictly after validation, from the user-supplied `--verify-cmd` string (`coordinator.attachVerifyCommand`, ADR 0016 §2) |
 | `use` | **rejected** — a planner-emitted `use:` would let unreviewed output pick which local file's prompt text, tool grant and verify command get spliced in, and a fragment file in the run's repo is attacker-influencable whenever the repo is untrusted (ADR 0013: trusted code resolves files, the planner never names local resources). Refused at the coordinator's `graph.Parse` boundary |
 | `with` | **rejected** — `use`'s substitution bindings, on the same grounds: dead without a `use:`, and a `with:` on a planned node means the plan tried to reference a fragment at all |
 | `reuse` | constrained — written only by a planned node citing a menu entry: the id of a reusable shape from the menu the plan's prompt showed (ADR 0038), checked against the offered set held from that render, never a re-scan: a file name, a path or an unlisted id is refused, naming the id and listing the menu. The planner picks an id from a menu trusted code built; trusted code resolves the file. A citing node writes no `prompt` and no `allowed_tools` (each is refused beside it), and is exempt from those two emptiness checks and no other; one citing a multi-node shape is also refused any key outside `graph.MultiNodeCitingKeys`, naming the key. **Rejected** when nothing was offered. Validated by admission (`coordinator/reusecatalog.go`, `admitInspection`: no nested `use:` — a nested file's bytes are not pinned by the digest, so a fragment citing another is skipped as `nested use` and nested fragments are not offered in this slice — then prompt-only slots, `allowed_tools` within the read-only set `Read`, `Glob`, `Grep`, no `permission_mode`, no planner-refused field) and by the splice (`coordinator/reusesplice.go`: re-hash, re-admit, `graph.SpliceReuse` refusing pinned bytes that hold a nested `use:` before any nested file is read, then `checkSplicedNodes`, which runs the read-only tool check again and refuses any `permission_mode` on every spliced node). `graph.json` never holds it: the splice replaces it with the resolved node(s) before the save. Legal in a planner reply only: `graph.ParsePlannerReply` lets it through for `validatePlannedNodeReuse`, and `graph.Validate`'s `validateReuseSpliced` refuses it in a graph file, a saved `graph.json` or a resumed run. **Residual:** nothing confines `Read`, `Glob` and `Grep` to the working directory, so a planted admitted fragment can make its read-only node read any file the user can read (e.g. `~/.ssh/config`) into its report, which stays local in the run directory and flows downstream as an artifact path (see "Auto mode", what admission does not bound) |
@@ -3475,8 +3507,8 @@ turns reuse off: no scan, no menu, and `reuse:` refused as when nothing is
 offered.
 
 A citation that clears validation is spliced FIRST among the post-validation
-mutations (`coordinator/reusesplice.go`), before agent mapping, the verify
-attachment and skill activation, and before `graph.json` is saved, so the
+mutations (`coordinator/reusesplice.go`), before agent mapping, the
+`exit_zero` pairing, the verify attachment and skill activation, and before `graph.json` is saved, so the
 saved graph is the resolved one and never carries `reuse:`/`bind:`. For each
 citation the recorded source is re-read and re-hashed (a mismatch fails the
 plan naming the node, the shape, the path and both digests, and the planner's
