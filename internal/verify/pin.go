@@ -147,11 +147,13 @@ func digestWord(word, dir string) (path, digest string, err error) {
 	if !filepath.IsAbs(abs) {
 		abs = filepath.Join(dir, word)
 	}
-	path, err = filepath.EvalSymlinks(abs)
-	if err != nil {
+	// Absolute BEFORE resolving: EvalSymlinks leaves a relative path relative,
+	// and Abs then prefixes the cwd as $PWD spells it, symlinks and all (on
+	// macOS /tmp, not /private/tmp).
+	if abs, err = filepath.Abs(abs); err != nil {
 		return "", "", err
 	}
-	if path, err = filepath.Abs(path); err != nil {
+	if path, err = filepath.EvalSymlinks(abs); err != nil {
 		return "", "", err
 	}
 	info, err := os.Stat(path)

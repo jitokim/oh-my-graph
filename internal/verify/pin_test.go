@@ -361,3 +361,38 @@ func TestPinningVerifier_OtherCommandPassesThrough(t *testing.T) {
 		t.Errorf("pinned command reached the inner verifier %d times, want 0", n)
 	}
 }
+
+// TestPinCommand_RelativeWordRecordsTheFullyResolvedPath (#363): a relative
+// word pinned against the process cwd records the path with EVERY symlink
+// followed, the cwd's own ancestors included — on macOS /tmp and t.TempDir()'s
+// /var are symlinks into /private, and $PWD keeps the unresolved spelling.
+func TestPinCommand_RelativeWordRecordsTheFullyResolvedPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on windows")
+	}
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	script := writeFile(t, real, "check.sh", okScript)
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(link)
+
+	pins := PinCommand("./check.sh", ".")
+	if got, want := pinnedPaths(pins), []string{resolved(t, script)}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("pinned %v, want the fully resolved %v", got, want)
+	}
+
+	inner := NewFakeVerifier(map[string]Result{"./check.sh": {ExitCode: 0}})
+	v := NewPinningVerifier(inner, "./check.sh", pins)
+	if _, err := v.Verify(context.Background(), Request{Command: "./check.sh"}); err != nil {
+		t.Fatalf("unchanged file, empty Cwd: %v", err)
+	}
+	if _, err := v.Verify(context.Background(), Request{Command: "./check.sh", Cwd: "."}); err != nil {
+		t.Fatalf("unchanged file, Cwd \".\": %v", err)
+	}
+	writeFile(t, real, "check.sh", "#!/bin/sh\nexit 0 # edited\n")
+	_, err := v.Verify(context.Background(), Request{Command: "./check.sh"})
+	wantPinFault(t, err, resolved(t, script))
+}
