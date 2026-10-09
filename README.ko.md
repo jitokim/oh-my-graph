@@ -86,7 +86,48 @@ oh-my-graph --runtime codex auto "lint this repo and summarize the findings" --i
 # 또는 기본 제공 그래프 실행 — 가장 저렴한 실제 end-to-end 체크(몇 센트):
 mkdir -p /tmp/omg-smoke
 oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
+
+# 증거와 마지막의 사람: 구현, 엔진이 검증하는 체크, 수리 라운드 한 번이 있는
+# 리뷰, 그리고 PR이 열리기 전에 당신의 승인을 기다리는 멈춤
+# (`oh-my-graph resume <run-id> --approve approve-publish`, 또는
+# `--reject approve-publish`):
+oh-my-graph run graphs/gated-dev.yaml --input repo="$PWD" \
+  --input task="fix the failing test" --input checks="run the full test suite." \
+  --input verify_command="go test ./..." --input focus="" \
+  --input publish="Push this worktree's branch and open a DRAFT pull request with gh pr create --draft. Put the review in the PR body:"
 ```
+
+`run`과 `auto`는 `--input-file <path>`도 받습니다(반복 가능). input 이름을 값에
+매핑하는 평평한 YAML 또는 JSON map이며, 각 값은 `--input name=value`가 묶는 것과
+똑같이 적힌 그대로 묶입니다. 중첩된 값, 리스트, null은 아무것도 실행되기 전에
+거부됩니다.
+
+```yaml
+# inputs.yaml
+repo: /work/oh-my-graph
+task: add a --json flag to runs list
+```
+
+```sh
+oh-my-graph run graphs/self-dev.yaml --input-file inputs.yaml --input task="fix the flaky test"
+```
+
+나중 파일이 앞 파일을 덮어쓰고, `--input`은 명령줄 어디에 있든 모든 파일을
+덮어씁니다. 둘 이상의 출처가 정한 키마다 stderr에 출처들을 밝히는 한 줄이
+나오며, 값은 절대 찍지 않습니다
+(`input "task": --input overrides inputs.yaml`). `resume`은 run의 스냅샷에서
+input을 가져오고 파일을 다시 읽지 않습니다.
+
+그래프의 `inputs:`가 선언하지 않은 키도 여전히 묶이지만, 키 이름과 그 출처를
+밝히는 경고가 한 번 나옵니다. 값은 절대 찍지 않고, 선언된 이름 중 가까운 것이
+있으면 추측도 함께 붙습니다(`input "tsak" (from inputs.yaml) is not declared
+in the graph's inputs list; it is bound anyway — did you mean "task"?`). `run`은
+`--dry-run`을 포함해 로드 시점에 이를 출력합니다. `auto`는 `--plan-only`를
+포함해 플랜 화면에 출력하지만, 계획된 그래프가 선언하거나 보간되는 필드 어디에서든
+`{{ inputs.<name> }}`로 참조하는 이름(reuse citation의 `bind:` 값 포함)에 가깝게
+빗나간 경우에만 그렇습니다. 플래너는 모든 input을 보았고 그중 하나가 그저 필요
+없을 수도 있으므로, 플랜이 `repo` 자체를 쓰거나 input을 전혀 쓰지 않으면
+`auto "..." --input repo=$PWD`는 조용합니다. exit status는 바뀌지 않습니다.
 
 선택할 CLI에 한 번 로그인하세요(`claude` 또는 `codex login`). API key는 필요
 없습니다. child process에서는 Anthropic/OpenAI API-key 환경 변수를 삭제해 저장된
