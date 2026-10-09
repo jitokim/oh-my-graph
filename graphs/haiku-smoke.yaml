@@ -10,10 +10,10 @@
 # success_check.verify really runs a command and judges it (the `write` node
 # passes only if haiku.txt actually exists — saying DONE is not enough).
 #
-# Run it manually (never in CI):
-#   mkdir -p /tmp/omg-smoke
-#   oh-my-graph run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
-#   oh-my-graph --runtime codex run graphs/haiku-smoke.yaml --input dir=/tmp/omg-smoke
+# Run it manually (never in CI), each run in its own fresh, empty directory —
+# a shared directory let a later smoke pass on an earlier smoke's haiku.txt:
+#   dir=$(mktemp -d) && oh-my-graph run graphs/haiku-smoke.yaml --input dir="$dir"
+#   dir=$(mktemp -d) && oh-my-graph --runtime codex run graphs/haiku-smoke.yaml --input dir="$dir"
 name: haiku-smoke
 version: "0.1"
 inputs: [dir]
