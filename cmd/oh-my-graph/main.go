@@ -1504,6 +1504,9 @@ func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, ru
 	// Runtime-neutral too: the menu was in the planner prompt either way, and
 	// a citation is spliced before either runtime sees the graph (ADR 0038).
 	noteReuse(w, plan.Reuse)
+	// Before the build-evidence slot, which is one slot and must stay
+	// adjacent; runtime-neutral, since the guard is in the graph either way.
+	noteExitZeroAdded(w, plan.ExitZeroAdded)
 	noteVerifyAttachments(w, plan.VerifyAttachments)
 	noteMissingBuildEvidence(w, evidence)
 	noteSkippedBaseline(w, baselineSkipped)

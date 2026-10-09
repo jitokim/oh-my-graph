@@ -168,6 +168,15 @@ func isExecutableFile(path string) bool {
 	return err == nil && !info.IsDir() && info.Mode().Perm()&0o111 != 0
 }
 
+// noteExitZeroAdded names each planned node trusted code gave `exit_zero: true`
+// beside its `result_matches` (#371), so a check the human approves never
+// changes without the screen saying so; an empty list prints nothing.
+func noteExitZeroAdded(w io.Writer, added []string) {
+	for _, id := range added {
+		fmt.Fprintf(w, "  note: node %s: exit_zero: true added beside its result_matches (a planned check is never weaker than the exit code)\n", id)
+	}
+}
+
 // noteVerifyAttachments discloses, with the plan, exactly which nodes the
 // engine will run the user's command at and under what bound.
 //
