@@ -162,6 +162,24 @@ executing repo-authored code (`gradlew`, `Makefile`, `npm`) the way your own
 terminal does. Stated, not closed: the difference from a repo-file-derived
 grant is that you chose it.
 
+What you chose is the command line *and the files it names*, so the work under
+test may not relax the evidence by editing them ([#363](https://github.com/jitokim/oh-my-graph/issues/363)).
+A planned node holding the stock Edit grant could otherwise rewrite
+`./check.sh` to `exit 0` and earn a verified PASS from a script that no longer
+checks anything. Once per invocation, before the starting-tree baseline, `auto`
+pins every word of the `--verify-cmd` line that resolves (against the
+invocation directory, every symlink followed) to an existing readable regular
+file: the word, its absolute path, and the SHA-256 of its content. Immediately
+before and immediately after every engine-run verification of that command —
+the baseline, every cycle's sinks, and every resumed leg's sinks, which check
+the pins `state.json` recorded rather than taking new ones — each pinned file is
+resolved and hashed again. A file whose content changed, whose word now resolves
+elsewhere, or which is gone or unreadable is a verify fault naming its absolute
+path, never a PASS: the command's own exit status cannot override it. The check
+refuses a changed file; it never runs a saved original in its place. What is
+not pinned (a file the script sources, the `Makefile` behind `make verify`, a
+program found on `PATH`) is in [LIMITATIONS](docs/LIMITATIONS.md).
+
 ### Codex planned-node isolation
 
 Codex cannot express Claude's per-tool rule grammar. For a planned invocation —
