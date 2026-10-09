@@ -372,9 +372,11 @@ Planning a graph for goal "lint this repo and summarize the findings"...
 Planned graph "lint-and-summarize" (2 nodes, planning cost $0.0021, saved to ~/.oh-my-graph/runs/20260729-101600/graph.json):
   - lint [tools: Bash(go *), Read]
   - summarize (after lint) [tools: Read]
-  Planned nodes run isolated: none of your user/project/local settings load, so a declared
-  scope like Bash(git *) is enforced rather than merely requested — and your CLAUDE.md,
-  hooks and MCP servers are unavailable to them. See SECURITY.md for what this does not cover.
+  Planned nodes run isolated: none of your user/project/local settings load, so none of your
+  standing permission grants apply — and your CLAUDE.md, hooks and MCP servers are unavailable
+  to them. A call matching a node's allowed-tool rules runs; under the default permission mode
+  (auto) a call outside them is not denied outright but goes to the CLI's own classifier,
+  which approves or denies it. See SECURITY.md for what this does not cover.
 
 Running graph "lint-and-summarize" (run 20260729-101600)
 
