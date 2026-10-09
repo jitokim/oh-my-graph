@@ -280,19 +280,17 @@ has no open issue behind it.
   so the next person does not re-derive it; the follow-up itself is carried in
   the operator's private backlog (oh-my-graph-hq `notes/open.md`), not in the
   public tracker.
-- **ADR 0009's session-limit pause now covers Codex too — on the
-  `lane-codexlimit` branch, NOT yet merged to `main` and so in no tagged
-  release** (`main` at e767bd9 carries no `hit your usage limit` matcher in
-  `internal/runner/sessionlimit.go`). In v0.13.0, and on `main` today, a limit
-  under `--runtime codex` is an ordinary node failure: the matcher is Claude's
-  own prose and `SessionLimited` is set only for the Claude runtime, so the run
-  halts at exit 1 with a FAIL on a node whose prompt never ran — recoverable
-  with `resume --retry-failed`, but not the pause the ADR promises. On the
-  branch the runtime gate is gone and Codex's own wording is matched beside
-  Claude's,
-  so the same situation pauses: the limited node is recorded nowhere, in-flight
-  siblings drain instead of being cancelled, and the run exits 2 with a
-  `resume --retry-failed` hint. **The 2026-08-15 settlement still stands** — the
+- **ADR 0009's session-limit pause now covers Codex too, in v0.14.0 and later
+  (merged in [#261](https://github.com/jitokim/oh-my-graph/pull/261), commit
+  55b3319).** Before v0.14.0 (in v0.13.0 and earlier), a limit under
+  `--runtime codex` was an ordinary node failure: the matcher was Claude's own
+  prose and `SessionLimited` was set only for the Claude runtime, so the run
+  halted at exit 1 with a FAIL on a node whose prompt never ran — recoverable
+  with `resume --retry-failed`, but not the pause the ADR promises. Since
+  v0.14.0 the runtime gate is gone and Codex's own wording is matched beside
+  Claude's, so the same situation pauses: the limited node is recorded
+  nowhere, in-flight siblings drain instead of being cancelled, and the run
+  exits 2 with a `resume --retry-failed` hint. **The 2026-08-15 settlement still stands** — the
   pause is a promise of a runtime, not of the engine, so no runtime *owes* a
   session-limit signal; Codex volunteers what it does not owe
   ([ADR 0009 "Scope"](adr/0009-a-session-limit-is-a-pause-not-a-failure.md) and
