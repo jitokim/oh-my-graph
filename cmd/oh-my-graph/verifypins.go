@@ -6,7 +6,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/verify"
 )
 
-// verifyPinSet is the files an `auto --verify-cmd` command line names, pinned
+// verifyPinSet is the scripts an `auto --verify-cmd` command line executes, pinned
 // once per invocation (#363). One set guards every verification of that
 // command the invocation runs — the starting-tree baseline and every goal-loop
 // cycle's sinks — so an edit a cycle made can never become a later cycle's

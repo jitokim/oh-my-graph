@@ -572,7 +572,7 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 	// that is what makes a preview refuse identically to the run it previews,
 	// with no special case and no planner call bought.
 	verifyCommand := flags.verifyCommand()
-	// The files the command line names, pinned here — once per invocation,
+	// The scripts the command line executes, pinned here — once per invocation,
 	// before the baseline runs it and before any cycle could edit them — so a
 	// verification whose pinned file has since changed is a fault naming the
 	// file, never a PASS (#363). The one set guards the baseline and every

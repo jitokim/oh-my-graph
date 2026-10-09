@@ -92,7 +92,7 @@ type commonRunFlags struct {
 	// cycle 1's. Not a flag: copied from autoFlags.noBaseline at launch, so
 	// `run`, `chat` and `resume` never set it.
 	baselineSkipped bool
-	// verifyPins is the files `auto --verify-cmd` names, pinned once at
+	// verifyPins is the scripts `auto --verify-cmd` executes, pinned once at
 	// launch (#363), carried here so every cycle's sinks are guarded by the
 	// same pins and every cycle's recorder writes them. Not a flag: nil for
 	// `run`, `chat`, `resume` and every auto run without --verify-cmd.

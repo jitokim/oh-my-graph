@@ -12,18 +12,18 @@ import (
 )
 
 // The --verify-cmd is the user's engine-run build evidence (ADR 0016/0030), and
-// a command is only evidence while the files it names are the ones the user
+// a command is only evidence while the script it executes is the one the user
 // meant. A planned node holding the stock Edit grant can rewrite `./check.sh`,
 // and the run would then record a verified PASS that the script it ran no
-// longer earned (#363). So the files a command line names are pinned at launch
-// — word, resolved path, content digest — and a verification whose pinned file
-// changed is a fault that names the file, never a result.
+// longer earned (#363). So the script each command of the line executes is
+// pinned at launch — word, resolved path, content digest — and a verification
+// whose pinned file changed is a fault that names the file, never a result.
 //
 // This file pins and checks; it spawns nothing and imports no os/exec
 // (internal/invariants). There is no snapshot copy of a pinned file: the check
 // can only refuse a changed file, never run the original in its place.
 
-// PinnedFile is one file a pinned command line names, as it was at launch.
+// PinnedFile is one script a pinned command line executes, as it was at launch.
 type PinnedFile struct {
 	// Word is the shell word as written on the command line, quotes removed.
 	Word string
@@ -121,8 +121,8 @@ func isAssignment(word string) bool {
 	return true
 }
 
-// PinChangedError is a verification refused because a file its command line
-// names is no longer the one pinned at launch. It replaces any Result, so the
+// PinChangedError is a verification refused because a script its command line
+// executes is no longer the one pinned at launch. It replaces any Result, so the
 // command's own exit status can never turn a changed script into a PASS.
 type PinChangedError struct {
 	Command string

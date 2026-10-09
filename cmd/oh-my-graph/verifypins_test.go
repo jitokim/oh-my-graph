@@ -20,7 +20,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/verify"
 )
 
-// #363: `auto --verify-cmd` pins the files its command line names once per
+// #363: `auto --verify-cmd` pins the scripts its command line executes once per
 // invocation, and a verification whose pinned file changed is a fault naming
 // the file. The sinks here run the real ShellVerifier on a shebang script in a
 // temp dir (as buildevidence_test.go's do); the model is always a FakeRunner,

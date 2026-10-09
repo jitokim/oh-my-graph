@@ -713,7 +713,7 @@ type Snapshot struct {
 	// across resume. nil — and absent — on every run that did not skip it, so
 	// such a snapshot is byte for byte what it was before. See Baseline.
 	Baseline *Baseline `json:"baseline,omitempty"`
-	// VerifyPins are the files an `auto --verify-cmd` command line names, as
+	// VerifyPins are the scripts an `auto --verify-cmd` command line executes, as
 	// they were when the invocation launched (#363). Written on every cycle of
 	// the goal loop and carried across resume, which re-checks them around
 	// each verification of the resumed leg. nil — and absent — on every run
