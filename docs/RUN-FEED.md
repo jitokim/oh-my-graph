@@ -176,6 +176,7 @@ event's `ts` says when), `tool_policies` (auto runs only — see below), `goal` 
 runs only — see "Goal cycles" below), `build_evidence` (auto-mode launches only
 — see below), `baseline` (`auto --no-baseline` launches only — see below),
 `conventions` (`auto --conventions` launches only — see below),
+`verify_pins` (`auto --verify-cmd` launches only — see below),
 `nodes` (map of node id →
 terminal record: `verdict`, `session_id`, `cost_usd`, `cost_unknown`, `usage`
 (`input_tokens`, `cached_input_tokens`, `output_tokens`,
@@ -294,6 +295,27 @@ forward unchanged (it runs no baseline and has no `--no-baseline`). It is an
 **additive optional block and the schema stays 3**. Two keys: `skipped`, always
 `true`, and `declared_by`, the exact spelling of what was typed:
 `"--no-baseline"`. No event carries it; the feed schema is unchanged.
+
+`verify_pins` records the scripts an `auto --verify-cmd` command line
+executes — at most one per command segment, never a file the command only
+reads or writes — as they were when the invocation launched
+([#363](https://github.com/jitokim/oh-my-graph/issues/363)). It is an array,
+one entry per pinned word in command-line order, each with three keys: `word`,
+the shell word as written, quotes removed; `path`, the absolute path it
+resolved to, every symlink followed; and `sha256`, the hex SHA-256 of the
+file's content. The pins are taken once per invocation, before the
+starting-tree baseline (and whether or not `--no-baseline` skips it), so every
+goal-loop cycle's `state.json` carries the same ones, and `resume` carries them
+forward unchanged and re-checks them around each verification of the resumed
+leg rather than taking new ones. It is optional: absent on every run without
+`--verify-cmd`, on one whose command line executes no pinnable script
+(`go test ./...`), on a `run` of a hand-written graph, and on every run that
+predates the field, so such a snapshot is byte for byte what it was before. It is an **additive optional
+block and the schema stays 3**: an older binary ignores the key and resumes the
+run as it resumes any of its own, pinning nothing — it cannot misread the
+record, only not enforce it — and drops the key if it rewrites the snapshot, so
+a later leg of this build has no pins to check either. No event carries it; the
+feed schema is unchanged.
 
 `conventions` records the operator's `auto --conventions` files (ADR 0041):
 `staged_sha256`, the SHA-256 of the run directory's `conventions.md` — the

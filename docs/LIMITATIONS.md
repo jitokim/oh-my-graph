@@ -107,6 +107,38 @@ has no open issue behind it.
   goes on to reach then runs on API-key authentication and is billed to the API,
   which is the thing the scrub exists to prevent. The guarantee is about the
   environment oh-my-graph builds; a key your own command puts back is yours.
+- **`--verify-cmd` pins only the script each command executes.** For each
+  command of the line (split on `&&`, `||`, `;`, `|`), `auto` pins one file
+  (SECURITY.md, "Auto-planned graphs"): the script handed to an interpreter
+  (`sh`, `bash`, `zsh`, `dash`, `python`, `python3`, `python3.N`, `node`,
+  `ruby`, `perl`), or a command written as a path (`./verify.sh`), past any
+  leading `env`, `exec`, `command`, `nice`, `time` and `NAME=value` words.
+  Nothing else. Not an inline `sh -c '...'` script, nor any runner or inline
+  mode: `python -m ...` (`-m` before the first file), `node --test`, `-e`,
+  `--eval`, `-p` or `--print`, and an `sh` option cluster holding `c` (`-ec`,
+  `-xc`) pin nothing for that command; not a script fed on stdin (`sh < v.sh`
+  pins nothing); not a file the script
+  sources, reads or writes (`| tee log.txt`, `--junitxml report.xml`); not the
+  `Makefile` behind `make verify` or the test files `go test ./...` runs; not
+  what runs behind a wrapper missing from that list, or behind a listed wrapper
+  given options (`nice -n 10`, `env -i`, `time -p` end the wrapper skip, so
+  that command pins nothing); and not a program found on
+  `PATH` — there is no `PATH` lookup, so `make`, `go` and `npm` pin nothing.
+  Paths resolve from the launch directory only, and a `cd` inside the command
+  is not tracked: `cd sub && sh v.sh` looks for `v.sh` in the launch
+  directory, not in `sub`. Give the script by absolute path or from the launch
+  directory. The
+  launch screen lists every pinned path, and warns `verify-cmd has no pinned
+  script` when there is none — a node can then edit what the command executes.
+  Keep the logic that decides PASS in a script the line executes.
+
+  The check runs immediately before and immediately after each verification,
+  so an edit made and reverted entirely while the command is running is not
+  seen. And there is no re-pin: a pinned file you changed on purpose — mid-run,
+  or between a run and its `resume`, which checks the recorded pins rather than
+  taking new ones — faults every later verification of the run. To accept the
+  change, start a new run.
+  ([#363](https://github.com/jitokim/oh-my-graph/issues/363))
 - **A PASS row does not say *which* outcome passed.** A node whose verdict is a
   two-valued alternation (DESIGN.md, "Verdict patterns") passes on either of
   its legitimate answers, and the ledger has one column for both. `merge-shepherd`
