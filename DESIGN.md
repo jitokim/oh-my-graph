@@ -2798,8 +2798,10 @@ of a redirection skipped, nothing expanded) and pins, per segment, the one
 file it executes (#367): past leading `NAME=value` words and the wrappers
 `env`, `exec`, `command`, `nice` and `time` (by basename), an interpreter
 command word (`sh`, `bash`, `zsh`, `dash`, `python`, `python3`, `python3.N`,
-`node`, `ruby`, `perl`) pins nothing when the segment holds `-c`, else its
-first following word that is an existing readable regular file and nothing
+`node`, `ruby`, `perl`) pins nothing when the segment holds `-c` or a runner
+or inline mode (a shell's short-option cluster holding `c`, `-ec`; `node`'s
+`--test`, `-e`, `--eval`, `-p`, `--print`; a python's `-m` before its first
+file), else its first following word that is an existing readable regular file and nothing
 after it; any other command word is pinned only if it contains a `/`. Each
 resolves against the process cwd, every symlink followed: `Word`, absolute
 `Path`, SHA-256 `Digest`. The interpreter binary is never pinned, there is no
