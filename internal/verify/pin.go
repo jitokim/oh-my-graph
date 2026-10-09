@@ -33,27 +33,92 @@ type PinnedFile struct {
 	Digest string
 }
 
-// PinCommand pins every word of command that names an existing, readable
-// regular file once resolved against dir (relative words are joined to it,
-// absolute ones are used as they are). A word that names nothing pinnable — a
-// missing path, a directory, an unreadable file, a bare program name — is
-// skipped, not an error: there is no PATH lookup, and a program found on PATH
-// is the user's toolchain, not a file a node in this tree is expected to edit.
+// PinCommand pins, per command segment of command (split on && || ; | and the
+// other control operators), the one file that segment executes, resolved
+// against dir:
+//
+//   - Leading NAME=value words and the wrappers env, exec, command, nice and
+//     time (by basename, so /usr/bin/env too) are skipped to the command word.
+//   - If the command word's basename is an interpreter (sh, bash, python3.12,
+//     node, ...), a segment holding -c pins nothing (an inline script);
+//     otherwise its first following word that resolves to a file is pinned and
+//     nothing after it is (those are the script's data files). The interpreter
+//     binary itself is never pinned.
+//   - Any other command word is pinned only if it contains a slash
+//     (./verify.sh, /abs/x); a bare name found on PATH (go, make, tee) is the
+//     user's toolchain, not a file a node in this tree is expected to edit.
+//
+// Every argument the command reads or writes (`| tee log.txt`, `--junitxml
+// log.txt`, `grep -q done status.txt`) stays unpinned: the command may rewrite
+// it itself (#367). Paths resolve against dir only — a `cd` inside the command
+// is not tracked. A word that names no existing, readable regular file is
+// skipped, not an error.
 func PinCommand(command, dir string) []PinnedFile {
 	var pins []PinnedFile
 	seen := map[string]bool{}
-	for _, word := range commandWords(command) {
-		if seen[word] {
+	for _, segment := range commandSegments(command) {
+		word, path, digest, ok := executedFile(segment, dir)
+		if !ok || seen[word] {
 			continue
 		}
 		seen[word] = true
-		path, digest, err := digestWord(word, dir)
-		if err != nil {
-			continue
-		}
 		pins = append(pins, PinnedFile{Word: word, Path: path, Digest: digest})
 	}
 	return pins
+}
+
+// commandWrappers run the word after them as the command (#367).
+var commandWrappers = map[string]bool{"env": true, "exec": true, "command": true, "nice": true, "time": true}
+
+// interpreters run the script file named by their first file argument (#367).
+var interpreters = map[string]bool{
+	"sh": true, "bash": true, "zsh": true, "dash": true, "python": true, "python3": true,
+	"node": true, "ruby": true, "perl": true,
+}
+
+// executedFile is the file one command segment executes, if any: the script
+// an interpreter is handed, or a command word written as a path.
+func executedFile(segment []string, dir string) (word, path, digest string, ok bool) {
+	i := 0
+	for i < len(segment) && (isAssignment(segment[i]) || commandWrappers[filepath.Base(segment[i])]) {
+		i++
+	}
+	if i == len(segment) {
+		return "", "", "", false
+	}
+	command := segment[i]
+	if base := filepath.Base(command); interpreters[base] || strings.HasPrefix(base, "python3.") {
+		for _, arg := range segment[i+1:] {
+			if arg == "-c" {
+				return "", "", "", false
+			}
+		}
+		for _, arg := range segment[i+1:] {
+			if path, digest, err := digestWord(arg, dir); err == nil {
+				return arg, path, digest, true
+			}
+		}
+		return "", "", "", false
+	}
+	if !strings.Contains(command, "/") {
+		return "", "", "", false
+	}
+	path, digest, err := digestWord(command, dir)
+	return command, path, digest, err == nil
+}
+
+// isAssignment reports whether word is a NAME=value environment assignment.
+func isAssignment(word string) bool {
+	name, _, found := strings.Cut(word, "=")
+	if !found || name == "" || (name[0] >= '0' && name[0] <= '9') {
+		return false
+	}
+	for _, r := range name {
+		if r != '_' && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 // PinChangedError is a verification refused because a file its command line
@@ -184,17 +249,20 @@ func digestWord(word, dir string) (path, digest string, err error) {
 // operators (&& || ; | &), grouping, and redirection.
 const shellOperatorChars = "&|;<>()\n"
 
-// commandWords splits a command line into shell words: whitespace separates,
-// single and double quotes group (and are removed), a backslash outside single
-// quotes escapes the next character, and a run of operator characters is a
-// separator, not a word. It is a word splitter for pinning, not a shell — it
-// expands nothing, so a `$VAR` word simply names no file.
+// commandSegments splits a command line into its commands' shell words:
+// whitespace separates, single and double quotes group (and are removed), a
+// backslash outside single quotes escapes the next character, and a run of
+// operator characters is a separator, not a word. A control operator (&& || ;
+// | & and grouping) also ends the segment; one inside quotes is just text. It
+// is a word splitter for pinning, not a shell — it expands nothing, so a
+// `$VAR` word simply names no file.
 //
-// The word after an output redirection (`>`, `>>`, `2>&1`'s `>&`) is dropped:
-// the command writes it, so pinning it would fault every run that redirects
-// into a file the last run left behind.
-func commandWords(command string) []string {
+// The word after a redirection (`>`, `>>`, `<`, `2>&1`'s `>&`) is dropped: it
+// is not an argument, and pinning a target the command writes would fault
+// every run that redirects into a file the last run left behind.
+func commandSegments(command string) [][]string {
 	var (
+		segments   [][]string
 		words      []string
 		cur        strings.Builder
 		inWord     bool
@@ -215,9 +283,20 @@ func commandWords(command string) []string {
 		cur.Reset()
 		inWord = false
 	}
+	endSegment := func() {
+		if len(words) > 0 {
+			segments = append(segments, words)
+		}
+		words = nil
+		skipNext = false
+	}
 	endOperator := func() {
-		if inOperator && strings.Contains(operator.String(), ">") {
+		switch op := operator.String(); {
+		case !inOperator:
+		case strings.ContainsAny(op, "<>"):
 			skipNext = true
+		default:
+			endSegment()
 		}
 		operator.Reset()
 		inOperator = false
@@ -271,5 +350,7 @@ func commandWords(command string) []string {
 		}
 	}
 	endWord()
-	return words
+	endOperator()
+	endSegment()
+	return segments
 }

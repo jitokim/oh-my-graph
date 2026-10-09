@@ -201,14 +201,14 @@ func TestPinCommand_SkipsWordsThatNameNoRegularFile(t *testing.T) {
 	wantPinFault(t, err, resolved(t, script))
 }
 
-// TestCommandWords_OperatorsSeparateAndRedirectTargetsDrop (#363): operators
-// are separators even with no space around them, and an output redirection's
-// target is not a file the command reads.
-func TestCommandWords_OperatorsSeparateAndRedirectTargetsDrop(t *testing.T) {
-	got := commandWords("make&&./a.sh||b;c|d >out.log 2>>err.log <in.txt 2>&1 (e)")
-	want := []string{"make", "./a.sh", "b", "c", "d", "2", "in.txt", "2", "e"}
+// TestCommandSegments_OperatorsSeparateAndRedirectTargetsDrop (#363, #367):
+// control operators end a segment even with no space around them, one inside
+// quotes is text, and a redirection's target is not an argument.
+func TestCommandSegments_OperatorsSeparateAndRedirectTargetsDrop(t *testing.T) {
+	got := commandSegments(`make&&./a.sh||b;c|d >out.log 2>>err.log <in.txt 2>&1 (e) ; sh -c 'x && y | z'`)
+	want := [][]string{{"make"}, {"./a.sh"}, {"b"}, {"c"}, {"d", "2", "2"}, {"e"}, {"sh", "-c", "x && y | z"}}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("commandWords = %q, want %q", got, want)
+		t.Errorf("commandSegments = %q, want %q", got, want)
 	}
 }
 
@@ -282,31 +282,33 @@ func TestPinningVerifier_EditDuringVerifyFaultsAfter(t *testing.T) {
 	}
 }
 
-// TestPinCommand_QuotedWordsResolve (#363): single and double quotes group a
-// word with spaces in it and are removed, so the word names the right file.
+// TestPinCommand_QuotedWordsResolve (#363, #367): single and double quotes
+// group a word with spaces in it and are removed, so the word names the right
+// file — the script, not the quoted data file after it.
 func TestPinCommand_QuotedWordsResolve(t *testing.T) {
 	dir := t.TempDir()
-	double := writeFile(t, dir, "my dir/run it.sh", okScript)
-	single := writeFile(t, dir, "other file.txt", "data\n")
 	writeFile(t, dir, "my", "decoy: the unquoted first half of a split word\n")
+	double := writeFile(t, dir, "my dir/run it.sh", okScript)
+	writeFile(t, dir, "other file.txt", "data\n")
 	command := `sh "./my dir/run it.sh" 'other file.txt'`
 
 	pins := PinCommand(command, dir)
 
-	if got, want := pinnedPaths(pins), []string{resolved(t, double), resolved(t, single)}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("pinned %v, want %v", got, want)
+	if got, want := pinnedPaths(pins), []string{resolved(t, double)}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("pinned %v, want only the script %v", got, want)
 	}
-	if pins[0].Word != "./my dir/run it.sh" || pins[1].Word != "other file.txt" {
-		t.Errorf("words = %q, %q; want the quotes removed", pins[0].Word, pins[1].Word)
+	if pins[0].Word != "./my dir/run it.sh" {
+		t.Errorf("word = %q; want the quotes removed", pins[0].Word)
 	}
 	inner := NewFakeVerifier(map[string]Result{command: {ExitCode: 0}})
 	v := NewPinningVerifier(inner, command, pins)
-	if _, err := v.Verify(context.Background(), Request{Command: command, Cwd: dir}); err != nil {
-		t.Fatalf("unchanged quoted files: %v", err)
-	}
 	writeFile(t, dir, "other file.txt", "changed\n")
+	if _, err := v.Verify(context.Background(), Request{Command: command, Cwd: dir}); err != nil {
+		t.Fatalf("a changed data argument faulted: %v", err)
+	}
+	writeFile(t, dir, "my dir/run it.sh", "#!/bin/sh\nexit 0 # edited\n")
 	_, err := v.Verify(context.Background(), Request{Command: command, Cwd: dir})
-	wantPinFault(t, err, resolved(t, single))
+	wantPinFault(t, err, resolved(t, double))
 }
 
 // TestPinningVerifier_RelativeWordResolvesAgainstRequestCwd (#363): a relative
@@ -393,4 +395,103 @@ func TestPinCommand_RelativeWordRecordsTheFullyResolvedPath(t *testing.T) {
 	writeFile(t, real, "check.sh", "#!/bin/sh\nexit 0 # edited\n")
 	_, err := v.Verify(context.Background(), Request{Command: "./check.sh"})
 	wantPinFault(t, err, resolved(t, script))
+}
+
+// TestPinCommand_PinsTheExecutedScript (#367): through every wrapper, path
+// spelling and interpreter option, a segment pins exactly the script it
+// executes, and an edit to that script faults. The command word's own binary
+// (/bin/sh, /usr/bin/env) is never pinned.
+func TestPinCommand_PinsTheExecutedScript(t *testing.T) {
+	dir := t.TempDir()
+	sh := writeFile(t, dir, "v.sh", okScript)
+	py := writeFile(t, dir, "v.py", "print('ok')\n")
+	for _, tc := range []struct {
+		command string
+		script  string
+	}{
+		{"cd /tmp && sh " + sh, sh},
+		{"/usr/bin/env sh v.sh", sh},
+		{"env X=1 sh v.sh", sh},
+		{"X=1 nice exec sh v.sh", sh},
+		{"/bin/sh v.sh", sh},
+		{"bash -o pipefail v.sh", sh},
+		{"./v.sh", sh},
+		{"python3 -W ignore v.py", py},
+		{"python3.12 v.py", py},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			name := filepath.Base(tc.script)
+			writeFile(t, dir, name, okScript)
+			pins := PinCommand(tc.command, dir)
+			if got, want := pinnedPaths(pins), []string{resolved(t, tc.script)}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("pinned %v, want exactly the script %v", got, want)
+			}
+			inner := NewFakeVerifier(map[string]Result{tc.command: {ExitCode: 0}})
+			v := NewPinningVerifier(inner, tc.command, pins)
+			if _, err := v.Verify(context.Background(), Request{Command: tc.command, Cwd: dir}); err != nil {
+				t.Fatalf("unchanged script: %v", err)
+			}
+			writeFile(t, dir, name, "#!/bin/sh\nexit 0 # edited\n")
+			_, err := v.Verify(context.Background(), Request{Command: tc.command, Cwd: dir})
+			wantPinFault(t, err, resolved(t, tc.script))
+		})
+	}
+}
+
+// TestPinningVerifier_OutputTheCommandWritesIsNotPinned (#367): a leftover
+// log.txt the verification itself rewrites — through a pipe into tee, or as a
+// script's option value — is not pinned, so the first verification passes.
+func TestPinningVerifier_OutputTheCommandWritesIsNotPinned(t *testing.T) {
+	for _, command := range []string{"sh v.sh | tee log.txt", "sh v.sh --junitxml log.txt"} {
+		t.Run(command, func(t *testing.T) {
+			dir := t.TempDir()
+			script := writeFile(t, dir, "v.sh", okScript)
+			writeFile(t, dir, "log.txt", "last run's log\n")
+			pins := PinCommand(command, dir)
+			if got, want := pinnedPaths(pins), []string{resolved(t, script)}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("pinned %v, want only the script %v", got, want)
+			}
+			inner := NewFakeVerifier(map[string]Result{command: {ExitCode: 0}})
+			inner.OnVerify(command, func(context.Context) { writeFile(t, dir, "log.txt", "this run's log\n") })
+			if _, err := NewPinningVerifier(inner, command, pins).
+				Verify(context.Background(), Request{Command: command, Cwd: dir}); err != nil {
+				t.Fatalf("first verification rewriting log.txt: err = %v, want PASS", err)
+			}
+		})
+	}
+}
+
+// TestPinCommand_PinsNothingItCannotSeeExecuted (#367): a PATH program's data
+// file, a script reached only through a cd, an inline -c script, and the
+// interpreter binary on its own are all unpinned — and with nothing pinned a
+// changed data file between verifications does not fault.
+func TestPinCommand_PinsNothingItCannotSeeExecuted(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "status.txt", "running\n")
+	writeFile(t, dir, "sub/v.sh", okScript)
+	writeFile(t, dir, "inline.sh", okScript)
+	for _, command := range []string{
+		"grep -q done status.txt",
+		"cd sub && sh v.sh",
+		"sh -c 'sh inline.sh && cat status.txt'",
+		"/bin/sh",
+		"go test ./... && make && tee status.txt",
+	} {
+		t.Run(command, func(t *testing.T) {
+			if pins := PinCommand(command, dir); len(pins) != 0 {
+				t.Fatalf("pinned %v, want nothing", pinnedPaths(pins))
+			}
+		})
+	}
+
+	const command = "grep -q done status.txt"
+	inner := NewFakeVerifier(map[string]Result{command: {ExitCode: 1}})
+	v := NewPinningVerifier(inner, command, PinCommand(command, dir))
+	if _, err := v.Verify(context.Background(), Request{Command: command, Cwd: dir}); err != nil {
+		t.Fatalf("first verification: %v", err)
+	}
+	writeFile(t, dir, "status.txt", "done\n")
+	if _, err := v.Verify(context.Background(), Request{Command: command, Cwd: dir}); err != nil {
+		t.Errorf("a changed status.txt faulted: %v", err)
+	}
 }

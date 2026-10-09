@@ -219,23 +219,21 @@ func TestRunAuto_RepointedSymlinkFaults_363(t *testing.T) {
 	}
 }
 
-// (e) A file edited DURING the verification — here by the verify command
-// itself, which exits 0 — faults from the post-check.
+// (e) A file edited DURING the verification — here the verify script, by
+// itself, which exits 0 — faults from the post-check. (Its arguments are
+// not pinned since #367, so the script must rewrite itself.)
 func TestRunAuto_EditDuringVerificationFaults_363(t *testing.T) {
 	isolateRunHome(t)
 	dir := t.TempDir()
 	script := filepath.Join(dir, "check.sh")
-	writeFile(t, script, "#!/bin/sh\necho tampered >> \"$1\"\nexit 0\n")
-	data := filepath.Join(dir, "expected.txt")
-	writeFile(t, data, "golden\n")
-	command := script + " " + data
+	writeFile(t, script, "#!/bin/sh\necho '# tampered' >> \"$0\"\nexit 0\n")
 
-	_, err := runBaselineAuto(t, oneCycle(), greenBaselineFor(command), osStdin(), "add a README section", "--verify-cmd", command)
+	_, err := runBaselineAuto(t, oneCycle(), greenBaselineFor(script), osStdin(), "add a README section", "--verify-cmd", script)
 
 	if err == nil {
 		t.Fatal("a verification that edited its own pinned file must fault")
 	}
-	wantSinkPinFault(t, loadSnapshot(t, soleRunID(t)).Nodes["work"], resolved(t, data))
+	wantSinkPinFault(t, loadSnapshot(t, soleRunID(t)).Nodes["work"], resolved(t, script))
 }
 
 // (f) An edit between cycle 1 and cycle 2 of a --max-cycles run faults cycle
