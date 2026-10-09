@@ -46,9 +46,11 @@ const (
 		"  your repository's rules and AGENTS.md files, and your MCP servers all load. The filesystem\n" +
 		"  sandbox above and approval_policy=\"never\" are argv on every node, so this flag widens neither.\n"
 
-	isolatedClaudeNote = "  Planned nodes run isolated: none of your user/project/local settings load, so a declared\n" +
-		"  scope like Bash(git *) is enforced rather than merely requested — and your CLAUDE.md,\n" +
-		"  hooks and MCP servers are unavailable to them. See SECURITY.md for what this does not cover.\n"
+	isolatedClaudeNote = "  Planned nodes run isolated: none of your user/project/local settings load, so none of your\n" +
+		"  standing permission grants apply — and your CLAUDE.md, hooks and MCP servers are unavailable\n" +
+		"  to them. A call matching a node's allowed-tool rules runs; under the default permission mode\n" +
+		"  (auto) a call outside them is not denied outright but goes to the CLI's own classifier,\n" +
+		"  which approves or denies it. See SECURITY.md for what this does not cover.\n"
 
 	isolatedCodexNote = "  Auto-planned Codex nodes also ignore user configuration, repository rules, project instructions, and MCP servers.\n"
 )
@@ -446,7 +448,7 @@ func TestPrintPlanForRuntime_TheSlotSaysExactlyOneOfTheTwoSentences(t *testing.T
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var out strings.Builder
-			printPlanForRuntime(&out, planPolicies(t, tc.loaded), "", tc.runtime, nil, false, conventionsDisclosure{}, nil)
+			printPlanForRuntime(&out, planPolicies(t, tc.loaded), "", tc.runtime, nil, false, nil, conventionsDisclosure{}, nil)
 			got := out.String()
 
 			if !strings.Contains(got, tc.want) {

@@ -125,7 +125,7 @@ func TestPrintPlanForRuntime356_NearMissOfACwdOrVerifyReference(t *testing.T) {
 				t.Fatal(err)
 			}
 			var out strings.Builder
-			printPlanForRuntime(&out, coordinator.Plan{Graph: g}, "", runner.RuntimeClaude, nil, false, conventionsDisclosure{},
+			printPlanForRuntime(&out, coordinator.Plan{Graph: g}, "", runner.RuntimeClaude, nil, false, nil, conventionsDisclosure{},
 				map[string]string{"reop": "--input"})
 			want := "warning: " + planScreenLine356("reop", "--input") + ` — did you mean "repo"?`
 			if !strings.Contains(out.String(), want) {

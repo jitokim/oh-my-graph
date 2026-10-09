@@ -572,6 +572,13 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 	// that is what makes a preview refuse identically to the run it previews,
 	// with no special case and no planner call bought.
 	verifyCommand := flags.verifyCommand()
+	// The scripts the command line executes, pinned here — once per invocation,
+	// before the baseline runs it and before any cycle could edit them — so a
+	// verification whose pinned file has since changed is a fault naming the
+	// file, never a PASS (#363). The one set guards the baseline and every
+	// cycle's sinks; nothing re-pins, so an edit cycle 1 made cannot become
+	// cycle 2's pin. Taken whether or not --no-baseline skips the baseline.
+	flags.verifyPins = pinVerifyCommand(verifyCommand)
 	evidence, err := answerBuildEvidence(os.Stdout, verifyCommand, flags.buildDeclaration(), ".")
 	if err != nil {
 		return err
@@ -618,7 +625,7 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 	if flags.noBaseline {
 		flags.baselineSkipped = true
 		fmt.Fprintf(os.Stdout, "Baseline: skipped (--no-baseline); --verify-cmd '%s' is still the command at every sink.\n", verifyCommand.Command)
-	} else if err := runBaseline(ctx, os.Stdout, verifier, verifyCommand, flags.goal); err != nil {
+	} else if err := runBaseline(ctx, os.Stdout, flags.verifyPins.guard(verifier), verifyCommand, flags.goal); err != nil {
 		return err
 	}
 	// Once per goal, before cycle 1, and never again: every later cycle's
@@ -862,7 +869,7 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 		return noteRejectedPlan(out, planDirFor(newRunID()), err)
 	}
 	if planOnly {
-		return notePlanOnlyPreview(out, plan, flags.runtime, flags.buildEvidence, flags.baselineSkipped, flags.conventions, flags.interview, flags.inputSources)
+		return notePlanOnlyPreview(out, plan, flags.runtime, flags.buildEvidence, flags.baselineSkipped, flags.verifyPins, flags.conventions, flags.interview, flags.inputSources)
 	}
 	// The interview was bought for this plan, so its spend is this run's
 	// planning spend from here on (withInterviewCost). Not on the preview
@@ -887,7 +894,7 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 		return err
 	}
 	if committed {
-		printPlanForRuntime(out, plan, specPath, flags.runtime, flags.buildEvidence, flags.baselineSkipped, conventionsDisclosure{set: flags.conventions}, flags.inputSources)
+		printPlanForRuntime(out, plan, specPath, flags.runtime, flags.buildEvidence, flags.baselineSkipped, flags.verifyPins, conventionsDisclosure{set: flags.conventions}, flags.inputSources)
 	} else {
 		// confirmPlan already printed the topology; only the destination was
 		// unknown until the answer came back.
@@ -928,10 +935,13 @@ func planAndExecute(ctx context.Context, out io.Writer, coord *coordinator.Coord
 // baselineSkipped is `auto --no-baseline` (#328). A preview writes no
 // state.json, so the plan screen's line is its only record of the skip.
 //
+// pins is the launch's --verify-cmd pin set (#363): a preview takes them too,
+// so it shows what the run it previews would guard.
+//
 // inputSources is the launch's bound keys and their sources (#356): a key the
 // planned graph does not declare is warned about here, before the preview's
 // natural next step binds it again on `run`.
-func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome, baselineSkipped bool, conv *conventions.Set, iv *interview.Result, inputSources map[string]string) error {
+func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome, baselineSkipped bool, pins *verifyPinSet, conv *conventions.Set, iv *interview.Result, inputSources map[string]string) error {
 	planDir := planDirFor(newRunID())
 	specPath, err := savePlan(planDir, plan)
 	if err != nil {
@@ -944,7 +954,7 @@ func notePlanOnlyPreview(out io.Writer, plan coordinator.Plan, runtime runner.Ru
 	if _, err := stageInterview(planDir, iv); err != nil {
 		return err
 	}
-	printPlanForRuntime(out, plan, specPath, runtime, evidence, baselineSkipped, conventionsDisclosure{set: conv, notCarried: true}, inputSources)
+	printPlanForRuntime(out, plan, specPath, runtime, evidence, baselineSkipped, pins, conventionsDisclosure{set: conv, notCarried: true}, inputSources)
 	fmt.Fprintf(out,
 		"plan only: no node was executed. The %s still paid for (%s) —\n"+
 			"unlike `run --dry-run`, this is not free — and its plan is kept at %s, and as YAML at %s.\n"+
@@ -977,7 +987,7 @@ func confirmPlan(out io.Writer, plan coordinator.Plan, runtime runner.Runtime, e
 	// No conventions: `chat` registers no --conventions (ADR 0041 §2.6). No
 	// skipped baseline either: `chat` has no --no-baseline (#328), and no
 	// bound inputs to judge: `chat` has no --input.
-	printPlanForRuntime(out, plan, "", runtime, evidence, false, conventionsDisclosure{}, nil)
+	printPlanForRuntime(out, plan, "", runtime, evidence, false, nil, conventionsDisclosure{}, nil)
 	ok, err := confirm()
 	if err != nil {
 		return false, err
@@ -1226,11 +1236,15 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 		resumeVerifyCmd = injectedVerifyCommand(g)
 	}
 
+	// Guarded by the launch's --verify-cmd pins (#363); a run with none —
+	// every `run` of a hand-written graph — gets the bare ShellVerifier.
+	verifier := flags.verifyPins.guard(verify.NewShellVerifier())
+
 	scheduler := schedule.NewScheduler(nodeRunner, schedule.Options{
 		Concurrency:           flags.concurrency,
 		ContinueOnFail:        flags.continueOnFail,
 		Gate:                  gateControllerFor(flags.autoApprove),
-		Verifier:              verify.NewShellVerifier(),
+		Verifier:              verifier,
 		Worktrees:             worktrees,
 		ToolPolicies:          toolPolicies,
 		Model:                 flags.plannedModel,
@@ -1331,6 +1345,7 @@ func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Gr
 		Conventions:           conventionsRecord(flags.conventions),
 		Interview:             flags.interviewRecord,
 		Baseline:              baselineRecord(flags.baselineSkipped),
+		VerifyPins:            flags.verifyPins.record(),
 	}
 	return runstate.NewSnapshotRecorder(statePath, base), nil
 }
@@ -1439,12 +1454,14 @@ func formatUsage(usage runner.TokenUsage) string {
 // screen assertion does not have to name a runtime and an evidence record it is
 // not about.
 func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
-	printPlanForRuntime(w, plan, specPath, runner.RuntimeClaude, nil, false, conventionsDisclosure{}, nil)
+	printPlanForRuntime(w, plan, specPath, runner.RuntimeClaude, nil, false, nil, conventionsDisclosure{}, nil)
 }
 
 // conv is what the screen says about the operator's `--conventions` (ADR
 // 0041 §2.4); its zero value prints nothing. baselineSkipped is `auto
 // --no-baseline` (#328); false, which every surface but auto passes, prints
+// nothing. pins is the launch's --verify-cmd pin set (#363), listed under the
+// attachments it guards; nil, which every surface but auto passes, prints
 // nothing. inputSources is each bound key's winning source
 // (commonRunFlags.inputSources, #356), judged against the input names the
 // PLANNED graph declares or references — on `auto` no graph exists until the
@@ -1452,7 +1469,7 @@ func printPlan(w io.Writer, plan coordinator.Plan, specPath string) {
 // Only a near miss of one of those names warns: the planner saw every bound
 // input and may simply not need one, so undeclared alone is not a typo signal
 // here. nil prints nothing.
-func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome, baselineSkipped bool, conv conventionsDisclosure, inputSources map[string]string) {
+func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, runtime runner.Runtime, evidence *coordinator.BuildEvidenceOutcome, baselineSkipped bool, pins *verifyPinSet, conv conventionsDisclosure, inputSources map[string]string) {
 	g := plan.Graph
 	if specPath == "" {
 		fmt.Fprintf(w, "Planned graph %q (%d nodes, planning cost %s):\n", g.Name, len(g.Nodes), formatCost(plan.CostUSD, plan.CostUnknown))
@@ -1508,6 +1525,9 @@ func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, ru
 	// adjacent; runtime-neutral, since the guard is in the graph either way.
 	noteExitZeroAdded(w, plan.ExitZeroAdded)
 	noteVerifyAttachments(w, plan.VerifyAttachments)
+	if len(plan.VerifyAttachments) > 0 {
+		noteVerifyPins(w, pins)
+	}
 	noteMissingBuildEvidence(w, evidence)
 	noteSkippedBaseline(w, baselineSkipped)
 	noteReplan(w, plan.Repaired)
@@ -1873,9 +1893,9 @@ func noteRejectedPlan(w io.Writer, dir string, err error) error {
 // Silence here means no candidate matched and nothing changed.
 //
 // WHAT THIS PARAGRAPH SAID UNTIL ADR 0022, and why the reversal is not a
-// softening. As shipped in v0.6.0 it told the user that a mapped node "loads
-// your settings" and that its "declared scope is enforced only as far as YOUR
-// settings enforce it". Both were true and both were measured. The
+// softening. As shipped in v0.6.0 it told the user that a mapped node loaded
+// their settings and that the node's declared scope held only as far as their
+// own settings held it. Both were true and both were measured. The
 // code under them changed: the definition now arrives from a staged
 // --plugin-dir, so layer 1 stays "" and the same ceiling arm that breached 2 of
 // 2 under the old argv was denied 3 of 3 under this one
@@ -2016,9 +2036,11 @@ func noteSkillActivation(w io.Writer, scan *coordinator.SkillScan, activation *c
 				"    The tokens above are charged either way.\n"+
 				"  ceiling: UNCHANGED — for every planned node in this run, excluded ones included since\n"+
 				"    2026-08-12. Their settings, CLAUDE.md, hooks and MCP servers do not load (ADR 0004\n"+
-				"    layer 1 stays \"\"); a declared scope like Bash(git *) is enforced. The only change\n"+
-				"    activation makes is that the Skill tool exists for the node(s) named above, which is\n"+
-				"    the one half an EXCLUDED node still differs in — see its lines above.\n"+
+				"    layer 1 stays \"\"). A call matching the node's allowed-tool rules runs; under the\n"+
+				"    default permission mode (auto) a call outside them is not denied outright but goes\n"+
+				"    to the CLI's own classifier, which approves or denies it. The only change activation\n"+
+				"    makes is that the Skill tool exists for the node(s) named above, which is the one\n"+
+				"    half an EXCLUDED node still differs in — see its lines above.\n"+
 				"  The staged corpus is re-materialized and verified before every node spawn, so a node\n"+
 				"    cannot leave a skill behind for a later one. Your own skill files are read once, at\n"+
 				"    staging: editing them mid-run neither changes this run nor stops it.\n"+
@@ -2100,10 +2122,20 @@ func noteExclusionCost(w io.Writer, excluded []string) {
 // hand-written graph, and that is worth one line up front rather than a
 // puzzling failure ten minutes in.
 //
+// What the paragraph claims about the declared scope is deliberately no more
+// than layer 2 delivers since ADR 0034. It used to call a declared scope
+// enforced (ADR 0004's E1), which was true under `dontAsk` and is not under
+// `auto`: a call matching no allow
+// rule is no longer denied outright but put to the CLI's own classifier, which
+// approves or denies it (SECURITY.md). So it now says only that none of your
+// standing grants apply, that a call matching the node's own rules runs, and
+// that an unmatched one meets that classifier under the default mode — a node
+// may declare another permission_mode, hence "default".
+//
 // mapped no longer narrows the CEILING half, and that is ADR 0022's whole
-// effect on this function. This paragraph makes two claims — "a declared scope
-// like Bash(git *) is enforced rather than merely requested" (ADR 0004's E1,
-// this project's headline claim) and "your CLAUDE.md, hooks and MCP servers are
+// effect on this function. This paragraph makes two claims — "none of your
+// standing permission grants apply" (layer 1, so the node's own rules are what
+// a call is matched against) and "your CLAUDE.md, hooks and MCP servers are
 // unavailable to them" (a cost). From 2026-08-12 both hold for EVERY planned
 // node, mapped included, because a mapped node no longer loads any settings:
 // its agent definition comes from a directory oh-my-graph staged, not from
@@ -2123,9 +2155,11 @@ func noteExclusionCost(w io.Writer, excluded []string) {
 // the policies, so every sentence below stays true of every run that reads it.
 func noteCeiling(w io.Writer, mapped bool) {
 	fmt.Fprint(w,
-		"  Planned nodes run isolated: none of your user/project/local settings load, so a declared\n"+
-			"  scope like Bash(git *) is enforced rather than merely requested — and your CLAUDE.md,\n"+
-			"  hooks and MCP servers are unavailable to them. See SECURITY.md for what this does not cover.\n",
+		"  Planned nodes run isolated: none of your user/project/local settings load, so none of your\n"+
+			"  standing permission grants apply — and your CLAUDE.md, hooks and MCP servers are unavailable\n"+
+			"  to them. A call matching a node's allowed-tool rules runs; under the default permission mode\n"+
+			"  (auto) a call outside them is not denied outright but goes to the CLI's own classifier,\n"+
+			"  which approves or denies it. See SECURITY.md for what this does not cover.\n",
 	)
 	if mapped {
 		fmt.Fprint(w,
