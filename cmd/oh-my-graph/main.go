@@ -1870,9 +1870,9 @@ func noteRejectedPlan(w io.Writer, dir string, err error) error {
 // Silence here means no candidate matched and nothing changed.
 //
 // WHAT THIS PARAGRAPH SAID UNTIL ADR 0022, and why the reversal is not a
-// softening. As shipped in v0.6.0 it told the user that a mapped node "loads
-// your settings" and that its "declared scope is enforced only as far as YOUR
-// settings enforce it". Both were true and both were measured. The
+// softening. As shipped in v0.6.0 it told the user that a mapped node loaded
+// their settings and that the node's declared scope held only as far as their
+// own settings held it. Both were true and both were measured. The
 // code under them changed: the definition now arrives from a staged
 // --plugin-dir, so layer 1 stays "" and the same ceiling arm that breached 2 of
 // 2 under the old argv was denied 3 of 3 under this one
