@@ -312,7 +312,9 @@ leg rather than taking new ones. It is optional: absent on every run without
 a snapshot is byte for byte what it was before. It is an **additive optional
 block and the schema stays 3**: an older binary ignores the key and resumes the
 run as it resumes any of its own, pinning nothing — it cannot misread the
-record, only not enforce it. No event carries it; the feed schema is unchanged.
+record, only not enforce it — and drops the key if it rewrites the snapshot, so
+a later leg of this build has no pins to check either. No event carries it; the
+feed schema is unchanged.
 
 `conventions` records the operator's `auto --conventions` files (ADR 0041):
 `staged_sha256`, the SHA-256 of the run directory's `conventions.md` — the

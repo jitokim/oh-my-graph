@@ -529,6 +529,8 @@ type Baseline struct {
 // Additive and optional, so Schema stays 3. An older binary ignores the key
 // and resumes the run exactly as it runs any of its own — it pins nothing on
 // any leg — so it cannot misread what the record means, only not enforce it.
+// If it rewrites the snapshot it drops the key, and a later leg of a pinning
+// binary then has nothing to check.
 type VerifyPin struct {
 	// Word is the shell word as written on the command line, quotes removed.
 	Word string `json:"word"`
