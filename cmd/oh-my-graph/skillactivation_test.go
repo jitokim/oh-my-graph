@@ -366,3 +366,47 @@ func TestNodeToolPolicy_PersistsThePluginDirs(t *testing.T) {
 		t.Errorf("PluginDirs = %v for a pre-ADR-0017 snapshot, want none", old.PluginDirs)
 	}
 }
+
+// The skill-activation block of the launch screen restates the ceiling, and it
+// used to call a declared scope like Bash(git *) enforced — the same claim
+// noteCeiling dropped, and just as false under ADR 0034's `auto` mode: a call
+// outside the node's allow rules goes to the CLI's own classifier, which may
+// approve it (#372). Driven through runAutoWith with a staged skill, so the
+// assertion reads the screen a user actually gets.
+func TestRunAuto_Issue372_SkillActivationLaunchClaimsNoEnforcedScope(t *testing.T) {
+	isolateRunHome(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeFileTree(t, filepath.Join(home, ".claude", "skills", "architecture-design", "SKILL.md"),
+		"---\nname: architecture-design\ndescription: designs systems\n---\n\nthe design procedure\n")
+
+	fake := newCycleFake(map[string]runner.NodeOutcome{
+		"plan-1": {ExitCode: 0, Result: cycleSpec, TotalCostUSD: 0.01},
+		"work-1": {ExitCode: 0, Result: "done", SessionID: "s-work"},
+	})
+	var err error
+	got := captureStdout(t, func() {
+		err = runAutoWith([]string{"design the thing", "--no-agent-mapping"},
+			fake, browser.NewFakeOpener(), os.Stdout)
+	})
+	if err != nil {
+		t.Fatalf("auto run: %v", err)
+	}
+
+	// Without the block on screen every absence below would hold vacuously.
+	for _, want := range []string{"skill activation: ENABLED", "ceiling: UNCHANGED"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("launch output is missing %q, so the activation block never printed:\n%s", want, got)
+		}
+	}
+	block := got[strings.Index(got, "ceiling: UNCHANGED"):]
+	block = block[:strings.Index(block, "Turn it off with --no-skill-activation")]
+	for _, want := range []string{"allowed-tool rules runs", "goes\n    to the CLI's own classifier", "approves or denies it"} {
+		if !strings.Contains(block, want) {
+			t.Errorf("activation block does not say %q:\n%s", want, block)
+		}
+	}
+	if strings.Contains(strings.ToLower(got), "is enforced") {
+		t.Errorf("launch output claims a declared scope is enforced, which `auto` mode makes false:\n%s", got)
+	}
+}

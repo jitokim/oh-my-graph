@@ -1890,9 +1890,9 @@ func noteRejectedPlan(w io.Writer, dir string, err error) error {
 // Silence here means no candidate matched and nothing changed.
 //
 // WHAT THIS PARAGRAPH SAID UNTIL ADR 0022, and why the reversal is not a
-// softening. As shipped in v0.6.0 it told the user that a mapped node "loads
-// your settings" and that its "declared scope is enforced only as far as YOUR
-// settings enforce it". Both were true and both were measured. The
+// softening. As shipped in v0.6.0 it told the user that a mapped node loaded
+// their settings and that the node's declared scope held only as far as their
+// own settings held it. Both were true and both were measured. The
 // code under them changed: the definition now arrives from a staged
 // --plugin-dir, so layer 1 stays "" and the same ceiling arm that breached 2 of
 // 2 under the old argv was denied 3 of 3 under this one
@@ -2033,9 +2033,11 @@ func noteSkillActivation(w io.Writer, scan *coordinator.SkillScan, activation *c
 				"    The tokens above are charged either way.\n"+
 				"  ceiling: UNCHANGED — for every planned node in this run, excluded ones included since\n"+
 				"    2026-08-12. Their settings, CLAUDE.md, hooks and MCP servers do not load (ADR 0004\n"+
-				"    layer 1 stays \"\"); a declared scope like Bash(git *) is enforced. The only change\n"+
-				"    activation makes is that the Skill tool exists for the node(s) named above, which is\n"+
-				"    the one half an EXCLUDED node still differs in — see its lines above.\n"+
+				"    layer 1 stays \"\"). A call matching the node's allowed-tool rules runs; under the\n"+
+				"    default permission mode (auto) a call outside them is not denied outright but goes\n"+
+				"    to the CLI's own classifier, which approves or denies it. The only change activation\n"+
+				"    makes is that the Skill tool exists for the node(s) named above, which is the one\n"+
+				"    half an EXCLUDED node still differs in — see its lines above.\n"+
 				"  The staged corpus is re-materialized and verified before every node spawn, so a node\n"+
 				"    cannot leave a skill behind for a later one. Your own skill files are read once, at\n"+
 				"    staging: editing them mid-run neither changes this run nor stops it.\n"+
@@ -2117,10 +2119,20 @@ func noteExclusionCost(w io.Writer, excluded []string) {
 // hand-written graph, and that is worth one line up front rather than a
 // puzzling failure ten minutes in.
 //
+// What the paragraph claims about the declared scope is deliberately no more
+// than layer 2 delivers since ADR 0034. It used to call a declared scope
+// enforced (ADR 0004's E1), which was true under `dontAsk` and is not under
+// `auto`: a call matching no allow
+// rule is no longer denied outright but put to the CLI's own classifier, which
+// approves or denies it (SECURITY.md). So it now says only that none of your
+// standing grants apply, that a call matching the node's own rules runs, and
+// that an unmatched one meets that classifier under the default mode — a node
+// may declare another permission_mode, hence "default".
+//
 // mapped no longer narrows the CEILING half, and that is ADR 0022's whole
-// effect on this function. This paragraph makes two claims — "a declared scope
-// like Bash(git *) is enforced rather than merely requested" (ADR 0004's E1,
-// this project's headline claim) and "your CLAUDE.md, hooks and MCP servers are
+// effect on this function. This paragraph makes two claims — "none of your
+// standing permission grants apply" (layer 1, so the node's own rules are what
+// a call is matched against) and "your CLAUDE.md, hooks and MCP servers are
 // unavailable to them" (a cost). From 2026-08-12 both hold for EVERY planned
 // node, mapped included, because a mapped node no longer loads any settings:
 // its agent definition comes from a directory oh-my-graph staged, not from
@@ -2140,9 +2152,11 @@ func noteExclusionCost(w io.Writer, excluded []string) {
 // the policies, so every sentence below stays true of every run that reads it.
 func noteCeiling(w io.Writer, mapped bool) {
 	fmt.Fprint(w,
-		"  Planned nodes run isolated: none of your user/project/local settings load, so a declared\n"+
-			"  scope like Bash(git *) is enforced rather than merely requested — and your CLAUDE.md,\n"+
-			"  hooks and MCP servers are unavailable to them. See SECURITY.md for what this does not cover.\n",
+		"  Planned nodes run isolated: none of your user/project/local settings load, so none of your\n"+
+			"  standing permission grants apply — and your CLAUDE.md, hooks and MCP servers are unavailable\n"+
+			"  to them. A call matching a node's allowed-tool rules runs; under the default permission mode\n"+
+			"  (auto) a call outside them is not denied outright but goes to the CLI's own classifier,\n"+
+			"  which approves or denies it. See SECURITY.md for what this does not cover.\n",
 	)
 	if mapped {
 		fmt.Fprint(w,

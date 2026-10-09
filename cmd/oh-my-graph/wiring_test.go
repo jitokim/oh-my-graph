@@ -351,18 +351,26 @@ func captureStdout(t *testing.T, fn func()) string {
 // summary in BOTH directions, because it has now been wrong in one of them.
 // It used to disclaim that a declared Bash scope was not enforced; measurement
 // (DESIGN.md, E1) made that disclaimer false, and an out-of-date warning is
-// how users learn to ignore warnings. The replacement has to keep stating the
-// cost of the thing that made it true — planned nodes no longer see the user's
-// CLAUDE.md, hooks or MCP servers.
+// how users learn to ignore warnings. Then it overclaimed the other way, that
+// the scope was "enforced", which ADR 0034's `auto` mode made false: a call
+// outside the node's allow rules goes to the CLI's classifier, which may
+// approve it (#372). The text has to say that, and keep stating the cost of
+// isolation — planned nodes do not see the user's CLAUDE.md, hooks or MCP
+// servers.
 func TestNoteCeiling_StatesIsolationAndItsCost(t *testing.T) {
 	var out strings.Builder
 	noteCeiling(&out, false)
 	got := out.String()
 
-	for _, want := range []string{"settings", "enforced", "hooks", "MCP"} {
+	for _, want := range []string{"settings", "goes to the CLI's own classifier", "approves or denies it", "hooks", "MCP"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("pre-run note does not mention %q, so a user cannot know what running this plan does:\n%s", want, got)
 		}
+	}
+	// Under `auto` an out-of-scope call can be approved by the classifier, so
+	// the declared scope is not enforced and the note must not say it is.
+	if strings.Contains(got, "enforced") {
+		t.Errorf("pre-run note claims the declared scope is enforced, which `auto` mode makes false:\n%s", got)
 	}
 	// The retired claim must not come back: it is measurably false for planned
 	// nodes now, and re-asserting it would understate the ceiling rather than
