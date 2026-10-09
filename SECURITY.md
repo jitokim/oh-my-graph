@@ -162,23 +162,33 @@ executing repo-authored code (`gradlew`, `Makefile`, `npm`) the way your own
 terminal does. Stated, not closed: the difference from a repo-file-derived
 grant is that you chose it.
 
-What you chose is the command line *and the files it names*, so the work under
-test may not relax the evidence by editing them ([#363](https://github.com/jitokim/oh-my-graph/issues/363)).
+What you chose is the command line *and the script it executes*, so the work
+under test may not relax the evidence by editing it ([#363](https://github.com/jitokim/oh-my-graph/issues/363)).
 A planned node holding the stock Edit grant could otherwise rewrite
 `./check.sh` to `exit 0` and earn a verified PASS from a script that no longer
 checks anything. Once per invocation, before the starting-tree baseline, `auto`
-pins every word of the `--verify-cmd` line that resolves (against the
-invocation directory, every symlink followed) to an existing readable regular
-file: the word, its absolute path, and the SHA-256 of its content. Immediately
-before and immediately after every engine-run verification of that command —
-the baseline, every cycle's sinks, and every resumed leg's sinks, which check
-the pins `state.json` recorded rather than taking new ones — each pinned file is
-resolved and hashed again. A file whose content changed, whose word now resolves
-elsewhere, or which is gone or unreadable is a verify fault naming its absolute
-path, never a PASS: the command's own exit status cannot override it. The check
-refuses a changed file; it never runs a saved original in its place. What is
-not pinned (a file the script sources, the `Makefile` behind `make verify`, a
-program found on `PATH`) is in [LIMITATIONS](docs/LIMITATIONS.md).
+pins, for each command of the `--verify-cmd` line, the one file it executes:
+the first argument of an interpreter (`sh`, `bash`, `python3`, `node`, ...)
+that is an existing readable regular file, or a command word written as a path
+(`./check.sh`), resolved against the invocation directory, every symlink
+followed — the word, its absolute path, and the SHA-256 of its content. Files
+the command reads or writes are not pinned, so `sh check.sh | tee log.txt`
+does not fault on its own log ([#367](https://github.com/jitokim/oh-my-graph/issues/367)).
+The launch screen lists the pinned paths, or warns `verify-cmd has no pinned
+script`. Immediately before and immediately after every engine-run
+verification of that command — the baseline, every cycle's sinks, and every
+resumed leg's sinks, which check the pins `state.json` recorded rather than
+taking new ones — each pinned file is resolved and hashed again. A file whose
+content changed, whose word now resolves elsewhere, or which is gone or
+unreadable is a verify fault naming its absolute path, never a PASS: the
+command's own exit status cannot override it. There is no re-pin; to accept a
+change, start a new run. The check refuses a changed file; it never runs a
+saved original in its place. What is not pinned (an inline `-c` script, a file
+the script sources, reads or writes, the `Makefile` behind `make verify`, the
+command behind a wrapper other than `env`, `exec`, `command`, `nice` and
+`time`, a program found on `PATH`, a path that only resolves after a `cd`
+inside the command, an edit made and reverted entirely during a verification)
+is in [LIMITATIONS](docs/LIMITATIONS.md).
 
 ### Codex planned-node isolation
 
