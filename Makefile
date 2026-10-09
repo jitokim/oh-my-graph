@@ -5,6 +5,9 @@
 
 BINARY := oh-my-graph
 PKG    := ./cmd/oh-my-graph
+# SMOKE_DIR is the PARENT directory. Each smoke run gets its own fresh, empty
+# directory inside it (mktemp -d), because a shared directory let a later smoke
+# pass on a haiku.txt an earlier smoke wrote. Nothing in it is ever deleted.
 SMOKE_DIR ?= /tmp/omg-smoke
 
 .PHONY: build test vet fmt fmt-check smoke smoke-codex clean
@@ -30,13 +33,23 @@ fmt-check: ## Fail if any Go source is not gofmt-clean (CI gate).
 # MANUAL ONLY — spawns a real claude on your subscription (a few cents).
 # Never add this to CI; all engine logic is covered by the FakeRunner tests.
 smoke: build ## Manually run the haiku smoke graph against real claude.
-	mkdir -p $(SMOKE_DIR)
-	./bin/$(BINARY) run graphs/haiku-smoke.yaml --input dir=$(SMOKE_DIR)
+	@mkdir -p "$(SMOKE_DIR)"
+	@dir=$$(mktemp -d "$(SMOKE_DIR)/claude.XXXXXX") || exit 1; \
+	echo "smoke: fresh directory $$dir"; \
+	./bin/$(BINARY) run graphs/haiku-smoke.yaml --input "dir=$$dir"; \
+	status=$$?; \
+	echo "smoke: haiku.txt is in $$dir"; \
+	exit $$status
 
 # MANUAL ONLY — spawns real Codex using the saved login.
 smoke-codex: build ## Manually run the haiku smoke graph against real Codex.
-	mkdir -p $(SMOKE_DIR)
-	./bin/$(BINARY) --runtime codex run graphs/haiku-smoke.yaml --input dir=$(SMOKE_DIR)
+	@mkdir -p "$(SMOKE_DIR)"
+	@dir=$$(mktemp -d "$(SMOKE_DIR)/codex.XXXXXX") || exit 1; \
+	echo "smoke-codex: fresh directory $$dir"; \
+	./bin/$(BINARY) --runtime codex run graphs/haiku-smoke.yaml --input "dir=$$dir"; \
+	status=$$?; \
+	echo "smoke-codex: haiku.txt is in $$dir"; \
+	exit $$status
 
 clean: ## Remove build artifacts.
 	rm -rf bin
