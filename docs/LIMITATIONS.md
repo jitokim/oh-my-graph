@@ -113,10 +113,16 @@ has no open issue behind it.
   (`sh`, `bash`, `zsh`, `dash`, `python`, `python3`, `python3.N`, `node`,
   `ruby`, `perl`), or a command written as a path (`./verify.sh`), past any
   leading `env`, `exec`, `command`, `nice`, `time` and `NAME=value` words.
-  Nothing else. Not an inline `sh -c '...'` script; not a file the script
+  Nothing else. Not an inline `sh -c '...'` script, nor any runner or inline
+  mode: `python -m ...` (`-m` before the first file), `node --test`, `-e`,
+  `--eval`, `-p` or `--print`, and an `sh` option cluster holding `c` (`-ec`,
+  `-xc`) pin nothing for that command; not a script fed on stdin (`sh < v.sh`
+  pins nothing); not a file the script
   sources, reads or writes (`| tee log.txt`, `--junitxml report.xml`); not the
   `Makefile` behind `make verify` or the test files `go test ./...` runs; not
-  what runs behind a wrapper missing from that list; and not a program found on
+  what runs behind a wrapper missing from that list, or behind a listed wrapper
+  given options (`nice -n 10`, `env -i`, `time -p` end the wrapper skip, so
+  that command pins nothing); and not a program found on
   `PATH` — there is no `PATH` lookup, so `make`, `go` and `npm` pin nothing.
   Paths resolve from the launch directory only, and a `cd` inside the command
   is not tracked: `cd sub && sh v.sh` looks for `v.sh` in the launch
