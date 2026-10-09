@@ -513,6 +513,31 @@ type Baseline struct {
 	DeclaredBy string `json:"declared_by"`
 }
 
+// VerifyPin is one file an `auto --verify-cmd` command line names, pinned
+// once per invocation, before the starting-tree baseline (#363). A
+// verification whose pinned file has since changed — different content, a
+// re-pointed symlink, a file gone or unreadable — is a fault naming the file,
+// never a PASS. It mirrors internal/verify.PinnedFile field for field; it is
+// declared here rather than imported for the reason Verdict is: the on-disk
+// vocabulary belongs to the persistence format.
+//
+// The pins are static facts of the invocation: every goal-loop cycle carries
+// the same ones, so an edit a cycle made can never become a later cycle's
+// pin, and `resume` re-checks the recorded pins rather than taking new ones,
+// so a file changed while the run was stopped faults on the resumed leg.
+//
+// Additive and optional, so Schema stays 3. An older binary ignores the key
+// and resumes the run exactly as it runs any of its own — it pins nothing on
+// any leg — so it cannot misread what the record means, only not enforce it.
+type VerifyPin struct {
+	// Word is the shell word as written on the command line, quotes removed.
+	Word string `json:"word"`
+	// Path is the absolute path Word resolved to, every symlink followed.
+	Path string `json:"path"`
+	// SHA256 is the hex SHA-256 of the file's content at launch.
+	SHA256 string `json:"sha256"`
+}
+
 // GateState records the run's progress through its gates: what has been decided
 // and where, if anywhere, the run is currently parked.
 type GateState struct {
@@ -686,6 +711,13 @@ type Snapshot struct {
 	// across resume. nil — and absent — on every run that did not skip it, so
 	// such a snapshot is byte for byte what it was before. See Baseline.
 	Baseline *Baseline `json:"baseline,omitempty"`
+	// VerifyPins are the files an `auto --verify-cmd` command line names, as
+	// they were when the invocation launched (#363). Written on every cycle of
+	// the goal loop and carried across resume, which re-checks them around
+	// each verification of the resumed leg. nil — and absent — on every run
+	// without --verify-cmd, so such a snapshot is byte for byte what it was
+	// before. See VerifyPin.
+	VerifyPins []VerifyPin `json:"verify_pins,omitempty"`
 
 	// Nodes is the per-node completion record, keyed by node id. Every node that
 	// has reached a terminal verdict on any leg so far appears here; CompletedNodes
