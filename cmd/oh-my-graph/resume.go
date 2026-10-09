@@ -689,7 +689,11 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// baseline and registers no --no-baseline, so the first leg's choice
 		// is the only one there is.
 		Baseline: snap.Baseline,
-		Nodes:    records,
+		// And the --verify-cmd pins (#363), unchanged: this leg checks them
+		// rather than taking new ones, and dropping them here would let the
+		// first settling node erase what the next resume must check.
+		VerifyPins: snap.VerifyPins,
+		Nodes:      records,
 		// PausedAt starts empty: the run is actively continuing, not paused,
 		// until (if at all) this leg pauses again at a later gate.
 		Gate: runstate.GateState{Decisions: decisions},
@@ -732,6 +736,10 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		delete(completed, id)
 		delete(settled, id)
 	}
+	// The first leg's --verify-cmd pins, from state.json and never re-taken
+	// (#363): a pinned file changed while the run was stopped faults here
+	// exactly as one changed mid-run would. No pins, no wrapper.
+	verifier := resumedVerifyPins(verifyCmd.Command, snap.VerifyPins).guard(verify.NewShellVerifier())
 	scheduler := schedule.NewScheduler(nodeRunner, schedule.Options{
 		Concurrency:    flags.concurrency,
 		ContinueOnFail: snap.ContinueOnFail,
@@ -744,7 +752,7 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// (withLaunchApprovals, #285): a launch-time approval holds for the
 		// whole run, not for the first leg only.
 		Gate:         gate.NewRecordedController(withLaunchApprovals(toGateDecisions(decisions), snap.AutoApprove)),
-		Verifier:     verify.NewShellVerifier(),
+		Verifier:     verifier,
 		Worktrees:    worktrees,
 		ToolPolicies: policies,
 		Model:        plannedModel,

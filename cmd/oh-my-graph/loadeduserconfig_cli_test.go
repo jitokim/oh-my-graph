@@ -446,7 +446,7 @@ func TestPrintPlanForRuntime_TheSlotSaysExactlyOneOfTheTwoSentences(t *testing.T
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var out strings.Builder
-			printPlanForRuntime(&out, planPolicies(t, tc.loaded), "", tc.runtime, nil, false, conventionsDisclosure{}, nil)
+			printPlanForRuntime(&out, planPolicies(t, tc.loaded), "", tc.runtime, nil, false, nil, conventionsDisclosure{}, nil)
 			got := out.String()
 
 			if !strings.Contains(got, tc.want) {

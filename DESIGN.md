@@ -2787,6 +2787,57 @@ starting tree was not checked against --verify-cmd`, the only record a
 `--plan-only` preview keeps. A run without the flag writes no key and prints no
 line; the schema stays 3.
 
+**A `--verify-cmd` is evidence only while the script it executes is the one
+the user meant (#363).** A planned node with the stock Edit grant can rewrite
+`./check.sh`, so `auto` pins the command line once per invocation
+(`pinVerifyCommand`, `cmd/oh-my-graph/verifypins.go`), right after
+`flags.verifyCommand()` and before the build-evidence answer and the baseline —
+whether or not `--no-baseline` skips it. `verify.PinCommand` splits the line
+into command segments on `&&`, `||`, `;` and `|` (quotes removed, the target
+of a redirection skipped, nothing expanded) and pins, per segment, the one
+file it executes (#367): past leading `NAME=value` words and the wrappers
+`env`, `exec`, `command`, `nice` and `time` (by basename), an interpreter
+command word (`sh`, `bash`, `zsh`, `dash`, `python`, `python3`, `python3.N`,
+`node`, `ruby`, `perl`) pins nothing when the segment holds `-c` or a runner
+or inline mode (a shell's short-option cluster holding `c`, `-ec`; `node`'s
+`--test`, `-e`, `--eval`, `-p`, `--print`; a python's `-m` before its first
+file), else its first following word that is an existing readable regular file and nothing
+after it; any other command word is pinned only if it contains a `/`. Each
+resolves against the process cwd, every symlink followed: `Word`, absolute
+`Path`, SHA-256 `Digest`. The interpreter binary is never pinned, there is no
+`PATH` lookup, a `cd` inside the command is not tracked, and an argument the
+command reads or writes (`| tee log.txt`, `--junitxml log.txt`) stays
+unpinned, so the command cannot fault on its own output. The plan screen lists
+each pinned `Path` under the build-evidence block, or warns `verify-cmd has no
+pinned script` when the set is empty (`noteVerifyPins`). The check is a
+decorator around the engine's `verify.Verifier`, `verify.PinningVerifier`: for every Request — the
+verifier it wraps runs nothing but the pinned command, and the scheduler's `{{ }}`
+interpolation means a Request's command need not equal the pinned string — it
+re-resolves and re-hashes every pin, against `Request.Cwd` or
+the process cwd, immediately before the inner verification (a fault runs
+nothing) and immediately after it (a fault discards the inner result, exit 0
+included). A changed digest, a re-pointed path, or a file gone or unreadable is
+a `*verify.PinChangedError` — `verify command "CMD" cannot be evidence: <what
+changed>; changed since launch: pinned file <abs path>`, the path last so the
+scheduler's tail-keeping detail cap keeps it. A change the post-check finds
+(the pre-check of the same call passed) says `changed while the command ran —
+is this a file the command itself writes? pinned file <abs path>` instead
+(`DuringVerify`, #367). One set guards the baseline
+(`runBaseline` gets the wrapped verifier, so a pin fault there is a red
+baseline, exit 5) and every cycle's sinks (`executeGraph`); nothing re-pins, so
+an edit cycle 1 made can never become cycle 2's pin. The set is recorded as
+`state.json`'s `verify_pins` (`runstate.VerifyPin`: `word`, `path`, `sha256`;
+optional, schema 3), and `resume` rebuilds the guard from that record
+(`resumedVerifyPins`) instead of taking new pins, so a file changed while the
+run was stopped faults on the resumed leg. A nil or empty set — `run`, `chat`, an
+auto run without `--verify-cmd` or whose line executes no pinnable file —
+leaves the bare `ShellVerifier` in place. `internal/schedule` is unchanged: a `Verifier` error
+was already a verify fault (`verifyFault`), never a judged result, so the
+decorator needed no new path through the scheduler. There is no snapshot copy
+of a pinned file — the check can refuse a changed file, never run the original
+in its place — and `pin.go` imports no `os/exec`. What it does not cover is in
+LIMITATIONS.md.
+
 **The planner may cite a shape the operator already keeps (ADR 0038, #338).**
 Reuse is ON by default, on `auto` and on `chat`'s planning path, and
 `--no-reuse` (both surfaces, mapped onto `coordinator.WithoutReuse`) turns it
@@ -3862,11 +3913,11 @@ graphs (PR #6). Each ships as its own PR — see "Implementation sequencing".
 
 ## Repo layout
 ```
-cmd/oh-my-graph/{main,flags,argslot,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,verifycmd,runleg,runlock,interview,design,version}.go + _test  CLI: parse flags, load, inject CLIRunner+ShellVerifier, init/run/auto/design/resume/runs/show/watch/serve/chat, the `auto --interview` stdin seam, TTY refusal, staging and record (interview.go) and `design`'s interview → plan → YAML file → lint, never a run (design.go — both ADR 0044), the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), the `--verify-cmd` pre-flight, shared by `auto` and `resume`, its two disclosures and the build-evidence gate one directory scan feeds (verifycmd.go — ADR 0016, ADR 0030), print ledger
+cmd/oh-my-graph/{main,flags,argslot,init,resume,gateresume,runs,show,watch,serve,chat,goal,lint,dryrun,liveview,verifycmd,verifypins,runleg,runlock,interview,design,version}.go + _test  CLI: parse flags, load, inject CLIRunner+ShellVerifier, init/run/auto/design/resume/runs/show/watch/serve/chat, the `auto --interview` stdin seam, TTY refusal, staging and record (interview.go) and `design`'s interview → plan → YAML file → lint, never a run (design.go — both ADR 0044), the `auto --max-cycles` goal loop (goal.go — ADR 0011) and the GateResumer serve's gate routes call back through (gateresume.go — ADR 0014), the `--verify-cmd` pre-flight, shared by `auto` and `resume`, its two disclosures and the build-evidence gate one directory scan feeds (verifycmd.go — ADR 0016, ADR 0030), the launch pins of the script it executes and their rebuild on resume (verifypins.go — #363), print ledger
 internal/graph/{graph,validate,feedback,feedback_reach,fragment}.go + _test + testdata/{pre-migration,golden}/  Graph/Node value objects, YAML, DAG validation, ReadyGiven, feedback edges + the advisory sweep for an arc that misses a fan-in producer (feedback_reach.go — advisory on purpose; ADR 0010's alternatives record why the escalation is neither sound nor complete), and the load-time fragment resolver (LoadFile/LintLoadFile, one read per path — ADR 0013)
 internal/schedule/{scheduler,errors,feedback,retryfeedback}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors + the bounded runtime re-run of a feedback edge (ADR 0010) + the fenced, one-deep quote of the attempt a retry repeats (retryfeedback.go — ADR 0020)
 internal/runner/{runner,runtime,cli,claude_protocol,codex_protocol,preflight,sessionlimit,fake}.go + build-tagged procgroup_{unix,windows}.go + _test  interface + ToolPolicy + CLIRunner(ENV SCRUB) + the one runtime selection (runtime.go — ADR 0025) + the two protocols beneath it, each owning binary/argv/session/output (claude_protocol.go mints the session id before spawn, codex_protocol.go learns its thread id from thread.started) + the per-runtime graph preflight (preflight.go) + the subscription session-limit recognizer (sessionlimit.go — ADR 0009, one pattern per limit sentence: two for Claude, one for Codex, asked through cliProtocol.isLimitCause) + FakeRunner
-internal/verify/{verify,shell,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the four exec seams (ADR 0002)
+internal/verify/{verify,shell,pin,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the four exec seams (ADR 0002); PinningVerifier, the `--verify-cmd` file pins (pin.go — #363)
 internal/worktree/{worktree,git,fake}.go + _test  worktree Provider seam — GitManager is the third exec seam (ADR 0005): per-run managed checkouts + work-preserving cleanup
 internal/browser/{browser,exec,fake}.go + build-tagged argv_{darwin,unix,windows}.go + _test  browser Opener seam — ExecOpener is the fourth exec seam (ADR 0006): default-browser launch, wired behind run/auto's TTY gate
 internal/invariants/exec_seam_test.go          test-only: asserts only the four exec seams' files import os/exec — 8 files, since a seam's platform-specific procgroup files belong to it (a ninth importer fails CI — ADR 0002/0005/0006). A separate, shorter list names the 4 spawn CALL SITES (one per seam, procgroup files excluded — they mutate an already-built *exec.Cmd) and asserts each scrubs its child env through internal/childenv
