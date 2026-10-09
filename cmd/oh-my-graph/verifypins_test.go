@@ -590,6 +590,35 @@ func TestRunAuto_UnpinnableCommandWarnsAndPasses_363(t *testing.T) {
 	wantSinkPass(t, snap.Nodes["work"])
 }
 
+// (m) A goal whose work is to edit the data file the command reads — here
+// `grep -q done status.txt`, with grep found on PATH — pins nothing, so the
+// first verification after the node wrote status.txt passes rather than
+// faulting on the very edit the goal asked for (#367).
+func TestRunAuto_GoalEditingTheDataFileTheCommandReadsPasses_367(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the evidence command here needs grep")
+	}
+	isolateRunHome(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	status := filepath.Join(dir, "status.txt")
+	writeFile(t, status, "running\n")
+	command := "grep -q done status.txt"
+	fake := oneCycle()
+	onNodeCall(fake, "work-1", func() { writeFile(t, status, "done\n") })
+
+	out, err := runBaselineAuto(t, fake, greenBaselineFor(command), osStdin(), "mark the status done", "--verify-cmd", command)
+
+	if err != nil {
+		t.Fatalf("a goal that edits the file its verify command reads must pass: %v\n%s", err, out)
+	}
+	snap := loadSnapshot(t, soleRunID(t))
+	if snap.VerifyPins != nil {
+		t.Errorf("verify_pins = %+v, want none — status.txt is data, not the executed script", snap.VerifyPins)
+	}
+	wantSinkPass(t, snap.Nodes["work"])
+}
+
 // A surface with no pin set — `run`, `chat`, a resumed leg — prints neither
 // a pin nor the warning (#363).
 func TestNoteVerifyPins_NilSetPrintsNothing_363(t *testing.T) {
