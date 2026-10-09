@@ -40,7 +40,10 @@ type PinnedFile struct {
 //   - Leading NAME=value words and the wrappers env, exec, command, nice and
 //     time (by basename, so /usr/bin/env too) are skipped to the command word.
 //   - If the command word's basename is an interpreter (sh, bash, python3.12,
-//     node, ...), a segment holding -c pins nothing (an inline script);
+//     node, ...), a segment holding -c pins nothing (an inline script), nor
+//     does one holding a shell's short-option cluster with a c in it (-ec) or
+//     node's --test, -e, --eval, -p or --print, nor a python's -m before its
+//     first file (a runner whose file arguments are tests a goal edits);
 //     otherwise its first following word that resolves to a file is pinned and
 //     nothing after it is (those are the script's data files). The interpreter
 //     binary itself is never pinned.
@@ -70,14 +73,24 @@ func PinCommand(command, dir string) []PinnedFile {
 // commandWrappers run the word after them as the command (#367).
 var commandWrappers = map[string]bool{"env": true, "exec": true, "command": true, "nice": true, "time": true}
 
-// interpreters run the script file named by their first file argument (#367).
+// interpreters run the script file named by their first file argument (#367),
+// unless an inline or runner mode makes it data (inlineMode, python's -m).
 var interpreters = map[string]bool{
 	"sh": true, "bash": true, "zsh": true, "dash": true, "python": true, "python3": true,
 	"node": true, "ruby": true, "perl": true,
 }
 
+// shells take -c inside a short-option cluster too (-ec, -xc): the word after
+// it is only $0 of the inline script.
+var shells = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true}
+
+// nodeInlineModes run an inline script or node's test runner, whose file
+// arguments are test files a goal edits, not the executed script (#363, #367).
+var nodeInlineModes = map[string]bool{"--test": true, "-e": true, "--eval": true, "-p": true, "--print": true}
+
 // executedFile is the file one command segment executes, if any: the script
-// an interpreter is handed, or a command word written as a path.
+// an interpreter is handed, or a command word written as a path. A segment in
+// an inline or runner mode executes no file the pin can name.
 func executedFile(segment []string, dir string) (word, path, digest string, ok bool) {
 	i := 0
 	for i < len(segment) && (isAssignment(segment[i]) || commandWrappers[filepath.Base(segment[i])]) {
@@ -89,11 +102,15 @@ func executedFile(segment []string, dir string) (word, path, digest string, ok b
 	command := segment[i]
 	if base := filepath.Base(command); interpreters[base] || strings.HasPrefix(base, "python3.") {
 		for _, arg := range segment[i+1:] {
-			if arg == "-c" {
+			if inlineMode(base, arg) {
 				return "", "", "", false
 			}
 		}
+		python := base == "python" || base == "python3" || strings.HasPrefix(base, "python3.")
 		for _, arg := range segment[i+1:] {
+			if python && arg == "-m" {
+				return "", "", "", false
+			}
 			if path, digest, err := digestWord(arg, dir); err == nil {
 				return arg, path, digest, true
 			}
@@ -105,6 +122,36 @@ func executedFile(segment []string, dir string) (word, path, digest string, ok b
 	}
 	path, digest, err := digestWord(command, dir)
 	return command, path, digest, err == nil
+}
+
+// inlineMode reports whether arg, anywhere in an interpreter's segment, makes
+// it run an inline script or a test runner rather than a script file: -c for
+// every interpreter, a shell's short-option cluster holding c, and node's
+// nodeInlineModes.
+func inlineMode(interpreter, arg string) bool {
+	switch {
+	case arg == "-c":
+		return true
+	case shells[interpreter]:
+		return isShortOptionCluster(arg) && strings.ContainsRune(arg, 'c')
+	case interpreter == "node":
+		return nodeInlineModes[arg]
+	}
+	return false
+}
+
+// isShortOptionCluster reports whether word is one '-' followed by option
+// letters only (-ec, -xc), not a long option (--rcfile).
+func isShortOptionCluster(word string) bool {
+	if len(word) < 2 || word[0] != '-' {
+		return false
+	}
+	for _, r := range word[1:] {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') {
+			return false
+		}
+	}
+	return true
 }
 
 // isAssignment reports whether word is a NAME=value environment assignment.

@@ -547,3 +547,99 @@ func TestPinCommand_PinsNothingItCannotSeeExecuted(t *testing.T) {
 		t.Errorf("a changed status.txt faulted: %v", err)
 	}
 }
+
+// TestPinningVerifier_RunnerModesPinNoTestFile (#363, #367): in python's -m and
+// node's --test runner modes the first file argument is a test file a goal
+// like "add X with tests" edits, not the executed script, so nothing is pinned
+// and editing the test file between verifications does not fault.
+func TestPinningVerifier_RunnerModesPinNoTestFile(t *testing.T) {
+	for _, tc := range []struct{ command, testFile string }{
+		{"python3 -m pytest test_x.py", "test_x.py"},
+		{"node --test t.test.js", "t.test.js"},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFile(t, dir, tc.testFile, "// first test\n")
+			pins := PinCommand(tc.command, dir)
+			if len(pins) != 0 {
+				t.Fatalf("pinned %v, want nothing", pinnedPaths(pins))
+			}
+			inner := NewFakeVerifier(map[string]Result{tc.command: {ExitCode: 0}})
+			v := NewPinningVerifier(inner, tc.command, pins)
+			if _, err := v.Verify(context.Background(), Request{Command: tc.command, Cwd: dir}); err != nil {
+				t.Fatalf("first verification: err = %v, want PASS", err)
+			}
+			writeFile(t, dir, tc.testFile, "// first test\n// a goal's new test\n")
+			if _, err := v.Verify(context.Background(), Request{Command: tc.command, Cwd: dir}); err != nil {
+				t.Errorf("an edited test file faulted: %v", err)
+			}
+			if n := inner.InvocationCount(tc.command); n != 2 {
+				t.Errorf("inner verifier ran %d times, want 2", n)
+			}
+		})
+	}
+}
+
+// TestPinCommand_InlineModesPinNothing (#363, #367): node's -e, --eval, -p and
+// --print run an inline script, and a shell's short-option cluster holding c
+// (-ec, -xc, -ce) is -c, so the v.sh after it is only $0 — none pins a file.
+func TestPinCommand_InlineModesPinNothing(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "v.sh", okScript)
+	writeFile(t, dir, "v.js", "console.log('ok')\n")
+	for _, command := range []string{
+		"node -e 'require(\"./v.js\")' v.js",
+		"node --eval 'require(\"./v.js\")' v.js",
+		"node -p '1 + 1' v.js",
+		"node --print '1 + 1' v.js",
+		"bash -ec 'sh v.sh' v.sh",
+		"sh -xc 'sh v.sh' v.sh",
+		"/bin/zsh -ce 'sh v.sh' v.sh",
+	} {
+		t.Run(command, func(t *testing.T) {
+			if pins := PinCommand(command, dir); len(pins) != 0 {
+				t.Fatalf("pinned %v, want nothing", pinnedPaths(pins))
+			}
+		})
+	}
+}
+
+// TestPinCommand_RunnerAndInlineEdgesStillPinTheScript (#363, #367): -m after
+// python's first file is the script's own argument, a long option or a cluster
+// without c is not -c, and -e is only node's — each still pins the script, and
+// an edit to it between verifications still faults.
+func TestPinCommand_RunnerAndInlineEdgesStillPinTheScript(t *testing.T) {
+	dir := t.TempDir()
+	py := writeFile(t, dir, "v.py", "print('ok')\n")
+	sh := writeFile(t, dir, "v.sh", okScript)
+	writeFile(t, dir, "test_x.py", "def test_x(): pass\n")
+	for _, tc := range []struct {
+		command string
+		script  string
+	}{
+		{"python3 v.py test_x.py", py},
+		{"python3 v.py -m x", py},
+		{"python v.py -m pytest", py},
+		{"bash --rcfile rc v.sh", sh},
+		{"bash --norc v.sh", sh},
+		{"sh -ex v.sh", sh},
+		{"sh -e v.sh", sh},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			name := filepath.Base(tc.script)
+			writeFile(t, dir, name, okScript)
+			pins := PinCommand(tc.command, dir)
+			if got, want := pinnedPaths(pins), []string{resolved(t, tc.script)}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("pinned %v, want exactly the script %v", got, want)
+			}
+			inner := NewFakeVerifier(map[string]Result{tc.command: {ExitCode: 0}})
+			v := NewPinningVerifier(inner, tc.command, pins)
+			if _, err := v.Verify(context.Background(), Request{Command: tc.command, Cwd: dir}); err != nil {
+				t.Fatalf("unchanged script: %v", err)
+			}
+			writeFile(t, dir, name, "#!/bin/sh\nexit 0 # edited\n")
+			_, err := v.Verify(context.Background(), Request{Command: tc.command, Cwd: dir})
+			wantPinFault(t, err, resolved(t, tc.script))
+		})
+	}
+}
