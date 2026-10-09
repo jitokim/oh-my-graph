@@ -2098,9 +2098,9 @@ func noteExclusionCost(w io.Writer, excluded []string) {
 // puzzling failure ten minutes in.
 //
 // What the paragraph claims about the declared scope is deliberately no more
-// than layer 2 delivers since ADR 0034. It used to say "a declared scope like
-// Bash(git *) is enforced rather than merely requested" (ADR 0004's E1), which
-// was true under `dontAsk` and is not under `auto`: a call matching no allow
+// than layer 2 delivers since ADR 0034. It used to call a declared scope
+// enforced (ADR 0004's E1), which was true under `dontAsk` and is not under
+// `auto`: a call matching no allow
 // rule is no longer denied outright but put to the CLI's own classifier, which
 // approves or denies it (SECURITY.md). So it now says only that none of your
 // standing grants apply, that a call matching the node's own rules runs, and
