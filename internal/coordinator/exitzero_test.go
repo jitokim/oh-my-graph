@@ -299,3 +299,34 @@ func TestPairExitZero_DoesNotMutateItsInput_371(t *testing.T) {
 		t.Errorf("input graph mutated: review check %+v became %+v", before, after)
 	}
 }
+
+// #371 decision 2, as graph.json spells it: a planned node with no
+// success_check keeps NO success_check key through every planned-path
+// re-encode — not an empty `{}`. graph.Parse reads both as the same zero
+// check, so this decodes plan.Spec as raw JSON objects to tell them apart.
+// Checked with and without --verify-cmd, since attachVerification re-encodes
+// the graph a second time after pairExitZero.
+func TestPlan_NodeWithoutSuccessCheckKeepsNoKeyInSpec_371(t *testing.T) {
+	for name, opts := range map[string][]Option{
+		"plain":      nil,
+		"verify-cmd": {WithVerifyCommand(VerifyCommand{Command: "make test"})},
+	} {
+		t.Run(name, func(t *testing.T) {
+			plan := planExitZeroSpec(t, exitZeroSpec, opts...)
+			nodes := specNodes(t, plan.Spec)
+			for _, id := range []string{"implement", "notes"} {
+				if raw, ok := nodes[id]["success_check"]; ok {
+					t.Errorf("plan.Spec node %q had no success_check and now carries %s", id, raw)
+				}
+			}
+			check, ok := specCheck(t, nodes, "review")
+			if !ok || string(check["exit_zero"]) != "true" {
+				t.Errorf("plan.Spec node \"review\" = %v, want exit_zero: true", check)
+			}
+			var pattern string
+			if err := json.Unmarshal(check["result_matches"], &pattern); err != nil || pattern != reviewVerdictPattern {
+				t.Errorf("plan.Spec node \"review\": result_matches = %q (%v), want %q unchanged", pattern, err, reviewVerdictPattern)
+			}
+		})
+	}
+}

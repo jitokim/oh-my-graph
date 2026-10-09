@@ -81,3 +81,35 @@ nodes:
 			roundTripped, original, encoded)
 	}
 }
+
+// TestNode_JSONOmitsAnEmptySuccessCheck pins the omitzero tag on
+// Node.SuccessCheck (#371): a node with no check encodes with NO success_check
+// key — omitempty never omits a struct, and wrote `"success_check":{}` into
+// every re-encoded graph.json — while each single predicate still makes the
+// node carry it. Decoded as raw objects, because Parse reads an absent key and
+// an empty object as the same zero check.
+func TestNode_JSONOmitsAnEmptySuccessCheck(t *testing.T) {
+	for name, tc := range map[string]struct {
+		check SuccessCheck
+		want  bool
+	}{
+		"no check":       {SuccessCheck{}, false},
+		"exit_zero":      {SuccessCheck{ExitZero: true}, true},
+		"result_matches": {SuccessCheck{ResultMatches: "^OK"}, true},
+		"verify":         {SuccessCheck{Verify: &Verification{Command: "make test"}}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			encoded, err := json.Marshal(Node{ID: "n", Prompt: "p", SuccessCheck: tc.check})
+			if err != nil {
+				t.Fatalf("json.Marshal(Node): %v", err)
+			}
+			var raw map[string]json.RawMessage
+			if err := json.Unmarshal(encoded, &raw); err != nil {
+				t.Fatalf("encoded node is not a JSON object: %v", err)
+			}
+			if _, got := raw["success_check"]; got != tc.want {
+				t.Errorf("success_check key present = %v, want %v: %s", got, tc.want, encoded)
+			}
+		})
+	}
+}

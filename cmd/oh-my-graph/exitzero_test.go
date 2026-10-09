@@ -13,6 +13,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
+	"gopkg.in/yaml.v3"
 )
 
 // The CLI half of #371: the coordinator pairs every planned `result_matches`
@@ -283,4 +284,64 @@ func TestRunGraphWith_HandWrittenVerdictIsNotPaired(t *testing.T) {
 	if !strings.Contains(warnings, `node "review"`) {
 		t.Errorf("lint's warning does not name the review node:\n%s", warnings)
 	}
+}
+
+// --- decision 2: a node with no success_check keeps none --------------------
+
+// assertNoSuccessCheckKey fails when node id of a saved spec carries a
+// success_check key at all. The file is decoded as raw maps — JSON for
+// graph.json and state.json, YAML for graph.yaml — because graph.Load reads
+// an absent key and an empty `{}` the same way.
+func assertNoSuccessCheckKey(t *testing.T, what string, data []byte, unmarshal func([]byte, any) error) {
+	t.Helper()
+	var raw struct {
+		Nodes []map[string]any `json:"nodes" yaml:"nodes"`
+	}
+	if err := unmarshal(data, &raw); err != nil {
+		t.Fatalf("%s does not decode: %v\n%s", what, err, data)
+	}
+	for _, n := range raw.Nodes {
+		if n["id"] != "implement" {
+			continue
+		}
+		if check, ok := n["success_check"]; ok {
+			t.Errorf("%s: node implement had no success_check and now carries %v:\n%s", what, check, data)
+		}
+		return
+	}
+	t.Fatalf("%s lost node implement:\n%s", what, data)
+}
+
+// #371 decision 2: the normalisation never touches a node with no
+// success_check, so the re-encoded plan must not hand it an empty one either —
+// not in a run's graph.json or state.json, and not in the --plan-only
+// graph.json or graph.yaml. The review beside it still gains exit_zero with
+// its result_matches unchanged.
+func TestRunAutoWith_UncheckedNodeGetsNoSuccessCheckKey_371(t *testing.T) {
+	t.Run("run", func(t *testing.T) {
+		isolateRunHome(t)
+		runExitZeroAuto(t, unpairedVerdictSpec, "--accept-no-build-evidence")
+
+		runDir := runDirFor(soleRunID(t))
+		spec := readFile(t, filepath.Join(runDir, generatedSpecFileName))
+		assertPairedReview(t, "runs/<id>/graph.json", spec)
+		assertNoSuccessCheckKey(t, "runs/<id>/graph.json", spec, json.Unmarshal)
+		snap, err := runstate.Load(filepath.Join(runDir, runstate.SnapshotFileName))
+		if err != nil {
+			t.Fatalf("load state.json: %v", err)
+		}
+		assertNoSuccessCheckKey(t, "state.json graph", snap.Graph, json.Unmarshal)
+	})
+
+	t.Run("plan-only", func(t *testing.T) {
+		isolateRunHome(t)
+		runExitZeroAuto(t, unpairedVerdictSpec, "--plan-only")
+
+		planDir := solePlanDir(t)
+		spec := readFile(t, filepath.Join(planDir, generatedSpecFileName))
+		assertPairedReview(t, "plans/<id>/graph.json", spec)
+		assertNoSuccessCheckKey(t, "plans/<id>/graph.json", spec, json.Unmarshal)
+		assertNoSuccessCheckKey(t, "plans/<id>/graph.yaml",
+			readFile(t, filepath.Join(planDir, generatedSpecYAMLFileName)), yaml.Unmarshal)
+	})
 }

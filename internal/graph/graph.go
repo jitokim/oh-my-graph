@@ -247,6 +247,14 @@ type Retry struct {
 // matching json tag would still compile and still pass Validate — and would
 // then silently vanish from every resumed run, which is why the tag pair is
 // part of the field, not an afterthought (see TestNode_JSONRoundTripsThroughParse).
+//
+// SuccessCheck alone is tagged omitzero rather than omitempty: it is a struct
+// value, which omitempty never omits, so a node with no check would encode as
+// `"success_check":{}`. omitzero asks SuccessCheck.IsZero instead, so every
+// re-encoded graph — a planned graph.json, the --plan-only plan, the resumable
+// snapshot — leaves a checkless node without the key, as it was written
+// (#371). An absent key decodes to the same zero check, so nothing changes on
+// the way back in.
 type Node struct {
 	ID             string       `yaml:"id" json:"id,omitempty"`
 	Type           string       `yaml:"type" json:"type,omitempty"`
@@ -257,7 +265,7 @@ type Node struct {
 	PermissionMode string       `yaml:"permission_mode" json:"permission_mode,omitempty"`
 	BudgetUSD      float64      `yaml:"budget_usd" json:"budget_usd,omitempty"`
 	Handoff        string       `yaml:"handoff" json:"handoff,omitempty"`
-	SuccessCheck   SuccessCheck `yaml:"success_check" json:"success_check,omitempty"`
+	SuccessCheck   SuccessCheck `yaml:"success_check" json:"success_check,omitzero"`
 	Retry          *Retry       `yaml:"retry" json:"retry,omitempty"`
 	// Description, when non-empty, is what a person reads when deciding a
 	// gate: the author's sentence about what approving means here (#346). It
