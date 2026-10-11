@@ -2810,7 +2810,8 @@ file it executes (#367): past leading `NAME=value` words and the wrappers
 command word (`sh`, `bash`, `zsh`, `dash`, `python`, `python3`, `python3.N`,
 `node`, `ruby`, `perl`) pins nothing when the segment holds `-c` or a runner
 or inline mode (a shell's short-option cluster holding `c`, `-ec`; `node`'s
-`--test`, `-e`, `--eval`, `-p`, `--print`; a python's `-m` before its first
+`--test`, `-e`, `--eval`, `-p`, `--print`, the long ones also in the `=` form,
+`--eval=...` (#375); a python's `-m` before its first
 file), else its first following word that is an existing readable regular file and nothing
 after it; any other command word is pinned only if it contains a `/`. Each
 resolves against the process cwd, every symlink followed: `Word`, absolute

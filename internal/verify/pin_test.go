@@ -584,8 +584,8 @@ func TestPinningVerifier_RunnerModesPinNoTestFile(t *testing.T) {
 	}
 }
 
-// TestPinCommand_InlineModesPinNothing (#363, #367): node's -e, --eval, -p and
-// --print run an inline script, and a shell's short-option cluster holding c
+// TestPinCommand_InlineModesPinNothing (#363, #367, #375): node's -e, --eval,
+// -p and --print run an inline script, the long ones in the = form too, and a shell's short-option cluster holding c
 // (-ec, -xc, -ce) is -c, so the v.sh after it is only $0 — none pins a file.
 func TestPinCommand_InlineModesPinNothing(t *testing.T) {
 	dir := t.TempDir()
@@ -596,6 +596,8 @@ func TestPinCommand_InlineModesPinNothing(t *testing.T) {
 		"node --eval 'require(\"./v.js\")' v.js",
 		"node -p '1 + 1' v.js",
 		"node --print '1 + 1' v.js",
+		"node --eval='require(\"./v.js\")' v.js",
+		"node --print='1 + 1' v.js",
 		"bash -ec 'sh v.sh' v.sh",
 		"sh -xc 'sh v.sh' v.sh",
 		"/bin/zsh -ce 'sh v.sh' v.sh",
@@ -608,14 +610,16 @@ func TestPinCommand_InlineModesPinNothing(t *testing.T) {
 	}
 }
 
-// TestPinCommand_RunnerAndInlineEdgesStillPinTheScript (#363, #367): -m after
-// python's first file is the script's own argument, a long option or a cluster
-// without c is not -c, and -e is only node's — each still pins the script, and
-// an edit to it between verifications still faults.
+// TestPinCommand_RunnerAndInlineEdgesStillPinTheScript (#363, #367, #375): -m
+// after python's first file is the script's own argument, a long option or a
+// cluster without c is not -c, -e is only node's, and node's other long options
+// in the = form and an -e=... it does not split are no inline mode — each still
+// pins the script, and an edit to it between verifications still faults.
 func TestPinCommand_RunnerAndInlineEdgesStillPinTheScript(t *testing.T) {
 	dir := t.TempDir()
 	py := writeFile(t, dir, "v.py", "print('ok')\n")
 	sh := writeFile(t, dir, "v.sh", okScript)
+	js := writeFile(t, dir, "v.js", "console.log('ok')\n")
 	writeFile(t, dir, "test_x.py", "def test_x(): pass\n")
 	for _, tc := range []struct {
 		command string
@@ -628,6 +632,8 @@ func TestPinCommand_RunnerAndInlineEdgesStillPinTheScript(t *testing.T) {
 		{"bash --norc v.sh", sh},
 		{"sh -ex v.sh", sh},
 		{"sh -e v.sh", sh},
+		{"node --max-old-space-size=64 v.js", js},
+		{"node -e=x v.js", js},
 	} {
 		t.Run(tc.command, func(t *testing.T) {
 			name := filepath.Base(tc.script)

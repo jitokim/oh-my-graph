@@ -87,6 +87,7 @@ var shells = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true
 
 // nodeInlineModes run an inline script or node's test runner, whose file
 // arguments are test files a goal edits, not the executed script (#363, #367).
+// A long option counts in its --opt=value form too (#375).
 var nodeInlineModes = map[string]bool{"--test": true, "-e": true, "--eval": true, "-p": true, "--print": true}
 
 // executedFile is the file one command segment executes, if any: the script
@@ -128,7 +129,7 @@ func executedFile(segment []string, dir string) (word, path, digest string, ok b
 // inlineMode reports whether arg, anywhere in an interpreter's segment, makes
 // it run an inline script or a test runner rather than a script file: -c for
 // every interpreter, a shell's short-option cluster holding c, and node's
-// nodeInlineModes.
+// nodeInlineModes, a long one also as --opt=value (node takes no -e=value).
 func inlineMode(interpreter, arg string) bool {
 	switch {
 	case arg == "-c":
@@ -136,6 +137,9 @@ func inlineMode(interpreter, arg string) bool {
 	case shells[interpreter]:
 		return isShortOptionCluster(arg) && strings.ContainsRune(arg, 'c')
 	case interpreter == "node":
+		if strings.HasPrefix(arg, "--") {
+			arg, _, _ = strings.Cut(arg, "=")
+		}
 		return nodeInlineModes[arg]
 	}
 	return false
