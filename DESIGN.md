@@ -2811,9 +2811,11 @@ command word (`sh`, `bash`, `zsh`, `dash`, `python`, `python3`, `python3.N`,
 `node`, `ruby`, `perl`) pins nothing when the segment holds `-c` or a runner
 or inline mode (a shell's short-option cluster holding `c`, `-ec`; `node`'s
 `--test`, `-e`, `--eval`, `-p`, `--print`, the long ones also in the `=` form,
-`--eval=...` (#375); a python's `-m` before its first
-file), else its first following word that is an existing readable regular file and nothing
-after it; any other command word is pinned only if it contains a `/`. Each
+`--eval=...` (#375); a python's `-m`) before its script, else its first
+following word that is an existing readable regular file and nothing after
+it. Each mode counts only before that first file: after it the option is the
+script's argument (`node v.js -e x`, `sh v.sh -c x`) and the script is still
+pinned (#375). Any other command word is pinned only if it contains a `/`. Each
 resolves against the process cwd, every symlink followed: `Word`, absolute
 `Path`, SHA-256 `Digest`. The interpreter binary is never pinned, there is no
 `PATH` lookup, a `cd` inside the command is not tracked, and an argument the
