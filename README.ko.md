@@ -25,9 +25,9 @@
 > CLI인 graph-native 멀티 에이전트 오케스트레이터.
 
 <p align="center">
-  <img src="assets/auto-demo.gif" alt="실제 oh-my-graph auto 실행 터미널 녹화: 목표 'add a slugify() function to textutil.py, with unit tests' 와 --verify-cmd 'python3 -m unittest -q'. 시작 트리에서 명령이 통과하고, 플래너가 2-노드 그래프(implement → review)를 만들고, 두 노드가 실행되고, review 노드에서 엔진이 직접 테스트를 돌리고, 원장에 implement 는 PASS (exit-only), review 는 PASS (verified), 총 비용 $0.28 로 찍힌다" width="100%" />
+  <img src="assets/auto-demo.gif" alt="실제 oh-my-graph auto 실행 터미널 녹화: 목표 'add a slugify() function to textutil.py, with unit tests' 와 --verify-cmd 'sh verify.sh'. 시작 트리에서 명령이 통과하고, 플래너가 2-노드 그래프(impl → check)를 만들고, 플랜 화면에 verify.sh 가 고정(pinned)된 스크립트로 찍히고, 두 노드가 실행되고, check 노드에서 엔진이 직접 스크립트를 돌리고, 원장에 impl 은 PASS (exit-only), check 는 PASS (verified), 총 비용 $0.28 로 찍힌다" width="100%" />
 </p>
-<p align="center"><em>v0.17.0 에서 실제로 돌린 <code>auto</code> 실행, 2배속. 목표가 2-노드 플랜이 된다. 엔진이 <code>--verify-cmd</code> 를 시작 트리에서 한 번, sink 에서 다시 직접 돌리고, 원장은 어느 PASS 가 <code>verified</code> 이고 어느 것이 exit code 뿐인지 적는다. 총 비용 $0.28.</em></p>
+<p align="center"><em>v0.18.0 에서 실제로 돌린 <code>auto</code> 실행, 2배속. 목표가 2-노드 플랜이 된다. 엔진이 <code>--verify-cmd</code> 를 시작 트리에서 한 번, sink 에서 다시 직접 돌리고, 실행하는 스크립트(<code>verify.sh</code>)를 고정한다: 실행 중에 작업이 그 파일을 고치면 검증이 실패한다. 그 스크립트가 부르는 테스트 파일은 고정되지 않는다. 원장은 어느 PASS 가 <code>verified</code> 이고 어느 것이 exit code 뿐인지 적는다. 총 비용 $0.28.</em></p>
 
 <a id="what-it-is"></a>
 
