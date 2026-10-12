@@ -43,11 +43,13 @@ type PinnedFile struct {
 //   - If the command word's basename is an interpreter (sh, bash, python3.12,
 //     node, ...), a segment holding -c pins nothing (an inline script), nor
 //     does one holding a shell's short-option cluster with a c in it (-ec) or
-//     node's --test, -e, --eval, -p or --print, nor a python's -m before its
-//     first file (a runner whose file arguments are tests a goal edits);
-//     otherwise its first following word that resolves to a file is pinned and
-//     nothing after it is (those are the script's data files). The interpreter
-//     binary itself is never pinned.
+//     node's --test, -e, --eval, -p or --print (a long one in its --opt=value
+//     form too), nor a python's -m (a runner whose file arguments are tests a
+//     goal edits). Each of these counts only before the script, the first
+//     following word that resolves to a file: after it, the word is the
+//     script's argument (#375). That first file is pinned and nothing after
+//     it is (those are the script's data files). The interpreter binary itself
+//     is never pinned.
 //   - Any other command word is pinned only if it contains a slash
 //     (./verify.sh, /abs/x); a bare name found on PATH (go, make, tee) is the
 //     user's toolchain, not a file a node in this tree is expected to edit.
@@ -75,7 +77,8 @@ func PinCommand(command, dir string) []PinnedFile {
 var commandWrappers = map[string]bool{"env": true, "exec": true, "command": true, "nice": true, "time": true}
 
 // interpreters run the script file named by their first file argument (#367),
-// unless an inline or runner mode makes it data (inlineMode, python's -m).
+// unless an inline or runner mode before it makes it data (inlineMode,
+// python's -m; #375).
 var interpreters = map[string]bool{
 	"sh": true, "bash": true, "zsh": true, "dash": true, "python": true, "python3": true,
 	"node": true, "ruby": true, "perl": true,
@@ -87,6 +90,7 @@ var shells = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true
 
 // nodeInlineModes run an inline script or node's test runner, whose file
 // arguments are test files a goal edits, not the executed script (#363, #367).
+// A long option counts in its --opt=value form too (#375).
 var nodeInlineModes = map[string]bool{"--test": true, "-e": true, "--eval": true, "-p": true, "--print": true}
 
 // executedFile is the file one command segment executes, if any: the script
@@ -102,14 +106,9 @@ func executedFile(segment []string, dir string) (word, path, digest string, ok b
 	}
 	command := segment[i]
 	if base := filepath.Base(command); interpreters[base] || strings.HasPrefix(base, "python3.") {
-		for _, arg := range segment[i+1:] {
-			if inlineMode(base, arg) {
-				return "", "", "", false
-			}
-		}
 		python := base == "python" || base == "python3" || strings.HasPrefix(base, "python3.")
 		for _, arg := range segment[i+1:] {
-			if python && arg == "-m" {
+			if inlineMode(base, arg) || python && arg == "-m" {
 				return "", "", "", false
 			}
 			if path, digest, err := digestWord(arg, dir); err == nil {
@@ -125,10 +124,11 @@ func executedFile(segment []string, dir string) (word, path, digest string, ok b
 	return command, path, digest, err == nil
 }
 
-// inlineMode reports whether arg, anywhere in an interpreter's segment, makes
-// it run an inline script or a test runner rather than a script file: -c for
+// inlineMode reports whether arg, before an interpreter's script (its first
+// file argument; after it arg is the script's own, #375), makes it run an
+// inline script or a test runner rather than a script file: -c for
 // every interpreter, a shell's short-option cluster holding c, and node's
-// nodeInlineModes.
+// nodeInlineModes, a long one also as --opt=value (node takes no -e=value).
 func inlineMode(interpreter, arg string) bool {
 	switch {
 	case arg == "-c":
@@ -136,6 +136,9 @@ func inlineMode(interpreter, arg string) bool {
 	case shells[interpreter]:
 		return isShortOptionCluster(arg) && strings.ContainsRune(arg, 'c')
 	case interpreter == "node":
+		if strings.HasPrefix(arg, "--") {
+			arg, _, _ = strings.Cut(arg, "=")
+		}
 		return nodeInlineModes[arg]
 	}
 	return false
