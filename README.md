@@ -26,7 +26,7 @@
 <p align="center">
   <img src="assets/auto-demo.gif" alt="Terminal recording of a real oh-my-graph auto run: the goal 'add a slugify() function to textutil.py, with unit tests' with --verify-cmd 'sh verify.sh'. The command passes on the starting tree, the planner writes a 2-node graph (impl, then check), the plan screen shows verify.sh as the pinned script, both nodes run, the engine runs the script itself at the check node, and the ledger shows impl as PASS (exit-only) and check as PASS (verified), total cost $0.28" width="100%" />
 </p>
-<p align="center"><em>A real <code>auto</code> run on v0.18.0, played at 2× speed. The goal becomes a 2-node plan. The engine runs your <code>--verify-cmd</code> on the starting tree and again at the sink, and pins the script it runs (<code>verify.sh</code>), so the work can't rewrite it; the tests that script calls are not pinned. The ledger says which PASS was <code>verified</code> and which was only an exit code. Total cost $0.28.</em></p>
+<p align="center"><em>A real <code>auto</code> run on v0.18.0, played at 2× speed. The goal becomes a 2-node plan. The engine runs your <code>--verify-cmd</code> on the starting tree and again at the sink, and pins the script it runs (<code>verify.sh</code>): if the work edits it during the run, verification fails. The tests that script calls are not pinned. The ledger says which PASS was <code>verified</code> and which was only an exit code. Total cost $0.28.</em></p>
 
 ## What it is
 
