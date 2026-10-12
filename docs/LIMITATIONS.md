@@ -114,9 +114,12 @@ has no open issue behind it.
   `ruby`, `perl`), or a command written as a path (`./verify.sh`), past any
   leading `env`, `exec`, `command`, `nice`, `time` and `NAME=value` words.
   Nothing else. Not an inline `sh -c '...'` script, nor any runner or inline
-  mode: `python -m ...` (`-m` before the first file), `node --test`, `-e`,
-  `--eval`, `-p` or `--print`, and an `sh` option cluster holding `c` (`-ec`,
-  `-xc`) pin nothing for that command; not a script fed on stdin (`sh < v.sh`
+  mode: `python -m ...`, `node --test`, `-e`, `--eval`, `-p` or `--print` (the
+  long ones also as `--eval=...`), and an `sh` option cluster holding `c`
+  (`-ec`, `-xc`) pin nothing for that command. Each counts only before the
+  script (the first word that is a file): after it, as in `node v.js -e x` or
+  `sh v.sh -c x`, it is the script's argument and the script is still pinned.
+  Not a script fed on stdin (`sh < v.sh`
   pins nothing); not a file the script
   sources, reads or writes (`| tee log.txt`, `--junitxml report.xml`); not the
   `Makefile` behind `make verify` or the test files `go test ./...` runs; not
