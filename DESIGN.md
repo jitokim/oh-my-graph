@@ -1711,7 +1711,16 @@ prompt and **not** in the pattern. Three rules, none of them new:
   there. Only two of those three were slow: a re-review still `PENDING` on the
   triage commit (PR #111, PR #137). The third (PR #134) was a *new*
   `CHANGES_REQUESTED` against it — a latch, which `recheck` answers `LATCHED`,
-  halting before the gate rather than reaching it as an `UNSETTLED`. Admitting
+  halting before the gate rather than reaching it as an `UNSETTLED`. One
+  CodeRabbit `CHANGES_REQUESTED` is the exception and does not latch: the one
+  `triage` already answered in the same run by replying, without a push
+  (#382). Triage ends its report with `coderabbit-answered-through: <T>`, the
+  `submittedAt` of the newest bot review it answered, copied from gh. A bot
+  `CHANGES_REQUESTED` on head with `at` ≤ `<T>` is self-resolving. `recheck`
+  waits for a newer review: an `APPROVED` is green, a `CHANGES_REQUESTED` is
+  `LATCHED`, and a `COMMENTED` never settles it. If none arrives within the
+  budget, the answer is `UNSETTLED`. A `<T>` that matches no real bot review
+  counts as absent and latches (ADR 0021's 2026-10-13 update). Admitting
   a state word makes the green-run-merged-nothing class *rarer* — the common
   case, where restarted checks conclude in minutes, now merges — but it does
   not remove it, and a graph that buys this exception owes its header that
