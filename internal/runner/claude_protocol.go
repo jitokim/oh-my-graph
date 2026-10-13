@@ -6,14 +6,59 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/jitokim/oh-my-graph/internal/graph"
 )
 
 const defaultClaudeBinary = "claude"
+
+// CompoundShellRule is appended to the system prompt of a claude node that
+// NeedsCompoundShellRule picks out (#380). Under dontAsk a Bash prefix rule
+// such as `Bash(gh *)` admits a command only when the whole command plainly
+// matches it, so a node's own `gh pr ready 379; echo "exit=$?"` was denied
+// even though every program in it was one the node held. It travels as
+// --append-system-prompt rather than inside -p so the rendered prompt — the
+// author's text, and what a session handoff resumes — is left as it was.
+const CompoundShellRule = "Run exactly one command per Bash call. " +
+	"This node runs under dontAsk, and a command only runs when it plainly matches a granted prefix, " +
+	"so do not write compound shell: no `;`, `&&`, `||`, pipes, `$(...)` or backticks, " +
+	"no redirections such as `2>/dev/null`, and no `cd <dir> && ...`. " +
+	"To act in another directory, use the tool's own flag (`git -C <dir>`, `make -C <dir>`). " +
+	"The exit status is already reported to you, so never append `; echo $?`. " +
+	"If a command you need is denied, do not look for a workaround: report it."
+
+// NeedsCompoundShellRule reports whether a claude node should carry
+// CompoundShellRule: it runs under dontAsk, holds at least one scoped Bash
+// rule (`Bash(gh *)`, `Bash(git status*)`), and holds no blanket Bash grant
+// (bare `Bash` or `Bash(*)`), under which a compound command runs anyway.
+func NeedsCompoundShellRule(permissionMode string, allowedTools []string) bool {
+	if permissionMode != graph.PermissionDontAsk {
+		return false
+	}
+	scoped := false
+	for _, tool := range allowedTools {
+		switch {
+		case tool == "Bash" || tool == "Bash(*)":
+			return false
+		case strings.HasPrefix(tool, "Bash(") && strings.HasSuffix(tool, ")"):
+			scoped = true
+		}
+	}
+	return scoped
+}
 
 type claudeProtocol struct{}
 
 func (claudeProtocol) runtime() Runtime { return RuntimeClaude }
 func (claudeProtocol) binary() string   { return defaultClaudeBinary }
+
+// appendsCompoundShellRule is the one place a claude invocation's
+// --append-system-prompt is decided: buildArgs emits the flag on it, and
+// CLIRunner.AppendsCompoundShellRule reports it to the run feed, so the record
+// and the argv cannot disagree (#380).
+func (claudeProtocol) appendsCompoundShellRule(spec NodeInvocation) bool {
+	return NeedsCompoundShellRule(spec.PermissionMode, spec.Policy.AllowedTools)
+}
 
 func (claudeProtocol) prepareSession(spec *NodeInvocation) string {
 	if spec.ResumeSession != "" {
@@ -27,7 +72,7 @@ func (claudeProtocol) prepareSession(spec *NodeInvocation) string {
 
 func (claudeProtocol) sessionFromLine(_ []byte) string { return "" }
 
-func (claudeProtocol) buildArgs(spec NodeInvocation) []string {
+func (p claudeProtocol) buildArgs(spec NodeInvocation) []string {
 	args := []string{
 		"-p", spec.Prompt,
 		"--output-format", "json",
@@ -67,6 +112,12 @@ func (claudeProtocol) buildArgs(spec NodeInvocation) []string {
 	}
 	if len(policy.DisallowedTools) > 0 {
 		args = append(args, "--disallowedTools", strings.Join(policy.DisallowedTools, ","))
+	}
+	// Not part of the ceiling: it narrows nothing, it tells a node holding only
+	// scoped Bash rules the command form those rules admit (#380). A resumed
+	// invocation carries it too, since a system prompt is per process.
+	if p.appendsCompoundShellRule(spec) {
+		args = append(args, "--append-system-prompt", CompoundShellRule)
 	}
 	if spec.ResumeSession != "" {
 		args = append(args, "--resume", spec.ResumeSession)

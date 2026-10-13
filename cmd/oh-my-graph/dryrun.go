@@ -9,6 +9,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/handoff"
 	"github.com/jitokim/oh-my-graph/internal/runner"
+	"github.com/jitokim/oh-my-graph/internal/schedule"
 )
 
 // dryRunGraph is the `run --dry-run` path: load the graph through the same
@@ -76,6 +77,7 @@ func dryRunGraphForRuntime(w, warnW io.Writer, path string, inputs, inputSources
 	printFragmentResolutions(w, loaded.Resolutions)
 	printResolvedPlan(w, g)
 	printAutoApproved(w, autoApprove)
+	noteCompoundShellRule(w, runtime, g)
 	noteCodexRuntimePolicy(w, runtime, g, handWrittenNodes)
 
 	if issues := append(inputIssues(g, inputs), gateDescriptionInputIssues(g, inputs)...); len(issues) > 0 {
@@ -108,6 +110,40 @@ func printAutoApproved(w io.Writer, autoApprove []string) {
 		return
 	}
 	fmt.Fprintf(w, "Pre-approved gates (--auto-approve): %s\n", strings.Join(autoApprove, ", "))
+}
+
+// noteCompoundShellRule names each node whose argv will carry
+// runner.CompoundShellRule (#380), one line per node, so the system-prompt
+// text the engine adds is visible before a run rather than only in a
+// transcript after it. Silent when no node gets it.
+func noteCompoundShellRule(w io.Writer, runtime runner.Runtime, g *graph.Graph) {
+	for _, node := range g.Nodes {
+		if getsCompoundShellRule(runtime, node, nil) {
+			fmt.Fprintf(w, "note: node %q runs under dontAsk with a Bash prefix grant, so the engine will append the one-command-per-Bash-call rule (#380)\n", node.ID)
+		}
+	}
+}
+
+// getsCompoundShellRule asks runner.NeedsCompoundShellRule — the predicate
+// buildArgs itself asks — of the mode and grant node will actually be spawned
+// with, so a screen and the argv cannot disagree. policies is the run's tool
+// ceiling: nil for a hand-written graph, whose node runs under its own
+// allowed_tools, and auto's map otherwise — the same split as the scheduler's
+// policyFor, including that a node missing from a non-nil map is never spawned.
+// Codex has no system-prompt flag and never carries the rule.
+func getsCompoundShellRule(runtime runner.Runtime, node graph.Node, policies map[string]runner.ToolPolicy) bool {
+	if runtime == runner.RuntimeCodex {
+		return false
+	}
+	allowed := node.AllowedTools
+	if policies != nil {
+		policy, imposed := policies[node.ID]
+		if !imposed {
+			return false
+		}
+		allowed = policy.AllowedTools
+	}
+	return runner.NeedsCompoundShellRule(schedule.EffectivePermissionMode(node, schedule.DefaultPermissionMode), allowed)
 }
 
 // inputIssues proves every {{ inputs.<name> }} reference in the graph's

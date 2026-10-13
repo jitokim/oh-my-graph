@@ -118,6 +118,7 @@ func TestBuildCmd_SkillActivationArgv(t *testing.T) {
 		"--tools", "Read,Bash,Skill",
 		"--strict-mcp-config",
 		"--disallowedTools", "Write,WebFetch",
+		"--append-system-prompt", CompoundShellRule,
 	}
 	if got := cmd.Args; !equalArgs(got, want) {
 		t.Fatalf("argv mismatch:\n got=%q\nwant=%q", got, want)
@@ -248,6 +249,7 @@ func TestBuildCmd_PlannedNodeModelArgv(t *testing.T) {
 		"--tools", "Read,Bash",
 		"--strict-mcp-config",
 		"--disallowedTools", "Write",
+		"--append-system-prompt", CompoundShellRule,
 	}
 	if got := cmd.Args; !equalArgs(got, want) {
 		t.Fatalf("argv mismatch:\n got=%q\nwant=%q", got, want)
@@ -369,7 +371,7 @@ func TestBuildCmd_OmitsOptionalFlags(t *testing.T) {
 	for _, flag := range []string{
 		"--max-budget-usd", "--allowedTools", "--disallowedTools", "--resume",
 		"--setting-sources", "--tools", "--strict-mcp-config", "--agent",
-		"--session-id", "--model",
+		"--session-id", "--model", "--append-system-prompt",
 	} {
 		if strings.Contains(joined, flag) {
 			t.Errorf("expected no %s flag, got argv: %q", flag, cmd.Args)
@@ -383,7 +385,9 @@ func TestBuildCmd_OmitsOptionalFlags(t *testing.T) {
 // argv must be EXACTLY what it was before the ceiling existed — no isolation,
 // no narrowing, no MCP bound, no deny list. A regression here would silently
 // disable a user's own settings, hooks and MCP servers in the path whose whole
-// purpose is precise user control.
+// purpose is precise user control. The one addition is
+// --append-system-prompt, which is not a ceiling flag: a dontAsk node holding
+// only scoped Bash rules is told the command form they admit (#380).
 func TestBuildCmd_HandWrittenGraphArgvIsUnchanged(t *testing.T) {
 	r := NewCLIRunner(RuntimeClaude, WithBinary("claude"))
 	cmd := r.buildCmd(context.Background(), NodeInvocation{
@@ -398,6 +402,7 @@ func TestBuildCmd_HandWrittenGraphArgvIsUnchanged(t *testing.T) {
 		"--output-format", "json",
 		"--permission-mode", "dontAsk",
 		"--allowedTools", "Read,Bash(git *)",
+		"--append-system-prompt", CompoundShellRule,
 	}
 	if got := cmd.Args; !equalArgs(got, want) {
 		t.Fatalf("hand-written graph argv must be unchanged:\n got=%q\nwant=%q", got, want)

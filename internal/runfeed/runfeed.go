@@ -215,7 +215,19 @@ type Event struct {
 	// none — on the committed path a planning phase is closed by the untagged
 	// run_started, not by a run_finished of its own (docs/RUN-FEED.md).
 	Phase string `json:"phase,omitempty"`
+	// CompoundShellRule is set to CompoundShellRuleAppended on the node_started
+	// or node_retried that opens an attempt whose argv carried the
+	// one-command-per-Bash-call system prompt (#380), and absent on every other
+	// event. The producer takes it from the runner's own answer for the
+	// invocation it spawns (runner.AppendsCompoundShellRule), never from a
+	// stored flag, so it cannot say anything the argv did not. An additive
+	// optional field, no schema bump.
+	CompoundShellRule string `json:"compound_shell_rule,omitempty"`
 }
+
+// CompoundShellRuleAppended is Event.CompoundShellRule's one defined value:
+// what the engine appended and the condition that made it.
+const CompoundShellRuleAppended = "appended: dontAsk + Bash prefix grant (#380)"
 
 // TokenUsage is provider-reported token accounting on a terminal node event.
 type TokenUsage struct {

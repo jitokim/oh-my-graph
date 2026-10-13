@@ -925,10 +925,17 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 			eventType = runfeed.EventNodeRetried
 		}
 		retryNumber := attempt
-		invocation.SessionStarted = func(sessionID string) {
-			s.emitEvent(runfeed.Event{Type: eventType, NodeID: node.ID, Retries: retryNumber, SessionID: sessionID, Round: s.feedback.roundOf(node.ID)})
+		spec := s.withConventions(invocation)
+		// Asked of the runner for the exact spec it is handed, because only the
+		// runner knows its runtime, and so the event says what the argv carried.
+		compoundShellRule := ""
+		if runner.AppendsCompoundShellRule(s.runner, spec) {
+			compoundShellRule = runfeed.CompoundShellRuleAppended
 		}
-		outcome, runErr := s.runner.Run(ctx, s.withConventions(invocation))
+		spec.SessionStarted = func(sessionID string) {
+			s.emitEvent(runfeed.Event{Type: eventType, NodeID: node.ID, Retries: retryNumber, SessionID: sessionID, Round: s.feedback.roundOf(node.ID), CompoundShellRule: compoundShellRule})
+		}
+		outcome, runErr := s.runner.Run(ctx, spec)
 		if runErr != nil {
 			// A context kill (the node's own timeout, a halt's cancellation,
 			// Ctrl-C) ends the subprocess before it prints the JSON envelope
@@ -1517,10 +1524,7 @@ func (s *Scheduler) buildInvocation(ctx context.Context, node graph.Node, h *han
 		return runner.NodeInvocation{}, err
 	}
 
-	permissionMode := node.PermissionMode
-	if permissionMode == "" {
-		permissionMode = s.defaultPermissionMode
-	}
+	permissionMode := EffectivePermissionMode(node, s.defaultPermissionMode)
 
 	policy, err := s.policyFor(node)
 	if err != nil {
@@ -1544,6 +1548,17 @@ func (s *Scheduler) buildInvocation(ctx context.Context, node graph.Node, h *han
 		Timeout:   node.TimeoutDuration(),
 		Policy:    policy,
 	}, nil
+}
+
+// EffectivePermissionMode is the mode node is spawned under: its own
+// permission_mode, or defaultMode when it declares none. Exported so a screen
+// that describes a run before it starts (`run --dry-run`, the `auto` plan)
+// resolves the mode the same way the invocation does (#380).
+func EffectivePermissionMode(node graph.Node, defaultMode string) string {
+	if node.PermissionMode != "" {
+		return node.PermissionMode
+	}
+	return defaultMode
 }
 
 // selfOf is what the `self` namespace resolves against for node: its id, and

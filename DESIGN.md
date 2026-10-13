@@ -51,6 +51,7 @@ claude -p "<rendered prompt>" --output-format json --permission-mode <mode> \
   [ --allowedTools "<comma,joined>" ] \
   [ --tools "<comma,joined>" ] [ --strict-mcp-config ] \
   [ --disallowedTools "<comma,joined>" ] \
+  [ --append-system-prompt "<runner.CompoundShellRule>" ] \
   [ --resume <session_id> ] [ --session-id <uuid> ]
 ```
 
@@ -76,6 +77,45 @@ only `AllowedTools`, so its argv is the first line plus `--allowedTools`, then
 `budget_usd` (that flag is not part of the ceiling — it rides on
 `NodeInvocation.BudgetUSD`, which the scheduler passes for every node, planned
 or hand-written).
+`--append-system-prompt` is not part of the ceiling either. It is emitted, for
+a planned or hand-written node, fresh or resumed, exactly when
+`runner.NeedsCompoundShellRule` holds: the mode is `dontAsk`, the node's
+`AllowedTools` holds a scoped Bash rule (`Bash(gh *)`), and it holds no blanket
+`Bash` or `Bash(*)` (#380). Under `dontAsk` a scoped rule admits a command only
+when the whole command plainly matches it, so a node's own
+`gh pr ready 379; echo "exit=$?"` was denied though it held `gh`. The flag
+carries `runner.CompoundShellRule` — one command per Bash call, no compound
+shell or redirection, `git -C <dir>` rather than `cd`, report a denial rather
+than work around it — beside the `-p` prompt, which it never alters. It does
+not list the node's patterns, so it is not the per-node grant listing
+considered and declined below; it states the one command form every scoped
+rule shares. The failure it answers is a real one: merge-shepherd run
+`20261011-141944.762418762-1`, node `ready-and-wait`, ran under `dontAsk` with
+a `gh` prefix grant, chained its `gh` call with `; echo`, and was denied a
+command its grant was meant to admit. It is claude-only: the codex protocol
+has no such flag and never emits it.
+`runner.NeedsCompoundShellRule(permissionMode, allowedTools)` is the ONE
+predicate. The argv asks it (through the claude protocol, which the runner's
+`AppendsCompoundShellRule` also answers through); `run --dry-run` and the
+`auto` plan screen ask it (`getsCompoundShellRule`, `cmd/oh-my-graph/dryrun.go`,
+fed the mode from `schedule.EffectivePermissionMode` — the same fallback the
+scheduler's invocation builder uses — and the grant the node will actually be
+launched with); and the run record asks it, for the exact invocation handed to
+the runner. That record is the optional `compound_shell_rule` field,
+`"appended: dontAsk + Bash prefix grant (#380)"`, on the `node_started` and
+`node_retried` events that open an attempt, absent on every other attempt —
+no new event type and no schema bump (docs/RUN-FEED.md, "The compound shell
+rule"). None of the four re-derives the condition, so a screen cannot promise
+a rule the argv omits, nor the record claim one it did not send.
+Nothing about the rule is folded into any hash the engine keeps — not
+`GraphSHA256`, not `state.json`, not a resume's identity checks: doing so would
+invalidate every run already recorded. It needs none. The rule is a pure
+function of the permission mode and the resolved grant, which are already
+inputs the engine records, so it carries no state of its own. A resumed
+invocation recomputes it and passes the flag like a fresh one; a node reused
+from a previous leg, or completed before this fix, is not re-invoked, so its
+recorded output stands as it was produced and no model input is replayed
+without the rule.
 Every fresh-session node gets `--session-id` with a UUID the
 Claude protocol assigned, so the id is published on
 `node_started` while the node is still RUNNING and a live view can find its
@@ -2946,12 +2986,12 @@ off.
     misreport (for example "all checks passed").
   - *Read scope.* **Nothing confines `Read`, `Glob` and `Grep` to the
     worktree or the working directory.** The runner sets the child's working
-    directory (`cmd.Dir = spec.Cwd`, `internal/runner/cli.go:362`) and passes
+    directory (`cmd.Dir = spec.Cwd`, `internal/runner/cli.go:378`) and passes
     the bare tool names as `--allowedTools` and `--tools`
-    (`internal/runner/claude_protocol.go:60` and `:63`, built by
+    (`internal/runner/claude_protocol.go:105` and `:108`, built by
     `toolPolicyFor`, `internal/coordinator/coordinator.go:927`), with no path
     scope on the rule and no `--add-dir`; `--setting-sources ""` withholds
-    settings, not files. `childenv.Scrub` (`internal/runner/cli.go:363`)
+    settings, not files. `childenv.Scrub` (`internal/runner/cli.go:379`)
     deletes four API-key variables and nothing else. Under `--runtime codex`
     the `--sandbox` value (`internal/runner/codex_protocol.go:51`) bounds
     writes and the network, not reads, and SECURITY.md already says to treat

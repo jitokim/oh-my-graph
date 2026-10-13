@@ -209,3 +209,36 @@ nodes:
 		t.Errorf("a clean dry run should say so:\n%s", out.String())
 	}
 }
+
+// TestDryRunGraph_NamesTheCompoundShellRule (#380): a node the engine will
+// hand runner.CompoundShellRule is named on the dry run, and a node holding a
+// blanket Bash grant — under which a compound command runs anyway — is not.
+// Codex has no system-prompt flag, so the same graph prints nothing there.
+func TestDryRunGraph_NamesTheCompoundShellRule(t *testing.T) {
+	path := writeGraphFile(t, `
+name: shell-rule
+nodes:
+  - { id: scoped, prompt: a, permission_mode: dontAsk, allowed_tools: [Read, "Bash(gh *)"] }
+  - { id: blanket, prompt: b, permission_mode: dontAsk, allowed_tools: [Read, "Bash(*)"] }
+`)
+	const line = `note: node %q runs under dontAsk with a Bash prefix grant, so the engine will append the one-command-per-Bash-call rule (#380)`
+
+	var out strings.Builder
+	if err := dryRunGraph(&out, io.Discard, path, nil); err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	if want := strings.Replace(line, "%q", `"scoped"`, 1); !strings.Contains(out.String(), want) {
+		t.Errorf("dry run must name the scoped node:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), `node "blanket" runs under dontAsk`) {
+		t.Errorf("a Bash(*) node gets no rule, so the dry run must not name it:\n%s", out.String())
+	}
+
+	var codex strings.Builder
+	if err := dryRunGraphForRuntime(&codex, io.Discard, path, nil, nil, nil, runner.RuntimeCodex); err != nil {
+		t.Fatalf("codex dry run: %v", err)
+	}
+	if strings.Contains(codex.String(), "one-command-per-Bash-call") {
+		t.Errorf("a codex run never carries the rule:\n%s", codex.String())
+	}
+}
