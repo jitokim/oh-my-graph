@@ -89,7 +89,33 @@ shell or redirection, `git -C <dir>` rather than `cd`, report a denial rather
 than work around it — beside the `-p` prompt, which it never alters. It does
 not list the node's patterns, so it is not the per-node grant listing
 considered and declined below; it states the one command form every scoped
-rule shares.
+rule shares. The failure it answers is a real one: merge-shepherd run
+`20261011-141944.762418762-1`, node `ready-and-wait`, ran under `dontAsk` with
+a `gh` prefix grant, chained its `gh` call with `; echo`, and was denied a
+command its grant was meant to admit. It is claude-only: the codex protocol
+has no such flag and never emits it.
+`runner.NeedsCompoundShellRule(permissionMode, allowedTools)` is the ONE
+predicate. The argv asks it (through the claude protocol, which the runner's
+`AppendsCompoundShellRule` also answers through); `run --dry-run` and the
+`auto` plan screen ask it (`getsCompoundShellRule`, `cmd/oh-my-graph/dryrun.go`,
+fed the mode from `schedule.EffectivePermissionMode` — the same fallback the
+scheduler's invocation builder uses — and the grant the node will actually be
+launched with); and the run record asks it, for the exact invocation handed to
+the runner. That record is the optional `compound_shell_rule` field,
+`"appended: dontAsk + Bash prefix grant (#380)"`, on the `node_started` and
+`node_retried` events that open an attempt, absent on every other attempt —
+no new event type and no schema bump (docs/RUN-FEED.md, "The compound shell
+rule"). None of the four re-derives the condition, so a screen cannot promise
+a rule the argv omits, nor the record claim one it did not send.
+Nothing about the rule is folded into any hash the engine keeps — not
+`GraphSHA256`, not `state.json`, not a resume's identity checks: doing so would
+invalidate every run already recorded. It needs none. The rule is a pure
+function of the permission mode and the resolved grant, which are already
+inputs the engine records, so it carries no state of its own. A resumed
+invocation recomputes it and passes the flag like a fresh one; a node reused
+from a previous leg, or completed before this fix, is not re-invoked, so its
+recorded output stands as it was produced and no model input is replayed
+without the rule.
 Every fresh-session node gets `--session-id` with a UUID the
 Claude protocol assigned, so the id is published on
 `node_started` while the node is still RUNNING and a live view can find its
