@@ -194,6 +194,9 @@ type cliProtocol interface {
 	prepareSession(*NodeInvocation) string
 	sessionFromLine([]byte) string
 	buildArgs(NodeInvocation) []string
+	// appendsCompoundShellRule answers whether buildArgs appends
+	// CompoundShellRule to this invocation (#380).
+	appendsCompoundShellRule(NodeInvocation) bool
 	parse(stdout, stderr []byte, sessionStarted func(string)) (NodeOutcome, error)
 	// isLimitCause answers whether a failure cause THIS protocol produced is
 	// its provider's subscription limit — implemented in sessionlimit.go, where
@@ -274,10 +277,7 @@ func withSpawnPause(pause func(context.Context, time.Duration) error) CLIOption 
 
 // NewCLIRunner builds the production runner for one run-wide runtime.
 func NewCLIRunner(runtime Runtime, opts ...CLIOption) *CLIRunner {
-	var protocol cliProtocol = claudeProtocol{}
-	if runtime == RuntimeCodex {
-		protocol = codexProtocol{}
-	}
+	protocol := protocolFor(runtime)
 	r := &CLIRunner{
 		protocol: protocol,
 		binary:   protocol.binary(),
@@ -289,6 +289,22 @@ func NewCLIRunner(runtime Runtime, opts ...CLIOption) *CLIRunner {
 		opt(r)
 	}
 	return r
+}
+
+// protocolFor maps a run-wide runtime to its protocol; anything but codex is
+// claude, the default runtime.
+func protocolFor(runtime Runtime) cliProtocol {
+	if runtime == RuntimeCodex {
+		return codexProtocol{}
+	}
+	return claudeProtocol{}
+}
+
+// AppendsCompoundShellRule reports whether the argv this runner builds for
+// spec carries CompoundShellRule — asked of the same protocol method buildArgs
+// uses, so the run feed records exactly what was spawned (#380).
+func (r *CLIRunner) AppendsCompoundShellRule(spec NodeInvocation) bool {
+	return r.protocol.appendsCompoundShellRule(spec)
 }
 
 // lookPath resolves a command name against PATH. It is a variable rather than a

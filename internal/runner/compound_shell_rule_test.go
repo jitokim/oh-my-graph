@@ -121,3 +121,52 @@ func TestBuildCmd_CodexNeverCarriesTheCompoundShellRule(t *testing.T) {
 		}
 	}
 }
+
+// TestAppendsCompoundShellRule_AgreesWithTheArgv pins the report the run feed
+// records against the argv itself: for every runtime and every case, the
+// runner says it appends the rule exactly when its argv carries the flag, and
+// a FakeRunner of that runtime says the same, so an engine test's record means
+// what a real run's would.
+func TestAppendsCompoundShellRule_AgreesWithTheArgv(t *testing.T) {
+	invocations := map[string]NodeInvocation{
+		"dontAsk + gh prefix": {PermissionMode: "dontAsk", Policy: ToolPolicy{AllowedTools: []string{"Read", "Bash(gh *)"}}},
+		"dontAsk + Bash(*)":   {PermissionMode: "dontAsk", Policy: ToolPolicy{AllowedTools: []string{"Read", "Bash(*)"}}},
+		"auto + gh prefix":    {PermissionMode: "auto", Policy: ToolPolicy{AllowedTools: []string{"Read", "Bash(gh *)"}}},
+	}
+	for _, runtime := range []Runtime{RuntimeClaude, RuntimeCodex} {
+		for name, spec := range invocations {
+			t.Run(string(runtime)+"/"+name, func(t *testing.T) {
+				spec.Prompt = testPrompt
+				r := NewCLIRunner(runtime, WithBinary(string(runtime)))
+				_, inArgv := flagValue(r.buildCmd(context.Background(), spec).Args, "--append-system-prompt")
+				if got := AppendsCompoundShellRule(r, spec); got != inArgv {
+					t.Fatalf("CLIRunner reports %v, but its argv carries the flag: %v", got, inArgv)
+				}
+				fake := NewFakeRunner(nil)
+				fake.SetRuntime(runtime)
+				if got := AppendsCompoundShellRule(fake, spec); got != inArgv {
+					t.Fatalf("FakeRunner reports %v, but a %s argv carries the flag: %v", got, runtime, inArgv)
+				}
+			})
+		}
+	}
+	if !AppendsCompoundShellRule(NewFakeRunner(nil), invocations["dontAsk + gh prefix"]) {
+		t.Fatal("a FakeRunner with no runtime set must answer as claude, the default runtime")
+	}
+}
+
+// unansweringRunner is a NodeRunner that cannot say what its argv carries.
+type unansweringRunner struct{}
+
+func (unansweringRunner) Run(context.Context, NodeInvocation) (NodeOutcome, error) {
+	return NodeOutcome{}, nil
+}
+
+// A runner that cannot answer is reported as not appending the rule, so a
+// record never claims what nothing confirmed was sent.
+func TestAppendsCompoundShellRule_UnansweringRunnerIsFalse(t *testing.T) {
+	spec := NodeInvocation{PermissionMode: "dontAsk", Policy: ToolPolicy{AllowedTools: []string{"Bash(gh *)"}}}
+	if AppendsCompoundShellRule(unansweringRunner{}, spec) {
+		t.Fatal("a runner without AppendsCompoundShellRule was reported as appending the rule")
+	}
+}

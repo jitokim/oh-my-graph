@@ -2960,12 +2960,12 @@ off.
     misreport (for example "all checks passed").
   - *Read scope.* **Nothing confines `Read`, `Glob` and `Grep` to the
     worktree or the working directory.** The runner sets the child's working
-    directory (`cmd.Dir = spec.Cwd`, `internal/runner/cli.go:362`) and passes
+    directory (`cmd.Dir = spec.Cwd`, `internal/runner/cli.go:378`) and passes
     the bare tool names as `--allowedTools` and `--tools`
-    (`internal/runner/claude_protocol.go:97` and `:100`, built by
+    (`internal/runner/claude_protocol.go:105` and `:108`, built by
     `toolPolicyFor`, `internal/coordinator/coordinator.go:927`), with no path
     scope on the rule and no `--add-dir`; `--setting-sources ""` withholds
-    settings, not files. `childenv.Scrub` (`internal/runner/cli.go:363`)
+    settings, not files. `childenv.Scrub` (`internal/runner/cli.go:379`)
     deletes four API-key variables and nothing else. Under `--runtime codex`
     the `--sandbox` value (`internal/runner/codex_protocol.go:51`) bounds
     writes and the network, not reads, and SECURITY.md already says to treat

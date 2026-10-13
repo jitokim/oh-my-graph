@@ -52,6 +52,14 @@ type claudeProtocol struct{}
 func (claudeProtocol) runtime() Runtime { return RuntimeClaude }
 func (claudeProtocol) binary() string   { return defaultClaudeBinary }
 
+// appendsCompoundShellRule is the one place a claude invocation's
+// --append-system-prompt is decided: buildArgs emits the flag on it, and
+// CLIRunner.AppendsCompoundShellRule reports it to the run feed, so the record
+// and the argv cannot disagree (#380).
+func (claudeProtocol) appendsCompoundShellRule(spec NodeInvocation) bool {
+	return NeedsCompoundShellRule(spec.PermissionMode, spec.Policy.AllowedTools)
+}
+
 func (claudeProtocol) prepareSession(spec *NodeInvocation) string {
 	if spec.ResumeSession != "" {
 		return spec.ResumeSession
@@ -64,7 +72,7 @@ func (claudeProtocol) prepareSession(spec *NodeInvocation) string {
 
 func (claudeProtocol) sessionFromLine(_ []byte) string { return "" }
 
-func (claudeProtocol) buildArgs(spec NodeInvocation) []string {
+func (p claudeProtocol) buildArgs(spec NodeInvocation) []string {
 	args := []string{
 		"-p", spec.Prompt,
 		"--output-format", "json",
@@ -108,7 +116,7 @@ func (claudeProtocol) buildArgs(spec NodeInvocation) []string {
 	// Not part of the ceiling: it narrows nothing, it tells a node holding only
 	// scoped Bash rules the command form those rules admit (#380). A resumed
 	// invocation carries it too, since a system prompt is per process.
-	if NeedsCompoundShellRule(spec.PermissionMode, policy.AllowedTools) {
+	if p.appendsCompoundShellRule(spec) {
 		args = append(args, "--append-system-prompt", CompoundShellRule)
 	}
 	if spec.ResumeSession != "" {

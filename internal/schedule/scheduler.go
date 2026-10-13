@@ -925,10 +925,17 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 			eventType = runfeed.EventNodeRetried
 		}
 		retryNumber := attempt
-		invocation.SessionStarted = func(sessionID string) {
-			s.emitEvent(runfeed.Event{Type: eventType, NodeID: node.ID, Retries: retryNumber, SessionID: sessionID, Round: s.feedback.roundOf(node.ID)})
+		spec := s.withConventions(invocation)
+		// Asked of the runner for the exact spec it is handed, because only the
+		// runner knows its runtime, and so the event says what the argv carried.
+		compoundShellRule := ""
+		if runner.AppendsCompoundShellRule(s.runner, spec) {
+			compoundShellRule = runfeed.CompoundShellRuleAppended
 		}
-		outcome, runErr := s.runner.Run(ctx, s.withConventions(invocation))
+		spec.SessionStarted = func(sessionID string) {
+			s.emitEvent(runfeed.Event{Type: eventType, NodeID: node.ID, Retries: retryNumber, SessionID: sessionID, Round: s.feedback.roundOf(node.ID), CompoundShellRule: compoundShellRule})
+		}
+		outcome, runErr := s.runner.Run(ctx, spec)
 		if runErr != nil {
 			// A context kill (the node's own timeout, a halt's cancellation,
 			// Ctrl-C) ends the subprocess before it prints the JSON envelope

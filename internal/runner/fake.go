@@ -31,6 +31,27 @@ type FakeRunner struct {
 	invokedN    map[string]int
 	// cliUnavailable is the scripted answer for CheckCLIAvailable (nil = found).
 	cliUnavailable error
+	// runtime is the runtime whose protocol answers AppendsCompoundShellRule;
+	// empty means claude, as it does for NewCLIRunner.
+	runtime Runtime
+}
+
+// SetRuntime makes the fake answer AppendsCompoundShellRule as a CLIRunner of
+// that runtime would, so an engine test under codex sees what codex sends.
+func (f *FakeRunner) SetRuntime(runtime Runtime) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.runtime = runtime
+}
+
+// AppendsCompoundShellRule satisfies CompoundShellRuleReporter through the
+// real protocol for the fake's runtime, so a scripted run records the rule
+// exactly when the production argv would carry it (#380).
+func (f *FakeRunner) AppendsCompoundShellRule(spec NodeInvocation) bool {
+	f.mu.Lock()
+	runtime := f.runtime
+	f.mu.Unlock()
+	return protocolFor(runtime).appendsCompoundShellRule(spec)
 }
 
 // NewFakeRunner builds a FakeRunner from a scripted outcome map. The map is

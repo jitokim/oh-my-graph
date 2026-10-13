@@ -221,3 +221,20 @@ type TokenUsage struct {
 type NodeRunner interface {
 	Run(ctx context.Context, spec NodeInvocation) (NodeOutcome, error)
 }
+
+// CompoundShellRuleReporter is implemented by a NodeRunner that can say, before
+// it spawns, whether its argv for an invocation will carry CompoundShellRule
+// (#380). It is the runner's question because only the runner knows its
+// runtime: the same dontAsk + `Bash(gh *)` node gets the rule under claude and
+// never under codex.
+type CompoundShellRuleReporter interface {
+	AppendsCompoundShellRule(spec NodeInvocation) bool
+}
+
+// AppendsCompoundShellRule asks r whether spec's argv carries
+// CompoundShellRule. A runner that cannot say is reported as not appending it,
+// so a record never claims a rule nothing confirmed was sent.
+func AppendsCompoundShellRule(r NodeRunner, spec NodeInvocation) bool {
+	reporter, ok := r.(CompoundShellRuleReporter)
+	return ok && reporter.AppendsCompoundShellRule(spec)
+}

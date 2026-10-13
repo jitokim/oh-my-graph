@@ -13,6 +13,11 @@ type codexProtocol struct{}
 func (codexProtocol) runtime() Runtime { return RuntimeCodex }
 func (codexProtocol) binary() string   { return defaultCodexBinary }
 
+// appendsCompoundShellRule is always false: CompoundShellRule answers how
+// Claude's dontAsk matches a Bash prefix rule, which codex has no counterpart
+// of, and codex's argv never carries it (#380).
+func (codexProtocol) appendsCompoundShellRule(NodeInvocation) bool { return false }
+
 func (codexProtocol) prepareSession(_ *NodeInvocation) string {
 	return ""
 }

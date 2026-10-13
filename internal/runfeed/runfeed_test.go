@@ -35,6 +35,25 @@ func TestEvent_OmitsEmptyUsage(t *testing.T) {
 	}
 }
 
+// The #380 record is one exact key and value on the event that opens an
+// attempt, and absent from every event that does not set it.
+func TestEvent_CompoundShellRuleKey(t *testing.T) {
+	encoded, err := json.Marshal(Event{Type: EventNodeStarted, NodeID: "scoped", CompoundShellRule: CompoundShellRuleAppended})
+	if err != nil {
+		t.Fatalf("marshal event: %v", err)
+	}
+	if want := `"compound_shell_rule":"appended: dontAsk + Bash prefix grant (#380)"`; !strings.Contains(string(encoded), want) {
+		t.Fatalf("node_started lacks %s: %s", want, encoded)
+	}
+	encoded, err = json.Marshal(Event{Type: EventNodeStarted, NodeID: "blanket"})
+	if err != nil {
+		t.Fatalf("marshal event: %v", err)
+	}
+	if strings.Contains(string(encoded), "compound_shell_rule") {
+		t.Fatalf("an attempt without the rule must not carry the key: %s", encoded)
+	}
+}
+
 // TestStreamWriter_StampsEveryEvent proves Emit stamps the schema version, the
 // run id, and a parseable RFC 3339 timestamp onto every line, in emission
 // order, one JSON object per line.
