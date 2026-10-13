@@ -268,6 +268,12 @@ ADR 0040 carries neither key on an unisolated policy; for those, absent
 `setting_sources` inside a non-empty `tool_policies` still means the list did
 not bind.
 
+Whether a node was also told to keep each Bash call to one plain command
+(#380) is **not** recorded here: a policy holds no permission mode, and a
+hand-written `run` records no policy at all. It is on the stream instead, as
+`compound_shell_rule` on the event that opens each attempt — see "The compound
+shell rule" under `events.jsonl` below.
+
 `build_evidence` is the launch-time build-evidence question and its answer
 (ADR 0030), written on every auto-mode launch and absent on a `run` of a
 hand-written graph, which never asks it — and on every run that predates the
@@ -529,10 +535,10 @@ write leaves its event on the stream and its `⚠` on the progress feed.
 | `event` | Extra fields | Emitted when |
 |---|---|---|
 | `run_started` | `phase`, `cost_usd`, `cost_unknown`, `usage` *(optional)* | A leg begins. With no `phase`, a scheduler leg, before any node launches — this is every `run_started` written before ADR 0023 and every one a `run` or `resume` leg will ever write. When an auto plan commits, this unphased boundary carries the planner call's accounting. With `phase: "planning"`, the leg an `auto` run's PLANNER CALL runs inside, before any graph exists; see "Two `run_started`s per auto run" below. |
-| `node_started` | `node_id`, `session_id` *(optional)* | A node (model-CLI node or gate) begins execution. |
+| `node_started` | `node_id`, `session_id`, `compound_shell_rule` *(optional)* | A node (model-CLI node or gate) begins execution. |
 | `node_passed` | `node_id`, `verdict` (`"PASS"`), `cost_usd`, `cost_unknown`, `usage`, `session_id`, `retries`, `detail`, `provenance` *(optional)* | A node reaches a terminal PASS (including an approved gate). `provenance` says **how** — see below. |
 | `node_failed` | `node_id`, `verdict` (`"FAIL"`), `cost_usd`, `cost_unknown`, `usage`, `session_id`, `retries`, `detail` | A node reaches a terminal FAIL (any check, the verifier, its budget, the runner, or a rejected gate). |
-| `node_retried` | `node_id`, `retries` (1-based retry ordinal), `session_id`, `round`, `cost_usd`, `cost_unknown`, `usage` *(optional)* | A retry attempt begins after a failed one — or a feedback arc fires (ADR 0010): the declarer's non-final judgment failure re-arms its loop body, with `round` the 1-based round now beginning, `retries` 0, no `session_id` (the re-run's ids arrive on its own `node_started`s), and a `detail` of the form `feedback round 1/2: re-running impl → review`. That feedback form carries the completed declarer attempt's accounting because no terminal event is emitted for it. |
+| `node_retried` | `node_id`, `retries` (1-based retry ordinal), `session_id`, `round`, `cost_usd`, `cost_unknown`, `usage`, `compound_shell_rule` *(optional)* | A retry attempt begins after a failed one — or a feedback arc fires (ADR 0010): the declarer's non-final judgment failure re-arms its loop body, with `round` the 1-based round now beginning, `retries` 0, no `session_id` (the re-run's ids arrive on its own `node_started`s), and a `detail` of the form `feedback round 1/2: re-running impl → review`. That feedback form carries the completed declarer attempt's accounting because no terminal event is emitted for it. |
 | `run_finished` | `outcome` (`"passed"` \| `"failed"` \| `"paused"`), `detail`, `cost_usd`, `cost_unknown`, `usage` *(optional)* | The leg ends — every launch settled. A plan rejected before a graph exists carries the paid planner call's accounting here. A gate pause is `"paused"`, not `"failed"`. A subscription session-limit pause (ADR 0009) is also `"paused"`, distinguished by a `detail` naming the limited node(s) and the CLI's own limit message (an additive field — no schema bump; absent on every other outcome). The limited nodes carry **no** terminal node event: they are un-run, not FAILED, and re-run on `resume --retry-failed`. |
 | `gate_paused` | `node_id` | *(schema 2)* A gate node decided to pause: no new work launches, in-flight siblings drain, and the leg closes with outcome `"paused"`. `node_id` is the gate a resume must decide. |
 | `gate_approved` | `node_id` | *(schema 2)* A gate decision of approve was applied — a resumed leg replaying `--approve`, or any leg reaching a gate `run --auto-approve` pre-approved at launch; the gate's terminal `node_passed` follows. |
@@ -618,6 +624,30 @@ so `node_retried` supersedes the failed attempt's transcript/thread reference.
 The in-repo transcript-tail consumer currently understands Claude's
 `~/.claude/projects` layout; Codex session ids remain useful for CLI resume and
 external consumers even though that live tail is unavailable.
+
+**The compound shell rule** (#380). `node_started` and `node_retried` carry
+
+```json
+"compound_shell_rule": "appended: dontAsk + Bash prefix grant (#380)"
+```
+
+when the attempt they open was spawned with the engine's
+one-command-per-Bash-call rule appended to its system prompt
+(`--append-system-prompt`). That happens exactly when the node runs under
+`dontAsk` and its effective `allowed_tools` (the node's own on a hand-written
+`run`, its `tool_policies` entry under `auto`) holds a scoped Bash rule such as
+`Bash(gh *)` and no blanket `Bash` or `Bash(*)`. That one string is the only
+value. The key is **absent** on every other attempt: a blanket Bash grant, any
+other permission mode, every attempt of a `--runtime codex` run (codex has no
+such flag), and a gate. It appears per attempt, so a retried node that got the
+rule shows it on its `node_started` and on each `node_retried` that opens a
+new attempt. A feedback `node_retried`, which re-arms a loop and opens no
+attempt of its own, never carries it. The engine takes the value from the
+runner's own answer for the invocation it spawns, which is the same check that
+builds the argv. No copy is stored, so the record cannot disagree with what
+was sent. The key is not part of `state.json` and not part of any node hash.
+It is an optional additive field, **no schema bump**: a consumer that has
+never heard of it parses these events exactly as before.
 
 The gate decision events (`gate_paused`, `gate_approved`, `gate_rejected`,
 added in schema **2**) mark the decision itself; an approved/rejected gate
