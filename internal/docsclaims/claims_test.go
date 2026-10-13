@@ -63,7 +63,7 @@ var falsifiedByADR0032 = []falsified{
 		absolute:  regexp.MustCompile(`as every planned node('s)? (always )?has`),
 		qualifier: optIn,
 		address: "internal/coordinator/coordinator.go:960-963 sets policy.StrictMCPConfig = false " +
-			"under --accept-loaded-user-config, and internal/runner/claude_protocol.go:65-67 " +
+			"under --accept-loaded-user-config, and internal/runner/claude_protocol.go:102-104 " +
 			"emits --strict-mcp-config only when it is true, so such a node's argv carries none",
 		anchors: []string{"if loadedUserConfig {", "if policy.StrictMCPConfig {"},
 	},

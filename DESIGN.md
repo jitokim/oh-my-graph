@@ -51,6 +51,7 @@ claude -p "<rendered prompt>" --output-format json --permission-mode <mode> \
   [ --allowedTools "<comma,joined>" ] \
   [ --tools "<comma,joined>" ] [ --strict-mcp-config ] \
   [ --disallowedTools "<comma,joined>" ] \
+  [ --append-system-prompt "<runner.CompoundShellRule>" ] \
   [ --resume <session_id> ] [ --session-id <uuid> ]
 ```
 
@@ -76,6 +77,19 @@ only `AllowedTools`, so its argv is the first line plus `--allowedTools`, then
 `budget_usd` (that flag is not part of the ceiling — it rides on
 `NodeInvocation.BudgetUSD`, which the scheduler passes for every node, planned
 or hand-written).
+`--append-system-prompt` is not part of the ceiling either. It is emitted, for
+a planned or hand-written node, fresh or resumed, exactly when
+`runner.NeedsCompoundShellRule` holds: the mode is `dontAsk`, the node's
+`AllowedTools` holds a scoped Bash rule (`Bash(gh *)`), and it holds no blanket
+`Bash` or `Bash(*)` (#380). Under `dontAsk` a scoped rule admits a command only
+when the whole command plainly matches it, so a node's own
+`gh pr ready 379; echo "exit=$?"` was denied though it held `gh`. The flag
+carries `runner.CompoundShellRule` — one command per Bash call, no compound
+shell or redirection, `git -C <dir>` rather than `cd`, report a denial rather
+than work around it — beside the `-p` prompt, which it never alters. It does
+not list the node's patterns, so it is not the per-node grant listing
+considered and declined below; it states the one command form every scoped
+rule shares.
 Every fresh-session node gets `--session-id` with a UUID the
 Claude protocol assigned, so the id is published on
 `node_started` while the node is still RUNNING and a live view can find its
@@ -2948,7 +2962,7 @@ off.
     worktree or the working directory.** The runner sets the child's working
     directory (`cmd.Dir = spec.Cwd`, `internal/runner/cli.go:362`) and passes
     the bare tool names as `--allowedTools` and `--tools`
-    (`internal/runner/claude_protocol.go:60` and `:63`, built by
+    (`internal/runner/claude_protocol.go:97` and `:100`, built by
     `toolPolicyFor`, `internal/coordinator/coordinator.go:927`), with no path
     scope on the rule and no `--add-dir`; `--setting-sources ""` withholds
     settings, not files. `childenv.Scrub` (`internal/runner/cli.go:363`)
