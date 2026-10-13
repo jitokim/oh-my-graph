@@ -1489,6 +1489,11 @@ func printPlanForRuntime(w io.Writer, plan coordinator.Plan, specPath string, ru
 		} else if len(node.AllowedTools) > 0 {
 			line += " [tools: " + strings.Join(node.AllowedTools, ", ") + "]"
 		}
+		// Beside the grant it follows from, and asked of the policy that will
+		// be spawned, not of the node's declaration (#380).
+		if getsCompoundShellRule(runtime, node, plan.ToolPolicies) {
+			line += " [one-command-per-Bash-call rule appended (#380): dontAsk with a Bash prefix grant]"
+		}
 		if runtime != runner.RuntimeCodex && node.Agent != "" {
 			line += " [agent: " + node.Agent + "]"
 		}

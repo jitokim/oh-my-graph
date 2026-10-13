@@ -546,6 +546,34 @@ func TestPrintPlan_NamesAnAgentDeclinedByFlag(t *testing.T) {
 	}
 }
 
+// TestPrintPlanForRuntime_NamesTheCompoundShellRuleBesideTheGrant (#380): the
+// planned node whose argv will carry runner.CompoundShellRule says so on its own
+// line, beside its [tools: ...]; a Bash(*) node does not. Read from the policy
+// that will be spawned, so the node's declaration alone cannot turn it on.
+func TestPrintPlanForRuntime_NamesTheCompoundShellRuleBesideTheGrant(t *testing.T) {
+	g, err := graph.Parse([]byte(`{"name":"r","version":"1","nodes":[` +
+		`{"id":"scoped","prompt":"p","permission_mode":"dontAsk","allowed_tools":["Read","Bash(gh *)"]},` +
+		`{"id":"blanket","prompt":"p","permission_mode":"dontAsk","allowed_tools":["Read","Bash(*)"]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := coordinator.Plan{Graph: g, ToolPolicies: map[string]runner.ToolPolicy{
+		"scoped":  {AllowedTools: []string{"Read", "Bash(gh *)"}},
+		"blanket": {AllowedTools: []string{"Read", "Bash(*)"}},
+	}}
+	const note = " [one-command-per-Bash-call rule appended (#380): dontAsk with a Bash prefix grant]"
+
+	var out strings.Builder
+	printPlanForRuntime(&out, plan, "", runner.RuntimeClaude, nil, false, nil, conventionsDisclosure{}, nil)
+	got := out.String()
+	if want := "  - scoped [tools: Read, Bash(gh *)]" + note + "\n"; !strings.Contains(got, want) {
+		t.Errorf("plan must carry the note on the scoped node's line %q:\n%s", want, got)
+	}
+	if want := "  - blanket [tools: Read, Bash(*)]\n"; !strings.Contains(got, want) {
+		t.Errorf("a Bash(*) node gets no rule, so its line must be %q:\n%s", want, got)
+	}
+}
+
 // TestPrintPlan_WarnsAboutUnisolatedCheckouts pins the plan-time warning for
 // the reported scenario (#103): a goal spanning two local repositories gets
 // told, in the printout `auto --plan-only` also renders, that the second one
