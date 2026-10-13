@@ -1517,10 +1517,7 @@ func (s *Scheduler) buildInvocation(ctx context.Context, node graph.Node, h *han
 		return runner.NodeInvocation{}, err
 	}
 
-	permissionMode := node.PermissionMode
-	if permissionMode == "" {
-		permissionMode = s.defaultPermissionMode
-	}
+	permissionMode := EffectivePermissionMode(node, s.defaultPermissionMode)
 
 	policy, err := s.policyFor(node)
 	if err != nil {
@@ -1544,6 +1541,17 @@ func (s *Scheduler) buildInvocation(ctx context.Context, node graph.Node, h *han
 		Timeout:   node.TimeoutDuration(),
 		Policy:    policy,
 	}, nil
+}
+
+// EffectivePermissionMode is the mode node is spawned under: its own
+// permission_mode, or defaultMode when it declares none. Exported so a screen
+// that describes a run before it starts (`run --dry-run`, the `auto` plan)
+// resolves the mode the same way the invocation does (#380).
+func EffectivePermissionMode(node graph.Node, defaultMode string) string {
+	if node.PermissionMode != "" {
+		return node.PermissionMode
+	}
+	return defaultMode
 }
 
 // selfOf is what the `self` namespace resolves against for node: its id, and
