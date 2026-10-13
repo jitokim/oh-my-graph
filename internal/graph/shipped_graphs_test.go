@@ -298,6 +298,100 @@ func TestRecheckVerdictIsThreeValued(t *testing.T) {
 	}
 }
 
+// shepherdPrompt returns merge-shepherd's node `id` and its prompt with the
+// whitespace collapsed, so a pin survives the YAML's line wrapping.
+func shepherdPrompt(t *testing.T, id string) (Node, string) {
+	t.Helper()
+	g, err := LoadFile(filepath.Join("..", "..", "graphs", "merge-shepherd.yaml"))
+	if err != nil {
+		t.Fatalf("load merge-shepherd: %v", err)
+	}
+	for _, n := range g.Graph.Nodes {
+		if n.ID == id {
+			return n, strings.Join(strings.Fields(n.Prompt), " ")
+		}
+	}
+	t.Fatalf("merge-shepherd has no %s node", id)
+	return Node{}, ""
+}
+
+// TestTriageReportsTheCodeRabbitReviewItAnswered pins triage's half of #382.
+// recheck can only tell a CodeRabbit CHANGES_REQUESTED triage already answered
+// by reply from one nobody answered if triage says which review it answered —
+// and only if that is a timestamp recheck can check against GitHub, which a
+// time off the model's own clock is not.
+func TestTriageReportsTheCodeRabbitReviewItAnswered(t *testing.T) {
+	triage, prompt := shepherdPrompt(t, "triage")
+
+	for needle, why := range map[string]string{
+		"coderabbit-answered-through: <T>":   "the line recheck's exception reads; without it every answered review latches",
+		"coderabbit-answered-through: none":  "the form for no CodeRabbit thread replied to, so a missing line is never the normal case",
+		"`TRIAGED 0`, then on the next line": "the zero-comment early stop must still write the line",
+		"COPIED verbatim":                    "T must come from gh, not be composed",
+		"from the `submittedAt` field":       "recheck matches T against each review's `at`, which is `submittedAt`",
+		"NEVER take <T> from your own clock": "a clock time matches no review, and one later than the bot's re-review would excuse it",
+		"from `now`":                         "`now` is a clock too",
+	} {
+		if !strings.Contains(prompt, needle) {
+			t.Errorf("triage's prompt never says %q — %s", needle, why)
+		}
+	}
+
+	// The verdict line is untouched: the new line rides after the table.
+	re := regexp.MustCompile(triage.SuccessCheck.ResultMatches)
+	if !re.MatchString("TRIAGED 2\n| c1 | replied: out of scope |\ncoderabbit-answered-through: 2026-10-13T00:41:40Z") {
+		t.Errorf("triage's pattern %q rejects a verdict carrying the answered-through line", re)
+	}
+	if re.MatchString("coderabbit-answered-through: none\nTRIAGED 0") {
+		t.Errorf("triage's pattern %q accepts the answered-through line ahead of the verdict", re)
+	}
+}
+
+// TestRecheckWaitsOutACodeRabbitReviewTriageAnswered pins recheck's half of
+// #382: a CodeRabbit CHANGES_REQUESTED triage answered by reply, with no push,
+// is SELF-RESOLVING — the bot re-reviews on its own — but only under a
+// three-part condition, only an APPROVED settles it green, and running out of
+// time is UNSETTLED, never RECHECKED. LATCHED itself stays a halt.
+func TestRecheckWaitsOutACodeRabbitReviewTriageAnswered(t *testing.T) {
+	recheck, prompt := shepherdPrompt(t, "recheck")
+
+	if !strings.Contains(recheck.Prompt, "{{ artifacts.triage | inline }}") {
+		t.Fatal("recheck no longer inlines triage's artifact — the answered-through line cannot reach it")
+	}
+
+	for needle, why := range map[string]string{
+		"(1) triage's report carries `coderabbit-answered-through: <T>`, not `none`":                 "condition 1: no answered-through line, no exception",
+		"(2) the CHANGES_REQUESTED review's `at` is <= <T>":                                          "condition 2: a review newer than triage's answer is a fresh request",
+		"(3) its `oid` equals `head`":                                                                "condition 3: a review on a replaced commit is not the one being re-reviewed",
+		"ALL THREE hold":                                                                             "the conditions are a conjunction",
+		"wait for a NEWER coderabbitai review on `head` — one whose `at` is later than <T>":          "the settle rule: only a review after triage's answer says anything new",
+		"APPROVED → the bot's condition is green":                                                    "the one settle that may lead to RECHECKED",
+		"CHANGES_REQUESTED → LATCHED":                                                                "the bot asked again after reading the replies",
+		"A newer COMMENTED review does NOT settle it":                                                "GitHub's COMMENTED does not clear a CHANGES_REQUESTED",
+		"NEVER let a COMMENTED resolve this case to green or RECHECKED":                              "otherwise the bot's latest-review rule would read a COMMENTED as green",
+		"answer UNSETTLED <head>":                                                                    "the timeout over a re-review still coming is the operator's call at the gate",
+		"never RECHECKED":                                                                            "an unanswered CHANGES_REQUESTED must not reach merge as green",
+		"`at` is later than <T>, or one with no answered-through line at all, stays LATCHED at once": "a request after triage's answer is the ordinary latch",
+		"EQUALS, character for character, the `at` of some coderabbitai review":                      "T is only trusted when it names a real review",
+		"is treated as ABSENT, and the review is LATCHED at once":                                    "a made-up T must not open the exception",
+		"no watch started past minute 13":                                                            "the exception waits inside the existing budget, not a new one",
+	} {
+		if !strings.Contains(prompt, needle) {
+			t.Errorf("recheck's prompt never says %q — %s", needle, why)
+		}
+	}
+
+	// The halt shape is unchanged: LATCHED is still out of the pattern, the
+	// pattern itself is the one #382 was told not to touch.
+	const wantPattern = "^[*_`\\s]*(RECHECKED|UNSETTLED)[*_`\\s:]+[0-9a-fA-F]{7,40}\\b"
+	if got := recheck.SuccessCheck.ResultMatches; got != wantPattern {
+		t.Errorf("recheck's result_matches is %q, want %q unchanged", got, wantPattern)
+	}
+	if strings.Contains(recheck.SuccessCheck.ResultMatches, "LATCHED") {
+		t.Error("recheck's result_matches admits LATCHED — a latch must halt before the gate")
+	}
+}
+
 // TestBothWaitsSeparateLatchesFromTimeouts pins the half of the latch grammar
 // that no regex can hold, which is most of it.
 //

@@ -141,6 +141,33 @@ are polled, and if the budget expires with them byte-for-byte unchanged, they
 are latched, not slow. **A latch dominates:** if anything is latched, the
 verdict is `LATCHED` even when other entries are legitimately still in flight.
 
+> **Update (2026-10-13):** the bot's `CHANGES_REQUESTED` row gets one exception
+> ([#382]). The row above stands for every other case. The exception is a review
+> that `triage` already answered in the same run, by replying and without
+> pushing: CodeRabbit reads the replies and re-reviews the same commit on its
+> own, so that latch has already been acted on. Run `20261013-003719` (PR #381)
+> latched at 00:43:15 on a review triage had answered a minute earlier, and the
+> bot APPROVED at 00:43:23. That clearing by itself is what §4 calls
+> falsification of a row, so the row moves for this case only.
+>
+> `triage` now ends its report with `coderabbit-answered-through: <T>`, where
+> `<T>` is the `submittedAt` of the newest coderabbitai review it answered by
+> reply, copied verbatim from its `gh pr view --json reviews` read and never
+> from a clock. If it answered none, it writes `coderabbit-answered-through:
+> none`. At `recheck`, the bot's `CHANGES_REQUESTED` is **self-resolving** only
+> if all three of these hold: the line carries a `<T>` and not `none`, the
+> review's `at` is ≤ `<T>`, and its `oid` is head. A `<T>` that equals no real
+> coderabbitai review's `at` counts as absent, so the review latches as before.
+> While the exception holds, `recheck` re-reads within its existing wait budget
+> and waits for a review newer than `<T>`. A newer `APPROVED` makes the bot
+> green. A newer `CHANGES_REQUESTED` is `LATCHED`. A `COMMENTED` never settles
+> it, because on GitHub it does not clear a `CHANGES_REQUESTED`. If neither
+> arrives before the budget ends, the answer is `UNSETTLED`, never `RECHECKED`.
+> A `CHANGES_REQUESTED` newer than `<T>`, or one with no answered-through
+> line, still latches at once. No `result_matches` pattern changed.
+>
+> [#382]: https://github.com/jitokim/oh-my-graph/issues/382
+
 `mergeStateStatus` is otherwise *reported, not judged*. `BEHIND`, `BLOCKED`,
 `UNSTABLE` and `HAS_HOOKS` on an otherwise-green PR ride along on the
 `RECHECKED` line as `mergeable: <state>`, next to `review_decision: <state>`,

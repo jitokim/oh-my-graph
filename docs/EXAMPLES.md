@@ -815,7 +815,13 @@ killed run left behind is listed by
 (#360). Neither wait polls a condition a clock cannot clear: a review
 that requested changes, a run awaiting approval, a conflicting branch and a
 rate-limited bot are reported as `LATCHED <what>; unblock: <act>`, which fails
-the node at once instead of spending the timeout (ADR 0021).
+the node at once instead of spending the timeout (ADR 0021). The one
+exception is a CodeRabbit `CHANGES_REQUESTED` that `triage` already answered by
+replying, without a push. Triage reports it as
+`coderabbit-answered-through: <T>`, and `recheck` waits for the bot to
+re-review instead of latching. A newer `APPROVED` is green, and a newer
+`CHANGES_REQUESTED` is `LATCHED`. If neither arrives in time, the answer is
+`UNSETTLED` (#382).
 Its merge verdict is deliberately two-valued, `MERGED <sha>` or
 `WITHHELD <reason>`, because declining to merge past an unfinished review is
 the graph working. But the node does not take its own word for which: it

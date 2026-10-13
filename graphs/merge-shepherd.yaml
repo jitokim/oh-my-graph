@@ -500,7 +500,8 @@ nodes:
       Then list every comment:
       `gh api repos/{owner}/{repo}/pulls/{{ inputs.pr }}/comments` plus the
       review bodies from `gh pr view {{ inputs.pr }} --json reviews`. If
-      there are zero comments, reply `TRIAGED 0` and stop.
+      there are zero comments, reply `TRIAGED 0`, then on the next line
+      `coderabbit-answered-through: none`, and stop.
       For each comment, do exactly one of:
         - Mechanical and within the PR's scope → apply it in
           /tmp/shepherd-triage-{{ inputs.pr }}, run the repo's checks
@@ -543,6 +544,19 @@ nodes:
       and this node has no progress to report — only an outcome. The triage
       table starts on the SECOND line: one row per comment → the action
       taken (applied in <commit> / replied: <reason>).
+      After the table, ONE more line in exactly this form, which recheck
+      reads:
+        coderabbit-answered-through: <T>
+      where <T> is the `submittedAt` of the NEWEST coderabbitai review whose
+      comments you read and answered with a reply — COPIED verbatim, RFC3339
+      as gh printed it, from the `submittedAt` field of that review in your
+      `gh pr view {{ inputs.pr }} --json reviews` output (a review whose
+      `author.login` is coderabbitai). NEVER take <T> from your own clock, from
+      `now`, or from a comment's time: recheck accepts it only if it equals a
+      real coderabbitai review's `submittedAt`. If you replied to no CodeRabbit
+      thread — `TRIAGED 0`, only human comments, or every CodeRabbit comment
+      applied by a pushed commit — write instead:
+        coderabbit-answered-through: none
       Anything you need to qualify goes in that table or below it, never
       above the first line: a line of context ahead of the token fails this
       node even when every comment was actioned. If you could not
@@ -572,6 +586,11 @@ nodes:
     #
     # `BLOCKED fork PR` (step 7) matches nothing here on purpose: like every
     # other BLOCKED it fails the node, so a fork PR halts before the merge gate.
+    #
+    # The `coderabbit-answered-through:` line after the table (#382) is for
+    # recheck, not for this pattern, which reads the first line only. It is the
+    # `submittedAt` of the newest CodeRabbit review triage answered by reply,
+    # and recheck accepts it only when it equals a real bot review's `at`.
     success_check:
       exit_zero: true
       result_matches: '^[*_`\s]*TRIAGED[*_`\s:]*[0-9]+[*_` \t]*(\n|$)'
@@ -672,6 +691,21 @@ nodes:
   # over something still moving is the operator's call and reaches the gate.
   # That is why one halts and the other passes, even though halting discards the
   # same paid pipeline in both cases. ADR 0021 is the rule this instantiates.
+  #
+  # One CodeRabbit CHANGES_REQUESTED is NOT a latch, and it is the one triage
+  # already acted on (#382). When triage answers that review by REPLYING, with
+  # no push, the bot reads the replies and re-reviews the same commit on its
+  # own: run 20261013-003719 (PR #381) latched at 00:43:15 on a review triage had
+  # answered a minute earlier, and CodeRabbit APPROVED at 00:43:23. So triage
+  # ends its report with `coderabbit-answered-through: <T>` — the `submittedAt`
+  # of the newest bot review it answered, copied from gh, never a clock — and
+  # recheck treats a CHANGES_REQUESTED on `head` with `at` <= <T> as
+  # SELF-RESOLVING: it re-reads until a newer APPROVED (green) or
+  # CHANGES_REQUESTED (LATCHED) arrives, and answers UNSETTLED if neither does
+  # in its budget. A COMMENTED does not settle it — on GitHub it does not clear
+  # a CHANGES_REQUESTED — and a <T> equal to no real bot review's `at` counts
+  # as absent, so a made-up timestamp latches exactly as before. LATCHED itself
+  # is unchanged: still out of the pattern, still a halt.
   #
   # A word on what this node does NOT do: it judges the SHA, not the content of
   # the review on it. An incremental review that COMMENTS on triage's fix passes
@@ -802,7 +836,9 @@ nodes:
         - coderabbitai's LATEST review on `head` is CHANGES_REQUESTED → read
           the review. Resolve the threads or push a fix, then re-request the
           review (`@coderabbitai review`). The bot reviews what it is asked to,
-          so this one does clear from that act.
+          so this one does clear from that act. ONE exception, below: a review
+          triage already answered without pushing is SELF-RESOLVING, not
+          LATCHED.
         - a reviewer OTHER than coderabbitai holds an open request for changes
           (the GREEN rule above) → read that review. This one does NOT clear
           from a re-request or a push: `unblock:` is that reviewer re-reviewing
@@ -848,6 +884,38 @@ nodes:
       that 5-minute bound no longer applies. Either way, say LATCHED and name
       the act: approve the run in the Actions tab, drop the dead required
       context, or post `@coderabbitai review`.
+      The one exception to the bot's CHANGES_REQUESTED latch. Triage's report
+      above ends with a line `coderabbit-answered-through: <T>` or
+      `coderabbit-answered-through: none`. When triage replied to that very
+      review without pushing, CodeRabbit reads the replies and re-reviews the
+      same commit on its own, often within seconds — the latch was already
+      acted on. That CHANGES_REQUESTED is SELF-RESOLVING only if ALL THREE hold:
+        (1) triage's report carries `coderabbit-answered-through: <T>`, not
+            `none` and not missing, AND
+        (2) the CHANGES_REQUESTED review's `at` is <= <T>, AND
+        (3) its `oid` equals `head`.
+      Accept <T> only if it EQUALS, character for character, the `at` of some
+      coderabbitai review in your own read. A <T> that matches no real
+      coderabbitai review — later than every review, say, or written in
+      another format — is treated as ABSENT, and the review is LATCHED at once.
+      A CodeRabbit CHANGES_REQUESTED whose `at` is later than <T>, or one with
+      no answered-through line at all, stays LATCHED at once exactly as above:
+      the bot asked again AFTER triage answered, or nobody answered it.
+      When the exception holds, wait for a NEWER coderabbitai review on
+      `head` — one whose `at` is later than <T> — by re-making the same
+      projected `gh pr view` read (no `sleep`; this CLI refuses it), and the
+      watch below when checks are pending, inside the same wait budget below
+      on `now` — no watch started past minute 13. Only an APPROVED or a CHANGES_REQUESTED newer than <T> settles
+      it, and the newest of those decides:
+        - APPROVED → the bot's condition is green; judge every other
+          condition as normal (RECHECKED if all of them are green).
+        - CHANGES_REQUESTED → LATCHED, as above.
+      A newer COMMENTED review does NOT settle it: on GitHub a COMMENTED does
+      not clear a CHANGES_REQUESTED, so keep re-reading, and NEVER let a
+      COMMENTED resolve this case to green or RECHECKED, even though it is
+      then the bot's latest review. If no APPROVED or CHANGES_REQUESTED newer
+      than <T> has arrived by the time the budget below ends, answer
+      UNSETTLED <head> naming the unanswered re-review — never RECHECKED.
       A latch DOMINATES: if anything is latched, the answer is LATCHED even
       when other entries are still legitimately in flight.
 
@@ -913,7 +981,9 @@ nodes:
           node deliberately, so the run halts here rather than offering the
           operator a gate over a PR that cannot land.
         - UNSETTLED <sha> — the time ran out while a SELF-RESOLVING condition
-          was still moving on <sha>; name which entry and its current status.
+          was still moving on <sha>; name which entry and its current status
+          (or that CodeRabbit had not yet re-reviewed past the review triage
+          answered).
       LATCHED and UNSETTLED are the same fact — "this did not conclude" — split
       by the only question the operator actually has to answer: do I do
       something, or do I wait? That answer must be the FIRST WORD of your
@@ -1010,6 +1080,10 @@ nodes:
   # fresh run once CI has settled is the way back. A LATCHED recheck never
   # reaches this gate at all: it fails the node and halts the run, and the act
   # that unsticks the PR is on the first line of `<run-id>/failed/recheck.out`.
+  # The one CodeRabbit CHANGES_REQUESTED that is not a latch — the review triage
+  # answered by replying, without a push (#382) — reaches here as RECHECKED only
+  # once the bot APPROVED after triage's answer, and as UNSETTLED if it had not
+  # re-reviewed by the end of recheck's wait.
   - id: approve-merge
     type: gate
     depends_on: [recheck]
