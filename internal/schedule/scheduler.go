@@ -377,6 +377,10 @@ type Options struct {
 	// scheduler leg opened, currently the planner phase of an auto run. It is
 	// attached to run_started so the phase transition is durable in one event.
 	OpeningAccounting RunAccounting
+	// Engine is the build stamp of the binary running this leg (#373), copied
+	// onto run_started so each leg names the build that ran it. The zero value
+	// writes no stamp.
+	Engine runfeed.Engine
 }
 
 // RunAccounting is provider accounting attached to a run lifecycle boundary.
@@ -421,6 +425,7 @@ type Scheduler struct {
 	// nodeRounds seeds the feedback state per Run — see Options.NodeRounds.
 	nodeRounds map[string]int
 	opening    RunAccounting
+	engine     runfeed.Engine
 	// serializedVerify is the set of node ids whose verifications are mutually
 	// exclusive run-wide — see Options.SerializedVerifyNodes.
 	serializedVerify map[string]bool
@@ -511,6 +516,7 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 		settledNodes:          opts.SettledNodes,
 		nodeRounds:            opts.NodeRounds,
 		opening:               opts.OpeningAccounting,
+		engine:                opts.Engine,
 		serializedVerify:      opts.SerializedVerifyNodes,
 		heartbeat:             heartbeatInterval,
 		newTicker:             newTicker,
@@ -536,6 +542,7 @@ func (s *Scheduler) Run(ctx context.Context, g *graph.Graph, h *handoff.Handoff,
 	s.emitEvent(runfeed.Event{
 		Type: runfeed.EventRunStarted, CostUSD: s.opening.CostUSD,
 		CostUnknown: s.opening.CostUnknown, Usage: s.opening.Usage,
+		Engine: s.engine,
 	})
 	err := s.execute(ctx, g, h, led)
 	s.emitEvent(runFinishedEvent(err))

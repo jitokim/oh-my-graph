@@ -1180,7 +1180,10 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 		OutputTokens: flags.planningUsage.OutputTokens, ReasoningOutputTokens: flags.planningUsage.ReasoningOutputTokens,
 	})
 
-	recorder, err := newRunRecorder(runID, graphSourcePath, rawSource, g, fragmentsResolved, flags, toolPolicies, planningCostUSD, goal)
+	// One stamp for the leg, so its state.json and its run_started name the
+	// same build (#373).
+	engine := currentEngine()
+	recorder, err := newRunRecorder(runID, graphSourcePath, rawSource, g, fragmentsResolved, flags, toolPolicies, planningCostUSD, goal, engine)
 	if err != nil {
 		return fmt.Errorf("prepare run snapshot: %w", err)
 	}
@@ -1253,6 +1256,7 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 		// A gate pause also stores the gate's shown description (#348).
 		Recorder:  describePauses(recorder, g, h),
 		EventSink: leg.feed,
+		Engine:    engine,
 		OpeningAccounting: schedule.RunAccounting{
 			CostUSD: planningCostUSD, CostUnknown: flags.planningCostUnknown,
 			Usage: runfeed.TokenUsage{
@@ -1309,7 +1313,7 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 // unresolved-fragment backstop. The rawSource-verbatim shortcut is only legal
 // for a document resolution never touched; with that, resume works on
 // fragment-free material by construction.
-func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Graph, fragmentsResolved bool, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, planningCostUSD float64, goal *runstate.GoalRef) (*runstate.SnapshotRecorder, error) {
+func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Graph, fragmentsResolved bool, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, planningCostUSD float64, goal *runstate.GoalRef, engine runfeed.Engine) (*runstate.SnapshotRecorder, error) {
 	graphJSON := rawSource
 	if fragmentsResolved || !json.Valid(rawSource) {
 		marshaled, err := json.Marshal(g)
@@ -1323,6 +1327,9 @@ func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Gr
 	base := runstate.Snapshot{
 		RunID:               runID,
 		Runtime:             string(flags.runtime),
+		EngineVersion:       engine.Version,
+		EngineCommit:        engine.Commit,
+		EngineModified:      engine.Modified,
 		PlanningCostUSD:     planningCostUSD,
 		PlanningCostUnknown: flags.planningCostUnknown,
 		PlanningUsage: runstate.TokenUsage{

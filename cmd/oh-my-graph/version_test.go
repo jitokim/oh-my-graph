@@ -6,8 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"testing"
+
+	"github.com/jitokim/oh-my-graph/internal/runfeed"
 )
 
 func TestPrintVersion(t *testing.T) {
@@ -324,5 +327,96 @@ func TestDuplicateHeadings(t *testing.T) {
 				t.Fatalf("duplicateHeadings(%s) = %q, %v; want %q, %v", tc.heading, got, found, tc.want, tc.found)
 			}
 		})
+	}
+}
+
+// TestEngineFromSettings pins the #373 stamp's rules against a fake settings
+// list and link-time fallback: the version is passed through, the commit is
+// vcs.revision when there is one and the fallback commit otherwise, absent
+// when neither has one, and modified needs a commit plus the dirty flag of
+// the SAME source — the fallback never overrides or mixes with build info.
+func TestEngineFromSettings(t *testing.T) {
+	const commit = "0123456789abcdef0123456789abcdef01234567"
+	const stale = "fedcba9876543210fedcba9876543210fedcba98"
+	clean := []debug.BuildSetting{{Key: "vcs.revision", Value: commit}, {Key: "vcs.modified", Value: "false"}}
+	for name, tc := range map[string]struct {
+		settings                         []debug.BuildSetting
+		fallbackCommit, fallbackModified string
+		want                             runfeed.Engine
+	}{
+		"no build info": {nil, "", "", runfeed.Engine{Version: "9.9.9-test"}},
+		"no vcs": {
+			[]debug.BuildSetting{{Key: "GOOS", Value: "linux"}}, "", "",
+			runfeed.Engine{Version: "9.9.9-test"},
+		},
+		"clean": {
+			clean, "", "",
+			runfeed.Engine{Version: "9.9.9-test", Commit: commit},
+		},
+		"dirty": {
+			[]debug.BuildSetting{{Key: "vcs.modified", Value: "true"}, {Key: "vcs.revision", Value: commit}}, "", "",
+			runfeed.Engine{Version: "9.9.9-test", Commit: commit, Modified: true},
+		},
+		"dirty without a revision": {
+			[]debug.BuildSetting{{Key: "vcs.modified", Value: "true"}}, "", "",
+			runfeed.Engine{Version: "9.9.9-test"},
+		},
+		"fallback commit without vcs": {
+			[]debug.BuildSetting{{Key: "GOOS", Value: "linux"}}, commit, "",
+			runfeed.Engine{Version: "9.9.9-test", Commit: commit},
+		},
+		"fallback commit, no build info": {
+			nil, commit, "",
+			runfeed.Engine{Version: "9.9.9-test", Commit: commit},
+		},
+		"fallback commit, dirty": {
+			nil, commit, "true",
+			runfeed.Engine{Version: "9.9.9-test", Commit: commit, Modified: true},
+		},
+		"fallback commit ignores vcs.modified without a revision": {
+			[]debug.BuildSetting{{Key: "vcs.modified", Value: "true"}}, commit, "",
+			runfeed.Engine{Version: "9.9.9-test", Commit: commit},
+		},
+		"build info beats a stale fallback commit": {
+			clean, stale, "",
+			runfeed.Engine{Version: "9.9.9-test", Commit: commit},
+		},
+		"fallback Modified does not dirty a clean build-info commit": {
+			clean, stale, "true",
+			runfeed.Engine{Version: "9.9.9-test", Commit: commit},
+		},
+		"fallback Modified alone, without a fallback commit": {
+			[]debug.BuildSetting{{Key: "GOOS", Value: "linux"}}, "", "true",
+			runfeed.Engine{Version: "9.9.9-test"},
+		},
+		`fallback Modified "" is clean`: {
+			nil, commit, "",
+			runfeed.Engine{Version: "9.9.9-test", Commit: commit},
+		},
+		`fallback Modified "false" is clean`: {
+			nil, commit, "false",
+			runfeed.Engine{Version: "9.9.9-test", Commit: commit},
+		},
+		`fallback Modified "1" is clean`: {
+			nil, commit, "1",
+			runfeed.Engine{Version: "9.9.9-test", Commit: commit},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := engineFromSettings("9.9.9-test", tc.settings, tc.fallbackCommit, tc.fallbackModified); got != tc.want {
+				t.Fatalf("engineFromSettings = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCurrentEngine_ReadsVersionVar: the stamp reads main.Version at call
+// time, so an -ldflags -X main.Version=... build records that value.
+func TestCurrentEngine_ReadsVersionVar(t *testing.T) {
+	saved := Version
+	t.Cleanup(func() { Version = saved })
+	Version = "9.9.9-test"
+	if got := currentEngine().Version; got != "9.9.9-test" {
+		t.Fatalf("currentEngine().Version = %q, want %q", got, "9.9.9-test")
 	}
 }

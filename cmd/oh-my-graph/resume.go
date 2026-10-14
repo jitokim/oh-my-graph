@@ -639,9 +639,16 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		defaultPermissionMode = graph.PermissionDontAsk
 	}
 
+	// This leg's build, not the earlier leg's: state.json names the binary
+	// that wrote it last, and this leg's run_started names the same one
+	// (#373). The earlier legs' builds stay on their own run_started lines.
+	engine := currentEngine()
 	recorder := runstate.NewSnapshotRecorder(filepath.Join(runDir, stateFileName), runstate.Snapshot{
 		RunID:               runID,
 		Runtime:             snap.Runtime,
+		EngineVersion:       engine.Version,
+		EngineCommit:        engine.Commit,
+		EngineModified:      engine.Modified,
 		PlanningCostUSD:     snap.PlanningCostUSD,
 		PlanningCostUnknown: snap.PlanningCostUnknown,
 		PlanningUsage:       snap.PlanningUsage,
@@ -768,6 +775,7 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// leg that pauses again stores the new gate's shown description (#348).
 		Recorder:  decided.recorderFor(describePauses(recorder, g, h)),
 		EventSink: feed,
+		Engine:    engine,
 		// CompletedNodes seeds the resumed leg's ready set from
 		// graph.ReadyGiven(completed) instead of graph.Roots(), so a node the
 		// first leg already finished is never re-run (and re-paid for).
