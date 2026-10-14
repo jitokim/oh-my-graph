@@ -188,13 +188,27 @@ a decided gate's `description:` exactly as its decider was shown it,
 interpolated and sanitised to one line ([#346](https://github.com/jitokim/oh-my-graph/issues/346)),
 absent on every other node and on a gate without one), `gate`
 (`paused_at`, `paused_gate_description`, `decisions`), and `limit_pause`
-(a usage-limit pause only — see below).
+(a usage-limit pause only — see below), and `engine_version`,
+`engine_commit`, `engine_modified` (the build that last wrote the file — see
+below).
 `paused_gate_description` is the description of the gate named by
 `paused_at`, exactly as the pause printed it and as a decision will record it
 in `gate_description` ([#348](https://github.com/jitokim/oh-my-graph/issues/348));
 it is written together with `paused_at` and is absent when the run is not
 paused, when the paused gate has no description, and in a snapshot written
 before #348.
+
+`engine_version`, `engine_commit` and `engine_modified` name the oh-my-graph
+build that wrote the snapshot ([#373](https://github.com/jitokim/oh-my-graph/issues/373)).
+`engine_version` is the release version (`oh-my-graph version`) and is
+always written by a build that has the fields. `engine_commit` is the full
+VCS revision the Go toolchain embedded, absent when the build has no VCS
+info, never an empty string. `engine_modified` is only ever `true`, written
+only when there is a commit and that build's tree was dirty, and absent
+otherwise. Every leg (`run`, `auto`, `resume`) stamps the binary running it,
+so the snapshot names the **last** writer. For the build of each leg, read
+the `run_started` events instead. All three are absent in a snapshot written
+before #373. They are additive and optional, and the schema stays 3.
 
 `limit_pause` records that the leg stopped on a subscription usage limit
 (ADR 0009; [ADR 0031 §8](adr/0031-an-unbounded-loop-is-a-bounded-loop-and-a-clock.md#8-acceptance-of-35-only-2026-10-07),
@@ -534,7 +548,7 @@ write leaves its event on the stream and its `⚠` on the progress feed.
 
 | `event` | Extra fields | Emitted when |
 |---|---|---|
-| `run_started` | `phase`, `cost_usd`, `cost_unknown`, `usage` *(optional)* | A leg begins. With no `phase`, a scheduler leg, before any node launches — this is every `run_started` written before ADR 0023 and every one a `run` or `resume` leg will ever write. When an auto plan commits, this unphased boundary carries the planner call's accounting. With `phase: "planning"`, the leg an `auto` run's PLANNER CALL runs inside, before any graph exists; see "Two `run_started`s per auto run" below. |
+| `run_started` | `phase`, `cost_usd`, `cost_unknown`, `usage`, `engine_version`, `engine_commit`, `engine_modified` *(optional)* | A leg begins. The `engine_*` fields name the build that ran this leg; see "The build on `run_started`" below. With no `phase`, a scheduler leg, before any node launches — this is every `run_started` written before ADR 0023 and every one a `run` or `resume` leg will ever write. When an auto plan commits, this unphased boundary carries the planner call's accounting. With `phase: "planning"`, the leg an `auto` run's PLANNER CALL runs inside, before any graph exists; see "Two `run_started`s per auto run" below. |
 | `node_started` | `node_id`, `session_id`, `compound_shell_rule` *(optional)* | A node (model-CLI node or gate) begins execution. |
 | `node_passed` | `node_id`, `verdict` (`"PASS"`), `cost_usd`, `cost_unknown`, `usage`, `session_id`, `retries`, `detail`, `provenance` *(optional)* | A node reaches a terminal PASS (including an approved gate). `provenance` says **how** — see below. |
 | `node_failed` | `node_id`, `verdict` (`"FAIL"`), `cost_usd`, `cost_unknown`, `usage`, `session_id`, `retries`, `detail` | A node reaches a terminal FAIL (any check, the verifier, its budget, the runner, or a rejected gate). |
@@ -562,6 +576,23 @@ for "in flight, not settled". So #284 added no event type and left `schema`
 unchanged. The planner leg of an `auto` run has no `node_started`, so nothing
 ticks while planning; the `run_started` with `phase: "planning"` is the only
 marker there.
+
+**The build on `run_started`** ([#373](https://github.com/jitokim/oh-my-graph/issues/373)).
+Every `run_started` carries the oh-my-graph build that wrote it: every `run`
+and `auto` leg, every `resume` leg (CLI or a gate decided from `serve`), and
+both of an auto run's `run_started`s, the `phase: "planning"` one and the
+unphased one, which carry the same value. The rules match `state.json`'s
+fields of the same names. `engine_version` is the release version and is
+always present on a stream written by a build that has the fields.
+`engine_commit` is the full VCS revision, absent when the build has no VCS
+info and never empty. `engine_modified` is only ever `true`, present only
+with a commit from a dirty tree. No other event carries them. A leg's
+`run_started` and the snapshot that leg writes always name the same build,
+but the snapshot is overwritten by each later leg, so the stream is where a
+run resumed by a newer binary still shows the older leg's build. Like
+`phase`, the fields are optional: absent on every `run_started` written
+before #373, so a consumer reads their absence as "not recorded", never as
+the current version. Additive, so the schema stays 3.
 
 Accounting appears exactly once per paid invocation: on a terminal node event,
 on a feedback `node_retried` when the prior judgment is deliberately

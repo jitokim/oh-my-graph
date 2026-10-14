@@ -2178,6 +2178,42 @@ incompatible snapshot is refused rather than misread:
   a limit rather than "not paused"; `runstatus` does not read it, nothing a
   resume re-launches depends on it, and its write is non-fatal, like a node's.
   `omitempty`, schema still 3.
+- **the oh-my-graph build that wrote it** (#373): three optional top-level
+  fields, `engine_version`, `engine_commit` and `engine_modified`, filled by
+  `currentEngine()` (`cmd/oh-my-graph/version.go`) when each leg starts.
+  `engine_version` is `main.Version`, the string `oh-my-graph version`
+  prints, so a binary built with `-ldflags -X main.Version=…` records that
+  value. This build always writes it. `engine_commit` is the full
+  `vcs.revision` the Go toolchain embedded. It is absent when the build has
+  no VCS info, and never written as an empty string. `engine_modified` is
+  only ever `true`: it is written only when there is a commit AND
+  `vcs.modified` is `true`, and is absent otherwise. A dirty tree with no
+  revision says nothing. `Snapshot.MarshalJSON` enforces the second rule
+  itself, so no writer can emit `engine_modified` without `engine_commit`.
+  Every writer stamps the binary that is running: `run`, `auto` (each goal
+  cycle) and `resume` (CLI, and serve's gate approve/reject through the same
+  `executeResume`). A resumed leg overwrites the earlier leg's values, so
+  `state.json` names the **last** writer. Each leg's own build is on its
+  `run_started` event (docs/RUN-FEED.md), and one leg's snapshot and
+  `run_started` always carry the same value. The fields are absent on every
+  run written before #373, and such a run still loads, shows and resumes.
+  Additive and optional, `omitempty`, schema still 3.
+
+  `oh-my-graph show <run-id>` prints the build on the line under the run
+  header: `engine: oh-my-graph <version> (commit <sha>)`, with `, modified`
+  inside the parentheses for a dirty build, and no parentheses at all when no
+  commit was recorded. A run without the fields prints
+  `engine: version not recorded`. It is never filled in with the current
+  binary's version, which would credit the run to a build that did not run
+  it. When the stream's `run_started` events name more than one build, an
+  `engines by leg:` heading follows, listing each distinct build once on an
+  indented `engine: …` line, in the order it first appears. An auto run's
+  planning and scheduler `run_started` share one build and count once, and an
+  older leg without the fields is listed as `version not recorded` rather than
+  dropped or credited to the newer build. When every leg agrees, the stream
+  has no engine fields, or `events.jsonl` is missing or unreadable, only the
+  single line prints and `show` still exits 0. A run with no `state.json` yet
+  (still planning, or a refused plan) prints no engine line.
 
 **One field the snapshot holds but `resume` does not trust**: an auto graph's
 `success_check.verify`. A verification is a command the ENGINE runs, outside
