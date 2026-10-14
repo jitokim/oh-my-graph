@@ -202,8 +202,15 @@ before #348.
 build that wrote the snapshot ([#373](https://github.com/jitokim/oh-my-graph/issues/373)).
 `engine_version` is the release version (`oh-my-graph version`) and is
 always written by a build that has the fields. `engine_commit` is the full
-VCS revision the Go toolchain embedded, absent when the build has no VCS
-info, never an empty string. `engine_modified` is only ever `true`, written
+VCS revision: the build info's `vcs.revision` first, and only when the build
+info has none, the link-time `-X main.Commit` (dirty when `-X main.Modified`
+is exactly `"true"`). A stale `-X main.Commit` never overrides a real
+`vcs.revision`. Go embeds no VCS info when `.git` is a file, as in a linked
+git worktree, so `make build` stamps `main.Commit` and `main.Modified` from
+git and worktree builds still record their commit; without git both are
+empty and the build still succeeds. Release builds via goreleaser carry VCS
+info and are unchanged. `engine_commit` is absent when neither source has a
+commit, never an empty string. `engine_modified` is only ever `true`, written
 only when there is a commit and that build's tree was dirty, and absent
 otherwise. Every leg (`run`, `auto`, `resume`) stamps the binary running it,
 so the snapshot names the **last** writer. For the build of each leg, read
@@ -584,8 +591,10 @@ both of an auto run's `run_started`s, the `phase: "planning"` one and the
 unphased one, which carry the same value. The rules match `state.json`'s
 fields of the same names. `engine_version` is the release version and is
 always present on a stream written by a build that has the fields.
-`engine_commit` is the full VCS revision, absent when the build has no VCS
-info and never empty. `engine_modified` is only ever `true`, present only
+`engine_commit` is the full VCS revision, from the build info's
+`vcs.revision` or, only when that is missing, the `-X main.Commit` that
+`make build` stamps from git; it is absent when neither source has one and
+never empty. `engine_modified` is only ever `true`, present only
 with a commit from a dirty tree. No other event carries them. A leg's
 `run_started` and the snapshot that leg writes always name the same build,
 but the snapshot is overwritten by each later leg, so the stream is where a
