@@ -253,8 +253,9 @@ const (
 // Status in showRun, and live is empty exactly when status is.
 //
 // engine is the build state.json names (#373), printed on the line under the
-// header; byLeg is legEngines' answer, printed under it only when the legs
-// were not all run by that one build.
+// header; byLeg is legEngines' answer, printed under it as the distinct
+// engines in first-seen leg order only when the legs were not all run by that
+// one build.
 func printRunDetail(w io.Writer, runID, status, live string, engine runfeed.Engine, byLeg []runfeed.Engine, records []ledger.Record, planningCostUSD float64, planningCostUnknown bool, planningUsage ledger.TokenUsage) {
 	if status != "" {
 		fmt.Fprintf(w, "Run %s — %s, %d node(s); %s.\n", runID, status, len(records), live)
@@ -263,7 +264,7 @@ func printRunDetail(w io.Writer, runID, status, live string, engine runfeed.Engi
 	}
 	fmt.Fprintf(w, "engine: %s\n", engineLabel(engine))
 	if len(byLeg) > 1 {
-		fmt.Fprintln(w, "engines by leg:")
+		fmt.Fprintln(w, "distinct engines, in first-seen leg order:")
 		for _, e := range byLeg {
 			fmt.Fprintf(w, "  engine: %s\n", engineLabel(e))
 		}
@@ -317,16 +318,18 @@ func printAccountingFooter(w io.Writer, total float64, costUnknown bool, usage l
 }
 
 // engineLabel renders one build stamp (#373) as `oh-my-graph <version>`, with
-// the commit — and ", modified" for a dirty tree — in parentheses when the
-// build carried one. A stamp with no version is a run written before the field
-// existed, and says so: it is never filled in with this binary's own Version,
-// which would claim the run for a build that did not run it.
+// the commit — and ", modified" for a dirty tree — in parentheses. A build
+// that carried no commit says "(commit unknown)" rather than printing the bare
+// version, which would read as the release binary of that version. A stamp
+// with no version is a run written before the field existed, and says so: it
+// is never filled in with this binary's own Version, which would claim the run
+// for a build that did not run it.
 func engineLabel(e runfeed.Engine) string {
 	if e.Version == "" {
 		return "version not recorded"
 	}
 	if e.Commit == "" {
-		return "oh-my-graph " + e.Version
+		return fmt.Sprintf("oh-my-graph %s (commit unknown)", e.Version)
 	}
 	if e.Modified {
 		return fmt.Sprintf("oh-my-graph %s (commit %s, modified)", e.Version, e.Commit)
@@ -335,7 +338,9 @@ func engineLabel(e runfeed.Engine) string {
 }
 
 // legEngines is the distinct builds the run's legs were run by, in the order
-// they first appear among the stream's run_started events (#373). An auto
+// they first appear among the stream's run_started events (#373). It is not a
+// per-leg list: legs A, B, A yield A, B, which is why show heads it
+// "distinct engines, in first-seen leg order:". An auto
 // leg's planning-phase and scheduler run_started carry the same stamp, so
 // deduplicating by value counts that leg once. A leg written before the stamp
 // existed is a distinct entry of its own — rendered "version not recorded" —

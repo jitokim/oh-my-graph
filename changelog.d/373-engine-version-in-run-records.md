@@ -7,8 +7,10 @@
   dirty tree with a commit). Every leg stamps the binary running it, so
   `state.json` names the last writer and each leg's own build stays on its
   `run_started`. `show` prints an `engine:` line under the run header, adds
-  an `engines by leg:` list when legs were run by different builds, and
-  says `version not recorded` for an older run instead of guessing. The
+  a `distinct engines, in first-seen leg order:` list when legs were run by
+  different builds, says `(commit unknown)` after a version stamped without a
+  commit, and says `version not recorded` for an older run instead of
+  guessing. The
   fields are optional and absent on older runs, which still load, show and
   resume; the schema stays 3.
   ([#373](https://github.com/jitokim/oh-my-graph/issues/373))

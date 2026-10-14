@@ -119,7 +119,7 @@ func TestEngine_RunAndResumeLegsRecordTheirOwnBuild(t *testing.T) {
 	if err := showRun(&shown, runDir, runID); err != nil {
 		t.Fatalf("show: %v", err)
 	}
-	byLeg := "engines by leg:\n  engine: " + engineLabel(opens[0].Engine) + "\n  engine: " + engineLabel(opens[1].Engine) + "\n"
+	byLeg := "distinct engines, in first-seen leg order:\n  engine: " + engineLabel(opens[0].Engine) + "\n  engine: " + engineLabel(opens[1].Engine) + "\n"
 	if !strings.Contains(shown.String(), byLeg) {
 		t.Errorf("show must name both legs' builds in leg order:\n%s", shown.String())
 	}

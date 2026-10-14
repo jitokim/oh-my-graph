@@ -523,8 +523,8 @@ func showEngineFixture(t *testing.T, engine runfeed.Engine, legs []runfeed.Engin
 }
 
 // TestShowRun_EngineLine (#373): the build state.json names is one line, its
-// version and commit together, ", modified" only for a dirty tree and no
-// parentheses at all for a build with no VCS info.
+// version and commit together, ", modified" only for a dirty tree and
+// "(commit unknown)" for a build with no VCS info, never the bare version.
 func TestShowRun_EngineLine(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -536,7 +536,7 @@ func TestShowRun_EngineLine(t *testing.T) {
 		{"a modified build", runfeed.Engine{Version: "0.19.0", Commit: "baeae87", Modified: true},
 			"engine: oh-my-graph 0.19.0 (commit baeae87, modified)\n"},
 		{"no VCS info", runfeed.Engine{Version: "0.19.0"},
-			"engine: oh-my-graph 0.19.0\n"},
+			"engine: oh-my-graph 0.19.0 (commit unknown)\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := showEngineFixture(t, tc.engine, nil)
@@ -546,10 +546,10 @@ func TestShowRun_EngineLine(t *testing.T) {
 			if !tc.engine.Modified && strings.Contains(got, "modified") {
 				t.Errorf("a clean build reads as modified:\n%s", got)
 			}
-			if tc.engine.Commit == "" && strings.Contains(lineContaining(t, got, "engine:"), "(") {
-				t.Errorf("a build with no commit printed parentheses:\n%s", got)
+			if tc.engine.Commit == "" && lineContaining(t, got, "engine:") == "engine: oh-my-graph "+tc.engine.Version {
+				t.Errorf("a build with no commit printed the bare version, which reads as the release binary:\n%s", got)
 			}
-			if strings.Contains(got, "engines by leg:") {
+			if strings.Contains(got, "distinct engines, in first-seen leg order:") {
 				t.Errorf("a run with no stream has no legs to break down:\n%s", got)
 			}
 		})
@@ -568,7 +568,7 @@ func TestShowRun_OldRunSaysVersionNotRecorded(t *testing.T) {
 	if strings.Contains(got, "9.9.9-sentinel") {
 		t.Errorf("an unstamped run was stamped with the reading binary's version:\n%s", got)
 	}
-	if strings.Contains(got, "engines by leg:") {
+	if strings.Contains(got, "distinct engines, in first-seen leg order:") {
 		t.Errorf("a stream with no engine fields has nothing to break down:\n%s", got)
 	}
 }
@@ -582,7 +582,7 @@ func TestShowRun_EnginesByLeg(t *testing.T) {
 	second := runfeed.Engine{Version: "0.19.0", Commit: "bbbbbbb", Modified: true}
 
 	got := showEngineFixture(t, second, []runfeed.Engine{first, first, second})
-	want := "engines by leg:\n" +
+	want := "distinct engines, in first-seen leg order:\n" +
 		"  engine: oh-my-graph 0.18.0 (commit aaaaaaa)\n" +
 		"  engine: oh-my-graph 0.19.0 (commit bbbbbbb, modified)\n"
 	if !strings.Contains(got, want) {
@@ -593,14 +593,14 @@ func TestShowRun_EnginesByLeg(t *testing.T) {
 	}
 
 	agreed := showEngineFixture(t, first, []runfeed.Engine{first, first})
-	if strings.Contains(agreed, "engines by leg:") {
+	if strings.Contains(agreed, "distinct engines, in first-seen leg order:") {
 		t.Errorf("legs that agree must print only the one engine line:\n%s", agreed)
 	}
 
 	// A pre-#373 leg resumed by a stamped build: the old leg is named as
 	// unrecorded, not dropped and not credited to the newer build.
 	resumed := showEngineFixture(t, first, []runfeed.Engine{{}, first})
-	if !strings.Contains(resumed, "engines by leg:\n  engine: version not recorded\n  engine: oh-my-graph 0.18.0 (commit aaaaaaa)\n") {
+	if !strings.Contains(resumed, "distinct engines, in first-seen leg order:\n  engine: version not recorded\n  engine: oh-my-graph 0.18.0 (commit aaaaaaa)\n") {
 		t.Errorf("an unstamped leg must be named as such in the breakdown:\n%s", resumed)
 	}
 }
@@ -622,7 +622,52 @@ func TestShowRun_UnreadableStreamDoesNotFailTheEngineLine(t *testing.T) {
 	if err := showRun(&out, dir, "engine-run"); err != nil {
 		t.Fatalf("an unreadable stream must not fail show: %v", err)
 	}
-	if !strings.Contains(out.String(), "engine: oh-my-graph 0.19.0\n") {
+	if !strings.Contains(out.String(), "engine: oh-my-graph 0.19.0 (commit unknown)\n") {
 		t.Errorf("the engine line is missing:\n%s", out.String())
+	}
+}
+
+// TestShowRun_VersionWithoutCommitSaysCommitUnknown (#373): a run stamped with
+// a version but no commit must not read as that version's release binary.
+func TestShowRun_VersionWithoutCommitSaysCommitUnknown(t *testing.T) {
+	got := showEngineFixture(t, runfeed.Engine{Version: "0.20.0"}, nil)
+	if !strings.Contains(got, "engine: oh-my-graph 0.20.0 (commit unknown)\n") {
+		t.Errorf("a version-only stamp must say its commit is unknown:\n%s", got)
+	}
+	if strings.Contains(got, "engine: oh-my-graph 0.20.0\n") {
+		t.Errorf("a version-only stamp printed the bare version:\n%s", got)
+	}
+}
+
+// TestShowRun_NoEngineVersionIsExactlyNotRecorded (#373): the
+// "(commit unknown)" rule is for a stamped version only; a run with no
+// engine_version keeps exactly the "version not recorded" line.
+func TestShowRun_NoEngineVersionIsExactlyNotRecorded(t *testing.T) {
+	got := showEngineFixture(t, runfeed.Engine{}, nil)
+	if line := lineContaining(t, got, "engine:"); line != "engine: version not recorded" {
+		t.Errorf("engine line = %q, want exactly %q", line, "engine: version not recorded")
+	}
+	if strings.Contains(got, "commit unknown") {
+		t.Errorf("an unstamped run must not claim a version with an unknown commit:\n%s", got)
+	}
+}
+
+// TestShowRun_DistinctEnginesListLabelsAndDedups (#373): the mixed-legs list
+// is distinct builds in first-seen order, so legs A, B, A print A then B under
+// a header that says so, and a version-only leg says "(commit unknown)".
+func TestShowRun_DistinctEnginesListLabelsAndDedups(t *testing.T) {
+	stamped := runfeed.Engine{Version: "0.19.0", Commit: "bbbbbbb"}
+	versionOnly := runfeed.Engine{Version: "0.20.0"}
+
+	got := showEngineFixture(t, stamped, []runfeed.Engine{stamped, versionOnly, stamped})
+	want := "distinct engines, in first-seen leg order:\n" +
+		"  engine: oh-my-graph 0.19.0 (commit bbbbbbb)\n" +
+		"  engine: oh-my-graph 0.20.0 (commit unknown)\n" +
+		"NODE"
+	if !strings.Contains(got, want) {
+		t.Errorf("want the distinct engines once each, version-only leg as commit unknown:\n%s", got)
+	}
+	if strings.Contains(got, "engines by leg:") {
+		t.Errorf("the old per-leg header is still printed:\n%s", got)
 	}
 }

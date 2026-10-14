@@ -2201,12 +2201,14 @@ incompatible snapshot is refused rather than misread:
 
   `oh-my-graph show <run-id>` prints the build on the line under the run
   header: `engine: oh-my-graph <version> (commit <sha>)`, with `, modified`
-  inside the parentheses for a dirty build, and no parentheses at all when no
-  commit was recorded. A run without the fields prints
+  inside the parentheses for a dirty build, and `(commit unknown)` when no
+  commit was recorded, so a version-only stamp never reads as the release
+  binary of that version. A run without the fields prints
   `engine: version not recorded`. It is never filled in with the current
   binary's version, which would credit the run to a build that did not run
-  it. When the stream's `run_started` events name more than one build, an
-  `engines by leg:` heading follows, listing each distinct build once on an
+  it. When the stream's `run_started` events name more than one build, a
+  `distinct engines, in first-seen leg order:` heading follows, listing each
+  distinct build once (legs A, B, A list A, B) on an
   indented `engine: …` line, in the order it first appears. An auto run's
   planning and scheduler `run_started` share one build and count once, and an
   older leg without the fields is listed as `version not recorded` rather than
