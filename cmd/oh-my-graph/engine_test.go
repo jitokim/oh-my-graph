@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -218,5 +219,109 @@ func stripEngineKeys(t *testing.T, path string) {
 	}
 	if err := os.WriteFile(path, []byte(strings.Join(out, "\n")+"\n"), 0o600); err != nil {
 		t.Fatalf("rewrite %s: %v", path, err)
+	}
+}
+
+// setLinkStamp stands in for a `make build` binary built in a linked worktree
+// (-ldflags "-X main.Commit=... -X main.Modified=...") for the rest of the
+// test. It skips when the test binary carries its own vcs.revision, because
+// the build info would then win over the stamp — which is the rule, and
+// TestEngineFromSettings pins it; this test is about the fallback's path.
+func setLinkStamp(t *testing.T, commit, modified string) {
+	t.Helper()
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range info.Settings {
+			if s.Key == "vcs.revision" && s.Value != "" {
+				t.Skip("test binary carries vcs.revision; the link-time stamp is ignored")
+			}
+		}
+	}
+	savedCommit, savedModified := Commit, Modified
+	t.Cleanup(func() { Commit, Modified = savedCommit, savedModified })
+	Commit, Modified = commit, modified
+}
+
+// TestEngine_LinkTimeCommitReachesStateAndRunStarted (#373): a binary with no
+// VCS info but a -X main.Commit records that commit as engine_commit in
+// state.json and on its run_started, with engine_modified only when
+// -X main.Modified was "true", and show names it. A resume leg run by the same
+// commit from a dirty tree re-stamps state.json as modified and opens its own
+// run_started that way, while the first leg's run_started stays clean.
+func TestEngine_LinkTimeCommitReachesStateAndRunStarted(t *testing.T) {
+	const head = "0123456789abcdef0123456789abcdef01234567"
+	isolateRunHome(t)
+	setVersion(t, "9.9.9-test")
+	setLinkStamp(t, head, "")
+	runID, rec := pausedGateFlowRun(t)
+	runDir := runDirFor(runID)
+
+	keys := readStateKeys(t, runDir)
+	if got := string(keys["engine_commit"]); got != `"`+head+`"` {
+		t.Errorf("state.json engine_commit = %s, want %q", got, head)
+	}
+	if m, ok := keys["engine_modified"]; ok {
+		t.Errorf("state.json carries engine_modified %s for a clean stamp, want it absent", m)
+	}
+	clean := runfeed.Engine{Version: "9.9.9-test", Commit: head}
+	opens := runStartedEvents(readRunEvents(t, runID))
+	if len(opens) != 1 || opens[0].Engine != clean {
+		t.Fatalf("first leg's run_started = %+v, want one with %+v", opens, clean)
+	}
+	var shown bytes.Buffer
+	if err := showRun(&shown, runDir, runID); err != nil {
+		t.Fatalf("show: %v", err)
+	}
+	if line := lineContaining(t, shown.String(), "engine:"); line != "engine: oh-my-graph 9.9.9-test (commit "+head+")" {
+		t.Errorf("show engine line = %q", line)
+	}
+
+	Modified = "true"
+	if err := executeResume(parseResumeFlags(t, []string{runID, "--approve", "approve"}), rec, nil); err != nil {
+		t.Fatalf("executeResume: %v", err)
+	}
+	keys = readStateKeys(t, runDir)
+	if got, m := string(keys["engine_commit"]), string(keys["engine_modified"]); got != `"`+head+`"` || m != "true" {
+		t.Errorf("state.json after a dirty resume: engine_commit %s, engine_modified %s; want %q, true", got, m, head)
+	}
+	dirty := runfeed.Engine{Version: "9.9.9-test", Commit: head, Modified: true}
+	opens = runStartedEvents(readRunEvents(t, runID))
+	if len(opens) != 2 || opens[0].Engine != clean || opens[1].Engine != dirty {
+		t.Fatalf("run_started engines = %+v, want %+v then %+v", opens, clean, dirty)
+	}
+}
+
+// TestEngine_AutoRecordsTheLinkTimeCommitOnBothRunStarted (#373): an auto
+// run's planning-phase and scheduler run_started both carry the -X main.Commit
+// stamp, as does its state.json.
+func TestEngine_AutoRecordsTheLinkTimeCommitOnBothRunStarted(t *testing.T) {
+	const head = "0123456789abcdef0123456789abcdef01234567"
+	isolateRunHome(t)
+	setVersion(t, "9.9.9-test")
+	setLinkStamp(t, head, "true")
+	fake := newCycleFake(map[string]runner.NodeOutcome{
+		"plan-1": {Result: cycleSpec},
+		"work-1": {SessionID: "s-1", Result: "PASS", ExitCode: 0},
+	})
+	captureStdout(t, func() {
+		if err := planAndExecute(context.Background(), io.Discard, coordinator.New(fake), fake,
+			commonRunFlags{inputs: inputFlag{}}, "add a README section", singleCycle, false, nil, nil); err != nil {
+			t.Fatalf("planAndExecute: %v", err)
+		}
+	})
+
+	runDir := soleRunDir(t)
+	keys := readStateKeys(t, runDir)
+	if got, m := string(keys["engine_commit"]), string(keys["engine_modified"]); got != `"`+head+`"` || m != "true" {
+		t.Errorf("state.json engine_commit %s, engine_modified %s; want %q, true", got, m, head)
+	}
+	want := runfeed.Engine{Version: "9.9.9-test", Commit: head, Modified: true}
+	opens := runStartedEvents(readStreamEvents(t, runDir))
+	if len(opens) != 2 || opens[0].Phase != runfeed.PhasePlanning {
+		t.Fatalf("want a planning run_started then the scheduler's, got %+v", opens)
+	}
+	for _, e := range opens {
+		if e.Engine != want {
+			t.Errorf("run_started (phase %q) engine = %+v, want %+v", e.Phase, e.Engine, want)
+		}
 	}
 }
