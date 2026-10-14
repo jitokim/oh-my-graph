@@ -2184,11 +2184,24 @@ incompatible snapshot is refused rather than misread:
   `engine_version` is `main.Version`, the string `oh-my-graph version`
   prints, so a binary built with `-ldflags -X main.Version=…` records that
   value. This build always writes it. `engine_commit` is the full
-  `vcs.revision` the Go toolchain embedded. It is absent when the build has
-  no VCS info, and never written as an empty string. `engine_modified` is
-  only ever `true`: it is written only when there is a commit AND
-  `vcs.modified` is `true`, and is absent otherwise. A dirty tree with no
-  revision says nothing. `Snapshot.MarshalJSON` enforces the second rule
+  `vcs.revision` the Go toolchain embedded when the build info has one, and
+  only when it has none, the link-time `-X main.Commit`, with dirtiness then
+  from `-X main.Modified` being exactly `"true"`. Build info always wins: a
+  stale `-X main.Commit` never overrides a real `vcs.revision`, and
+  `main.Modified` never marks a build-info commit dirty. The fallback exists
+  because Go embeds `vcs.revision` only when `.git` is a directory, so a build
+  in a linked git worktree, where `.git` is a file, has no VCS info. `make
+  build` therefore stamps `main.Commit` (`git rev-parse --verify --quiet
+  HEAD`) and `main.Modified` (`true` when `git status --porcelain` is
+  non-empty, checked before `go build` writes anything), so worktree builds
+  still record their commit; with no git, or outside a repo, both are empty
+  and the build still succeeds. Release builds via goreleaser check out a
+  normal repo, carry VCS info and are unchanged. `engine_commit` is absent
+  when neither source has a commit, and never written as an empty string.
+  `engine_modified` is only ever `true`: it is written only when there is a
+  commit AND the source that supplied it says dirty (`vcs.modified` is
+  `true`, or `main.Modified` is `"true"` for a fallback commit), and is
+  absent otherwise. A dirty tree with no revision says nothing. `Snapshot.MarshalJSON` enforces the second rule
   itself, so no writer can emit `engine_modified` without `engine_commit`.
   Every writer stamps the binary that is running: `run`, `auto` (each goal
   cycle) and `resume` (CLI, and serve's gate approve/reject through the same
