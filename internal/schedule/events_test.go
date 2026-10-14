@@ -152,6 +152,33 @@ nodes:
 	}
 }
 
+// TestScheduler_RunStartedCarriesTheEngineStamp (#373): Options.Engine lands
+// on run_started and on no other event.
+func TestScheduler_RunStartedCarriesTheEngineStamp(t *testing.T) {
+	g := mustGraph(t, `
+name: one
+nodes:
+  - { id: a, prompt: a }
+`)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{"a": pass("s-a", 0.10)})
+	feed, path := newEventStream(t, "run-engine")
+	engine := runfeed.Engine{Version: "9.9.9-test", Commit: "0123456789abcdef0123456789abcdef01234567", Modified: true}
+	s, h, led := newHarness(t, fake, Options{EventSink: feed, Engine: engine})
+
+	if err := s.Run(context.Background(), g, h, led); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	for _, e := range readEventStream(t, path) {
+		want := runfeed.Engine{}
+		if e.Type == runfeed.EventRunStarted {
+			want = engine
+		}
+		if e.Engine != want {
+			t.Errorf("%s engine = %+v, want %+v", e.Type, e.Engine, want)
+		}
+	}
+}
+
 func TestScheduler_EventStreamPreservesUnknownCostAndUsage(t *testing.T) {
 	g := mustGraph(t, `
 name: codex-accounting

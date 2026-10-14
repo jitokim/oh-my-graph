@@ -95,7 +95,7 @@ func openRunLeg(runID string) (*runLeg, error) {
 // live run that every reader would report as a settled FAIL, which is worse
 // than the invisibility this whole change removes.
 func (l *runLeg) beginPlanning() error {
-	if err := l.feed.Emit(runfeed.Event{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning}); err != nil {
+	if err := l.feed.Emit(runfeed.Event{Type: runfeed.EventRunStarted, Phase: runfeed.PhasePlanning, Engine: currentEngine()}); err != nil {
 		return fmt.Errorf("open the run's planning phase: %w", err)
 	}
 	l.announced = true
