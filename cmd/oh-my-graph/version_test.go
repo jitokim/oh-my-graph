@@ -6,8 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"testing"
+
+	"github.com/jitokim/oh-my-graph/internal/runfeed"
 )
 
 func TestPrintVersion(t *testing.T) {
@@ -324,5 +327,51 @@ func TestDuplicateHeadings(t *testing.T) {
 				t.Fatalf("duplicateHeadings(%s) = %q, %v; want %q, %v", tc.heading, got, found, tc.want, tc.found)
 			}
 		})
+	}
+}
+
+// TestEngineFromSettings pins the #373 stamp's rules against a fake settings
+// list: the version is passed through, the commit is vcs.revision and absent
+// without it, and modified needs both vcs.modified=true and a commit.
+func TestEngineFromSettings(t *testing.T) {
+	const commit = "0123456789abcdef0123456789abcdef01234567"
+	for name, tc := range map[string]struct {
+		settings []debug.BuildSetting
+		want     runfeed.Engine
+	}{
+		"no build info": {nil, runfeed.Engine{Version: "9.9.9-test"}},
+		"no vcs": {
+			[]debug.BuildSetting{{Key: "GOOS", Value: "linux"}},
+			runfeed.Engine{Version: "9.9.9-test"},
+		},
+		"clean": {
+			[]debug.BuildSetting{{Key: "vcs.revision", Value: commit}, {Key: "vcs.modified", Value: "false"}},
+			runfeed.Engine{Version: "9.9.9-test", Commit: commit},
+		},
+		"dirty": {
+			[]debug.BuildSetting{{Key: "vcs.modified", Value: "true"}, {Key: "vcs.revision", Value: commit}},
+			runfeed.Engine{Version: "9.9.9-test", Commit: commit, Modified: true},
+		},
+		"dirty without a revision": {
+			[]debug.BuildSetting{{Key: "vcs.modified", Value: "true"}},
+			runfeed.Engine{Version: "9.9.9-test"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := engineFromSettings("9.9.9-test", tc.settings); got != tc.want {
+				t.Fatalf("engineFromSettings = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCurrentEngine_ReadsVersionVar: the stamp reads main.Version at call
+// time, so an -ldflags -X main.Version=... build records that value.
+func TestCurrentEngine_ReadsVersionVar(t *testing.T) {
+	saved := Version
+	t.Cleanup(func() { Version = saved })
+	Version = "9.9.9-test"
+	if got := currentEngine().Version; got != "9.9.9-test" {
+		t.Fatalf("currentEngine().Version = %q, want %q", got, "9.9.9-test")
 	}
 }

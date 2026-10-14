@@ -610,6 +610,21 @@ type Snapshot struct {
 	// stays 3: the field went from "absent, meaning claude" to "present,
 	// saying claude", which no reader of either version can misread.
 	Runtime string `json:"runtime"`
+	// EngineVersion, EngineCommit and EngineModified name the oh-my-graph build
+	// that wrote this snapshot LAST (#373): every leg — a fresh run, an auto
+	// cycle, a resume — stamps its own binary's values, so after an upgrade
+	// mid-run the file names the newer build, and each leg's own build is on
+	// its run_started in events.jsonl. EngineVersion is the release version
+	// (`oh-my-graph version`); EngineCommit is the VCS revision the toolchain
+	// embedded, absent — never empty — when the binary carries none;
+	// EngineModified is true when that build's tree was dirty, and is never
+	// written false or without a commit (MarshalJSON enforces the latter).
+	//
+	// Additive and optional, so Schema stays 3: a snapshot written before
+	// #373 has none of the three and loads exactly as before.
+	EngineVersion  string `json:"engine_version,omitempty"`
+	EngineCommit   string `json:"engine_commit,omitempty"`
+	EngineModified bool   `json:"engine_modified,omitempty"`
 	// Planning accounting is the coordinator call that produced an auto run's
 	// graph. It is top-level because it belongs to the run, not to any node.
 	PlanningCostUSD     float64    `json:"planning_cost_usd,omitempty"`
@@ -852,6 +867,11 @@ func (s Snapshot) MarshalJSON() ([]byte, error) {
 	type snapshot Snapshot
 	if s.Runtime == "" {
 		s.Runtime = RuntimeClaude
+	}
+	// A dirty tree is only a fact about a named commit (#373): without one
+	// there is nothing it could be modified relative to.
+	if s.EngineCommit == "" {
+		s.EngineModified = false
 	}
 	return json.Marshal(snapshot(s))
 }
