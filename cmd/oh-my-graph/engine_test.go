@@ -114,6 +114,15 @@ func TestEngine_RunAndResumeLegsRecordTheirOwnBuild(t *testing.T) {
 	}
 	assertEventEngine(t, opens[0], "9.9.9-test")
 	assertEventEngine(t, opens[1], "9.9.10-test")
+
+	var shown bytes.Buffer
+	if err := showRun(&shown, runDir, runID); err != nil {
+		t.Fatalf("show: %v", err)
+	}
+	byLeg := "engines by leg:\n  engine: " + engineLabel(opens[0].Engine) + "\n  engine: " + engineLabel(opens[1].Engine) + "\n"
+	if !strings.Contains(shown.String(), byLeg) {
+		t.Errorf("show must name both legs' builds in leg order:\n%s", shown.String())
+	}
 }
 
 // TestEngine_AutoStampsThePlanningPhaseAndTheSchedulerLeg (#373): an auto
@@ -160,6 +169,9 @@ func TestEngine_AnUnstampedRunStillLoads(t *testing.T) {
 	var shown bytes.Buffer
 	if err := showRun(&shown, runDir, runID); err != nil {
 		t.Fatalf("show on an unstamped run: %v", err)
+	}
+	if !strings.Contains(shown.String(), "engine: version not recorded\n") {
+		t.Errorf("show on an unstamped run must say its version was not recorded:\n%s", shown.String())
 	}
 	var listed bytes.Buffer
 	if err := listRuns(&listed, io.Discard, filepath.Join(root, "runs"), false); err != nil {

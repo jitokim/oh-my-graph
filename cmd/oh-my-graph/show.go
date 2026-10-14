@@ -131,7 +131,8 @@ func showRun(w io.Writer, runDir, runID string) error {
 		// still a run to print; only its status is missing.
 		fmt.Fprintln(w, runstatus.Unreadable(runID, statusErr))
 	}
-	printRunDetail(w, runID, word, live, showRecords(snap),
+	engine := runfeed.Engine{Version: snap.EngineVersion, Commit: snap.EngineCommit, Modified: snap.EngineModified}
+	printRunDetail(w, runID, word, live, engine, legEngines(filepath.Join(runDir, runfeed.FileName)), showRecords(snap),
 		snap.PlanningCostUSD, snap.PlanningCostUnknown, ledger.TokenUsage{
 			InputTokens: snap.PlanningUsage.InputTokens, CachedInputTokens: snap.PlanningUsage.CachedInputTokens,
 			OutputTokens: snap.PlanningUsage.OutputTokens, ReasoningOutputTokens: snap.PlanningUsage.ReasoningOutputTokens,
@@ -250,11 +251,22 @@ const (
 // for the same reason — one read, not two — and the two arrive together
 // precisely so they cannot disagree: both are computed from the one derived
 // Status in showRun, and live is empty exactly when status is.
-func printRunDetail(w io.Writer, runID, status, live string, records []ledger.Record, planningCostUSD float64, planningCostUnknown bool, planningUsage ledger.TokenUsage) {
+//
+// engine is the build state.json names (#373), printed on the line under the
+// header; byLeg is legEngines' answer, printed under it only when the legs
+// were not all run by that one build.
+func printRunDetail(w io.Writer, runID, status, live string, engine runfeed.Engine, byLeg []runfeed.Engine, records []ledger.Record, planningCostUSD float64, planningCostUnknown bool, planningUsage ledger.TokenUsage) {
 	if status != "" {
 		fmt.Fprintf(w, "Run %s — %s, %d node(s); %s.\n", runID, status, len(records), live)
 	} else {
 		fmt.Fprintf(w, "Run %s — %d node(s)\n", runID, len(records))
+	}
+	fmt.Fprintf(w, "engine: %s\n", engineLabel(engine))
+	if len(byLeg) > 1 {
+		fmt.Fprintln(w, "engines by leg:")
+		for _, e := range byLeg {
+			fmt.Fprintf(w, "  engine: %s\n", engineLabel(e))
+		}
 	}
 	fmt.Fprintf(w, "%-*s %-*s %-*s %*s %*s  %s\n",
 		showNodeWidth, "NODE",
@@ -302,6 +314,55 @@ func printAccountingFooter(w io.Writer, total float64, costUnknown bool, usage l
 		fmt.Fprintf(w, "TOKEN USAGE: input %d, cached %d, output %d, reasoning %d\n",
 			usage.InputTokens, usage.CachedInputTokens, usage.OutputTokens, usage.ReasoningOutputTokens)
 	}
+}
+
+// engineLabel renders one build stamp (#373) as `oh-my-graph <version>`, with
+// the commit — and ", modified" for a dirty tree — in parentheses when the
+// build carried one. A stamp with no version is a run written before the field
+// existed, and says so: it is never filled in with this binary's own Version,
+// which would claim the run for a build that did not run it.
+func engineLabel(e runfeed.Engine) string {
+	if e.Version == "" {
+		return "version not recorded"
+	}
+	if e.Commit == "" {
+		return "oh-my-graph " + e.Version
+	}
+	if e.Modified {
+		return fmt.Sprintf("oh-my-graph %s (commit %s, modified)", e.Version, e.Commit)
+	}
+	return fmt.Sprintf("oh-my-graph %s (commit %s)", e.Version, e.Commit)
+}
+
+// legEngines is the distinct builds the run's legs were run by, in the order
+// they first appear among the stream's run_started events (#373). An auto
+// leg's planning-phase and scheduler run_started carry the same stamp, so
+// deduplicating by value counts that leg once. A leg written before the stamp
+// existed is a distinct entry of its own — rendered "version not recorded" —
+// whenever another leg was stamped. It returns nil when there is nothing to
+// say beyond state.json's one line: a missing or unreadable stream (show
+// never fails over the breakdown), a stream with no engine fields at all, or
+// legs that all agree.
+func legEngines(path string) []runfeed.Engine {
+	var distinct []runfeed.Engine
+	stamped := false
+	err := runfeed.Walk(path, func(e runfeed.Event) error {
+		if e.Type != runfeed.EventRunStarted {
+			return nil
+		}
+		stamped = stamped || e.Engine != (runfeed.Engine{})
+		for _, seen := range distinct {
+			if seen == e.Engine {
+				return nil
+			}
+		}
+		distinct = append(distinct, e.Engine)
+		return nil
+	})
+	if err != nil || !stamped || len(distinct) < 2 {
+		return nil
+	}
+	return distinct
 }
 
 // sessionOrDash renders an empty session id as "-", matching the end-of-run

@@ -468,11 +468,20 @@ func TestShowRun_DividerMatchesTheHeader(t *testing.T) {
 	if err := showRun(&out, dir, "20260806-090000"); err != nil {
 		t.Fatalf("showRun returned error: %v", err)
 	}
+	// The header is found by its first cell rather than its line number: the
+	// engine line (#373) sits between it and the run line.
 	lines := strings.Split(out.String(), "\n")
-	if len(lines) < 3 {
+	at := -1
+	for i, line := range lines {
+		if strings.HasPrefix(line, "NODE ") {
+			at = i
+			break
+		}
+	}
+	if at < 0 || at+1 >= len(lines) {
 		t.Fatalf("table is too short to have a header and a rule:\n%s", out.String())
 	}
-	header, rule := lines[1], lines[2]
+	header, rule := lines[at], lines[at+1]
 	if len(rule) != len(header) {
 		t.Errorf("rule is %d chars for a %d-char header:\n%s\n%s", len(rule), len(header), header, rule)
 	}
@@ -480,5 +489,140 @@ func TestShowRun_DividerMatchesTheHeader(t *testing.T) {
 	// the header's widest qualifier must fit exactly where VerdictCell writes it.
 	if !strings.Contains(header, "VERDICT"+strings.Repeat(" ", ledger.VerdictWidth-len("VERDICT"))+" SESSION") {
 		t.Errorf("VERDICT column is not %d wide, so it no longer tracks ledger.VerdictWidth:\n%s", ledger.VerdictWidth, header)
+	}
+}
+
+// showEngineFixture writes a one-node snapshot stamped with engine, plus an
+// event stream with one run_started per entry of legs (none when legs is nil),
+// and returns what `show` prints for it.
+func showEngineFixture(t *testing.T, engine runfeed.Engine, legs []runfeed.Engine) string {
+	t.Helper()
+	dir := t.TempDir()
+	if legs != nil {
+		var events []runfeed.Event
+		for _, e := range legs {
+			events = append(events,
+				runfeed.Event{Type: runfeed.EventRunStarted, Engine: e},
+				runfeed.Event{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePaused})
+		}
+		writeEventFixture(t, dir, "engine-run", events)
+	}
+	writeShowSnapshot(t, dir, runstate.Snapshot{
+		RunID:          "engine-run",
+		Graph:          json.RawMessage(`{"name":"demo","nodes":[{"id":"apply","prompt":"a"}]}`),
+		Nodes:          map[string]runstate.NodeRecord{"apply": {Verdict: runstate.VerdictPass}},
+		EngineVersion:  engine.Version,
+		EngineCommit:   engine.Commit,
+		EngineModified: engine.Modified,
+	})
+	var out strings.Builder
+	if err := showRun(&out, dir, "engine-run"); err != nil {
+		t.Fatalf("showRun: %v", err)
+	}
+	return out.String()
+}
+
+// TestShowRun_EngineLine (#373): the build state.json names is one line, its
+// version and commit together, ", modified" only for a dirty tree and no
+// parentheses at all for a build with no VCS info.
+func TestShowRun_EngineLine(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		engine runfeed.Engine
+		want   string
+	}{
+		{"with a commit", runfeed.Engine{Version: "0.19.0", Commit: "baeae87"},
+			"engine: oh-my-graph 0.19.0 (commit baeae87)\n"},
+		{"a modified build", runfeed.Engine{Version: "0.19.0", Commit: "baeae87", Modified: true},
+			"engine: oh-my-graph 0.19.0 (commit baeae87, modified)\n"},
+		{"no VCS info", runfeed.Engine{Version: "0.19.0"},
+			"engine: oh-my-graph 0.19.0\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := showEngineFixture(t, tc.engine, nil)
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("want %q in:\n%s", tc.want, got)
+			}
+			if !tc.engine.Modified && strings.Contains(got, "modified") {
+				t.Errorf("a clean build reads as modified:\n%s", got)
+			}
+			if tc.engine.Commit == "" && strings.Contains(lineContaining(t, got, "engine:"), "(") {
+				t.Errorf("a build with no commit printed parentheses:\n%s", got)
+			}
+			if strings.Contains(got, "engines by leg:") {
+				t.Errorf("a run with no stream has no legs to break down:\n%s", got)
+			}
+		})
+	}
+}
+
+// TestShowRun_OldRunSaysVersionNotRecorded (#373): a pre-#373 snapshot names
+// no build, and `show` must say so rather than claim the run for whatever
+// binary happens to be reading it.
+func TestShowRun_OldRunSaysVersionNotRecorded(t *testing.T) {
+	setVersion(t, "9.9.9-sentinel")
+	got := showEngineFixture(t, runfeed.Engine{}, []runfeed.Engine{{}, {}})
+	if !strings.Contains(got, "engine: version not recorded\n") {
+		t.Errorf("an unstamped run must say its version was not recorded:\n%s", got)
+	}
+	if strings.Contains(got, "9.9.9-sentinel") {
+		t.Errorf("an unstamped run was stamped with the reading binary's version:\n%s", got)
+	}
+	if strings.Contains(got, "engines by leg:") {
+		t.Errorf("a stream with no engine fields has nothing to break down:\n%s", got)
+	}
+}
+
+// TestShowRun_EnginesByLeg (#373): legs run by different builds are each
+// named, distinct builds once each, in the order the legs ran; legs that all
+// agree — an auto leg's planning and scheduler run_started included — print
+// only the one line.
+func TestShowRun_EnginesByLeg(t *testing.T) {
+	first := runfeed.Engine{Version: "0.18.0", Commit: "aaaaaaa"}
+	second := runfeed.Engine{Version: "0.19.0", Commit: "bbbbbbb", Modified: true}
+
+	got := showEngineFixture(t, second, []runfeed.Engine{first, first, second})
+	want := "engines by leg:\n" +
+		"  engine: oh-my-graph 0.18.0 (commit aaaaaaa)\n" +
+		"  engine: oh-my-graph 0.19.0 (commit bbbbbbb, modified)\n"
+	if !strings.Contains(got, want) {
+		t.Errorf("want both legs' engines in leg order:\n%s", got)
+	}
+	if !strings.Contains(got, "engine: oh-my-graph 0.19.0 (commit bbbbbbb, modified)\n") {
+		t.Errorf("the state.json engine line is missing:\n%s", got)
+	}
+
+	agreed := showEngineFixture(t, first, []runfeed.Engine{first, first})
+	if strings.Contains(agreed, "engines by leg:") {
+		t.Errorf("legs that agree must print only the one engine line:\n%s", agreed)
+	}
+
+	// A pre-#373 leg resumed by a stamped build: the old leg is named as
+	// unrecorded, not dropped and not credited to the newer build.
+	resumed := showEngineFixture(t, first, []runfeed.Engine{{}, first})
+	if !strings.Contains(resumed, "engines by leg:\n  engine: version not recorded\n  engine: oh-my-graph 0.18.0 (commit aaaaaaa)\n") {
+		t.Errorf("an unstamped leg must be named as such in the breakdown:\n%s", resumed)
+	}
+}
+
+// TestShowRun_UnreadableStreamDoesNotFailTheEngineLine (#373): the per-leg
+// breakdown is extra, so a stream that cannot be read drops it and nothing else.
+func TestShowRun_UnreadableStreamDoesNotFailTheEngineLine(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, runfeed.FileName), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeShowSnapshot(t, dir, runstate.Snapshot{
+		RunID:         "engine-run",
+		Graph:         json.RawMessage(`{"name":"demo","nodes":[{"id":"apply","prompt":"a"}]}`),
+		Nodes:         map[string]runstate.NodeRecord{"apply": {Verdict: runstate.VerdictPass}},
+		EngineVersion: "0.19.0",
+	})
+	var out strings.Builder
+	if err := showRun(&out, dir, "engine-run"); err != nil {
+		t.Fatalf("an unreadable stream must not fail show: %v", err)
+	}
+	if !strings.Contains(out.String(), "engine: oh-my-graph 0.19.0\n") {
+		t.Errorf("the engine line is missing:\n%s", out.String())
 	}
 }
