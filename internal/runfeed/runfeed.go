@@ -234,11 +234,16 @@ type Event struct {
 
 // Engine is the build stamp a run_started carries (#373), and the same three
 // values the leg's state.json records. Version is the release version the
-// binary reports (`oh-my-graph version`); Commit is the VCS revision the Go
-// toolchain embedded at build time, absent — never empty — when the binary
-// carries none; Modified is true when that build's tree had uncommitted
-// changes, and is never written false or without a Commit. The producer
-// (cmd/oh-my-graph's engineFromSettings) enforces both rules.
+// binary reports (`oh-my-graph version`); Commit is the build info's
+// vcs.revision when the binary has one, and otherwise the -X main.Commit value
+// stamped at link time (which `make build` sets from `git rev-parse HEAD`,
+// because Go embeds no vcs info in a linked worktree, where .git is a file).
+// The build info always wins when it has a vcs.revision. Commit is absent —
+// never empty — when neither source has one. Modified likewise comes from
+// vcs.modified, and otherwise from main.Modified being exactly "true"; it is
+// true when that build's tree had uncommitted changes, and is never written
+// false or without a Commit. The producer (cmd/oh-my-graph's
+// engineFromSettings) enforces these rules.
 type Engine struct {
 	Version  string `json:"engine_version,omitempty"`
 	Commit   string `json:"engine_commit,omitempty"`

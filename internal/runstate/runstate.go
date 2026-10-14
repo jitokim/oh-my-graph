@@ -615,9 +615,14 @@ type Snapshot struct {
 	// cycle, a resume — stamps its own binary's values, so after an upgrade
 	// mid-run the file names the newer build, and each leg's own build is on
 	// its run_started in events.jsonl. EngineVersion is the release version
-	// (`oh-my-graph version`); EngineCommit is the VCS revision the toolchain
-	// embedded, absent — never empty — when the binary carries none;
-	// EngineModified is true when that build's tree was dirty, and is never
+	// (`oh-my-graph version`); EngineCommit is the build info's vcs.revision
+	// when the binary has one, and otherwise the -X main.Commit stamped at
+	// link time (`make build` sets it from `git rev-parse HEAD`, because Go
+	// embeds no vcs info in a linked worktree, where .git is a file); the
+	// build info always wins when it has a vcs.revision, and EngineCommit is
+	// absent — never empty — when neither source has one. EngineModified
+	// likewise comes from vcs.modified, otherwise from main.Modified being
+	// exactly "true"; it is true when that build's tree was dirty, and is never
 	// written false or without a commit (MarshalJSON enforces the latter).
 	//
 	// Additive and optional, so Schema stays 3: a snapshot written before
