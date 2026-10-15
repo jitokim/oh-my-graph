@@ -1415,17 +1415,41 @@ Spec:
 
 `graphs/drift-review.yaml` checks whether a change still does what a design
 document says, then settles every gap it finds (#386). It is two `use:` nodes
-and four sessions, each a fresh one that hands on an artifact:
+and five sessions, each a fresh one that hands on an artifact:
 
-- `drift` cites `drift-check`. A read-only node diffs `base..head` against the
-  design and answers `NO_DRIFT`, or `DRIFT:` with a JSON list naming the commit
-  behind each gap. It never hears the authors' reasons, so it can't explain the
-  drift away.
+- `drift` cites `drift-check`, two nodes. `baseline` is the part with no
+  model: the engine itself runs your `baseline` command as the node's
+  `verify:` and judges its exit code, so a failure stops the run before any
+  model judges drift. Then `check`, read-only, diffs `base..head` against the
+  design and judges only the `llm` requirements. It answers `NO_DRIFT`, or
+  `DRIFT:` with a JSON list naming, for each gap, the requirement it violates
+  (`unlisted` when none covers it) and the commit behind it. It never hears the
+  authors' reasons, so it can't explain the drift away.
 - `nego` cites `drift-nego`. `interview` reads each named commit and speaks for
   its author. `rule` gives every item fix-code, amend-design or
   accept-deviation, and never edits. `fix` applies the fix-code items, commits
   them in `repo` on whatever branch is checked out there, and passes only when
   the engine's own run of your `verify` command does.
+
+The `requirements` file holds one requirement per line, `#` comments and blank
+lines ignored:
+
+```text
+# ID | measure   | source       | check                         | text
+R1   | invariant | DESIGN.md:12 | test -f LICENSE               | the repo ships a licence
+R2   | llm       | DESIGN.md:40 | handoff-default               | artifact handoff stays the default
+```
+
+An `invariant`'s `check` is a shell command that exits 0 when it holds; an
+`llm`'s is a short name for the model to judge. `scripts/drift-baseline.sh`,
+the shipped `baseline` command, checks the lock, then this format, then every
+`invariant`. The lock pins the design and the requirements by sha256, and
+**you** own it: the script only verifies it and never writes it. Create it,
+and re-create it whenever you change either file, from `repo`'s root:
+
+```sh
+sha256sum DESIGN.md requirements.txt > drift.lock
+```
 
 A ruling with any amend-design item **fails `rule` and stops the run** before
 `fix`. Changing the design is your call, so read the ruling in `rule`'s
@@ -1435,14 +1459,16 @@ drift, the three `nego` nodes still run and each answers at once.
 ```sh
 oh-my-graph run graphs/drift-review.yaml --input repo="$PWD" \
   --input design=DESIGN.md --input base=main --input head=HEAD \
-  --input verify="make check"
+  --input verify="make check" --input requirements=requirements.txt \
+  --input baseline="sh /path/to/oh-my-graph/scripts/drift-baseline.sh requirements.txt drift.lock"
 ```
 
-All five inputs are required, `head` included, because a graph has no input
+All seven inputs are required, `head` included, because a graph has no input
 defaults. Make `verify` a `make` command, since `fix` may run only `git` and
-`make`. **Cost:** about four Claude sessions (one check, one interview, one
-ruling, one fix) plus one run of `verify`. Three of them are short when there
-is no drift.
+`make`. **Cost:** about five Claude sessions (one tiny baseline, one check, one
+interview, one ruling, one fix) plus one run of `baseline` and one of `verify`.
+Three of them are short when there is no drift, and only the baseline runs when
+the baseline fails.
 
 ## Human gates and failure salvage
 
