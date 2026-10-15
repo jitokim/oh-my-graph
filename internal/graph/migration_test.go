@@ -31,7 +31,9 @@ var update = flag.Bool("update", false, "regenerate testdata/golden resolved-gra
 // of that one fragment, which is exactly the blast radius this fixture exists
 // to put in front of a reviewer. gated-dev.yaml (#345) cites two of the
 // fragments gated-lane does, so an edit to either of them moves it too.
-var goldenTemplates = []string{"self-dev.yaml", "dev-review-pr.yaml", "backlog-batch.yaml", "adr-driven-dev.yaml", "gated-dev.yaml"}
+// drift-review.yaml (#386) is the only citer of drift-check and drift-nego,
+// so this golden is the one place an edit to either shows up.
+var goldenTemplates = []string{"self-dev.yaml", "dev-review-pr.yaml", "backlog-batch.yaml", "adr-driven-dev.yaml", "gated-dev.yaml", "drift-review.yaml"}
 
 // migratedTemplates are the two shipped templates ADR 0013's migration
 // converted onto fragments WITHOUT changing what they do, with the exact
