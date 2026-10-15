@@ -6,15 +6,39 @@
     "design",
     "base",
     "head",
-    "verify"
+    "verify",
+    "requirements",
+    "baseline"
   ],
   "concurrency": 1,
   "on_fail": "halt",
   "nodes": [
     {
+      "id": "drift/baseline",
+      "type": "claude-run",
+      "prompt": "Reply with exactly PASS and do nothing else.\n",
+      "cwd": "{{ inputs.repo }}",
+      "allowed_tools": [
+        "Read"
+      ],
+      "permission_mode": "plan",
+      "handoff": "artifact",
+      "success_check": {
+        "exit_zero": true,
+        "result_matches": "^[*_`\\s]*PASS",
+        "verify": {
+          "command": "{{ inputs.baseline }}",
+          "timeout": "5m"
+        }
+      }
+    },
+    {
       "id": "drift/check",
       "type": "claude-run",
-      "prompt": "Check this change for DESIGN DRIFT. This is a check: do NOT edit\nanything, and do NOT judge whether a deviation is justified — report\nit, and leave the judging to others.\n\n1. Read the design document `{{ inputs.design }}` in full.\n2. Read the change: `git diff {{ inputs.base }}..{{ inputs.head }}`, then\n   every changed file as it stands at `{{ inputs.head }}`.\n3. List EVERY place where the code does something the design does not\n   say, or does not do what the design says. That includes silently\n   narrowing a rule the design states (a check that admits less than\n   the design promises) and silently widening one (a check that admits\n   more).\n4. For each item, find the commit that introduced it: use `git log`\n   and `git blame` over `{{ inputs.base }}..{{ inputs.head }}`.\n\nFinish the check BEFORE you reply. Your FINAL reply IS the verdict: the\nnode's turn ends the moment you reply, so a file you promise to read\nafterwards is never read. START the reply with exactly one of these two\nbare tokens, as the very FIRST characters, with no markdown emphasis\n(`**NO_DRIFT**` and `**DRIFT:**` are WRONG), no heading, no preamble:\n  - NO_DRIFT — you held the whole change against the design and found\n    nothing.\n  - DRIFT: — followed by ONE fenced ```json array, one object per item:\n      {\"id\": \"D1\", \"clause\": \"\u003cthe design text, quoted\u003e\",\n       \"expected\": \"\u003cwhat the design says\u003e\",\n       \"actual\": \"\u003cwhat the code does\u003e\",\n       \"evidence\": \"\u003cpath:line\u003e\",\n       \"commit\": \"\u003cshort sha\u003e\", \"subject\": \"\u003ccommit subject\u003e\"}\n    Number the ids D1, D2, … in the order you list them.\nAnything you need to qualify goes AFTER the verdict, never before it: a\nline of context ahead of the token fails this node even when the check\nis finished.\n",
+      "depends_on": [
+        "drift/baseline"
+      ],
+      "prompt": "Check this change for DESIGN DRIFT. This is a check: do NOT edit\nanything, and do NOT judge whether a deviation is justified — report\nit, and leave the judging to others.\n\n1. Read the design document `{{ inputs.design }}` in full.\n2. Read the requirements file `{{ inputs.requirements }}`. Each\n   entry is one line, `ID | measure | source | check | text`; lines\n   starting with `#` and blank lines are ignored. Judge ONLY the\n   entries whose measure is `llm`: every `invariant` entry has already\n   passed, run by the engine in the baseline step before you.\n3. Read the change: `git diff {{ inputs.base }}..{{ inputs.head }}`, then\n   every changed file as it stands at `{{ inputs.head }}`.\n4. List EVERY place where the code does something the design does not\n   say, or does not do what the design says. That includes silently\n   narrowing a rule the design states (a check that admits less than\n   the design promises) and silently widening one (a check that admits\n   more). Name the `llm` requirement each item violates. A gap that no\n   requirement covers is STILL reported, with req \"unlisted\".\n5. For each item, find the commit that introduced it: use `git log`\n   and `git blame` over `{{ inputs.base }}..{{ inputs.head }}`.\n\nFinish the check BEFORE you reply. Your FINAL reply IS the verdict: the\nnode's turn ends the moment you reply, so a file you promise to read\nafterwards is never read. START the reply with exactly one of these two\nbare tokens, as the very FIRST characters, with no markdown emphasis\n(`**NO_DRIFT**` and `**DRIFT:**` are WRONG), no heading, no preamble:\n  - NO_DRIFT — you held the whole change against the design and found\n    nothing.\n  - DRIFT: — followed by ONE fenced ```json array, one object per item:\n      {\"id\": \"D1\", \"req\": \"\u003crequirement ID, or unlisted\u003e\",\n       \"clause\": \"\u003cthe design text, quoted\u003e\",\n       \"expected\": \"\u003cwhat the design says\u003e\",\n       \"actual\": \"\u003cwhat the code does\u003e\",\n       \"evidence\": \"\u003cpath:line\u003e\",\n       \"commit\": \"\u003cshort sha\u003e\", \"subject\": \"\u003ccommit subject\u003e\"}\n    Number the ids D1, D2, … in the order you list them.\nAnything you need to qualify goes AFTER the verdict, never before it: a\nline of context ahead of the token fails this node even when the check\nis finished.\n",
       "cwd": "{{ inputs.repo }}",
       "allowed_tools": [
         "Read",

@@ -113,7 +113,7 @@ func TestReuseCatalog_ShippedCorpus(t *testing.T) {
 		reason ReuseSkipReason
 		detail string
 	}{
-		"drift-check":     {ReuseSkipNonPromptSlot, `slot "check_timeout" lands in timeout`},
+		"drift-check":     {ReuseSkipNonPromptSlot, `slot "baseline_command" lands in success_check.verify.command`},
 		"drift-nego":      {ReuseSkipNonPromptSlot, `slot "verify_command" lands in success_check.verify.command`},
 		"e2e-verify":      {ReuseSkipNonPromptSlot, `slot "verify_command" lands in success_check.verify.command`},
 		"gated-lane":      {ReuseSkipNestedUse, `node "gated-lane/e2e" cites the fragment "e2e-verify"`},

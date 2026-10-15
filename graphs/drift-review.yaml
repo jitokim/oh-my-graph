@@ -1,14 +1,22 @@
 # drift-review — hold a change against its design document, hear the authors
 # out, rule on every gap, and repair the ones that are the code's fault (#386).
 #
-#   drift (check) ──▶ nego (interview ──▶ rule ──▶ fix)
+#   drift (baseline ──▶ check) ──▶ nego (interview ──▶ rule ──▶ fix)
 #
-# Two fragment citations, four nodes, named `drift/check`, `nego/interview`,
-# `nego/rule` and `nego/fix`:
+# Two fragment citations, five nodes, named `drift/baseline`, `drift/check`,
+# `nego/interview`, `nego/rule` and `nego/fix`:
 #
-#   - drift cites `drift-check`: a read-only session diffs base..head against
-#     the design and answers NO_DRIFT, or DRIFT: with a JSON list in which
-#     every item names the commit that introduced it. It never hears why.
+#   - drift cites `drift-check`:
+#       baseline is the deterministic half. The ENGINE runs your `baseline`
+#       command itself (scripts/drift-baseline.sh: the lock, the requirements
+#       format, then every `invariant` requirement) and judges its exit code,
+#       so no model can talk a failure around. A failure stops the run before
+#       any model judges drift. The node's own session only replies PASS;
+#       check is a read-only session that diffs base..head against the design
+#       and judges only the `llm` requirements. It answers NO_DRIFT, or
+#       DRIFT: with a JSON list in which every item names the requirement it
+#       violates ("unlisted" for a gap none covers) and the commit that
+#       introduced it. It never hears why.
 #   - nego cites `drift-nego`, and is handed that list inline:
 #       interview speaks for the author of each commit — a FRESH session that
 #       reads the author's commits and messages, not the author's own session
@@ -29,9 +37,10 @@
 # Nothing here is conditional, either: when the check finds NO_DRIFT the three
 # nego nodes still run, each answering NO_DRIFT (fix: PASS) at once.
 #
-# Cost, honestly: about four claude sessions — one check, one interview, one
-# ruling, one fix — plus one run of your `verify` command. Three of them are
-# short when there is no drift. The fix node edits and commits in `repo`
+# Cost, honestly: about five claude sessions — one tiny baseline, one check,
+# one interview, one ruling, one fix — plus one run of your `baseline` command
+# and one of your `verify` command. Three of them are short when there is no
+# drift, and only the baseline runs when the baseline fails. The fix node edits and commits in `repo`
 # itself, on whatever branch is checked out there.
 #
 # Inputs:
@@ -43,6 +52,18 @@
 #   verify  the command the engine runs as fix's evidence, e.g. "make check".
 #           Make it a `make` command: fix's grant runs `git` and `make` only,
 #           and it is told to run exactly this
+#   requirements  the requirements file, as a path inside repo (e.g.
+#           requirements.txt) — one `ID | measure | source | check | text`
+#           entry per line; the check judges its `llm` entries
+#   baseline  the command the engine runs as the baseline, from repo's root,
+#           e.g. "sh /path/to/oh-my-graph/scripts/drift-baseline.sh
+#           requirements.txt drift.lock"
+#
+# The lock is owned by a person. The baseline script only reads it and never
+# writes it; creating or updating it is the owner's decision — it is how the
+# owner says "this text is the spec". From repo's root:
+#
+#   sha256sum DESIGN.md requirements.txt > drift.lock
 #
 # Run:
 #   oh-my-graph run graphs/drift-review.yaml \
@@ -50,10 +71,12 @@
 #     --input design=DESIGN.md \
 #     --input base=main \
 #     --input head=HEAD \
-#     --input verify="make check"
+#     --input verify="make check" \
+#     --input requirements=requirements.txt \
+#     --input baseline="sh /path/to/oh-my-graph/scripts/drift-baseline.sh requirements.txt drift.lock"
 name: drift-review
 version: "0.1"
-inputs: [repo, design, base, head, verify]
+inputs: [repo, design, base, head, verify, requirements, baseline]
 concurrency: 1 # a strict chain — nothing ever runs in parallel
 nodes:
   - id: drift
@@ -61,6 +84,9 @@ nodes:
     cwd: "{{ inputs.repo }}"
     with:
       design_path: "{{ inputs.design }}"
+      requirements_path: "{{ inputs.requirements }}"
+      # From an input, never an artifact: the engine runs it through `sh -c`.
+      baseline_command: "{{ inputs.baseline }}"
       base: "{{ inputs.base }}"
       head: "{{ inputs.head }}"
       # Deliberately empty, not omitted: a multi-node fragment's slot must

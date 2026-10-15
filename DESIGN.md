@@ -364,7 +364,7 @@ see "Execution engine" step 4), `nodes: [..]`.
 Full worked example (dev→e2e→parallel reviews→pr) ships as `graphs/dev-review-pr.yaml`;
 the two-node bounded review loop ships as `graphs/review-loop.yaml`;
 a design-drift check followed by a negotiation over what it found (two `use:`
-nodes, four spliced nodes) ships as `graphs/drift-review.yaml` (#386).
+nodes, five spliced nodes) ships as `graphs/drift-review.yaml` (#386).
 
 `feedback:` keeps the static graph a DAG: the arc lives outside `depends_on`
 and must point strictly backward to a proper `depends_on`-ancestor
@@ -724,10 +724,16 @@ from the file that changed.
 
 **The drift pair — `drift-check` and `drift-nego` (#386).** Two fragments
 `graphs/drift-review.yaml` cites one after the other. They are split because of
-what each session must not know. `drift-check` is one read-only node, under
-`plan`: it holds the code between `base` and `head` against a design document
-and answers `NO_DRIFT`, or `DRIFT:` plus a JSON list that names the commit
-behind each gap. `drift-nego` is three nodes, `interview → rule → fix`.
+what each session must not know. `drift-check` is two nodes, `baseline → check`.
+`baseline` is the deterministic half: its `verify:` is the bound
+`baseline_command` (`scripts/drift-baseline.sh` — the owner's lock, the
+requirements format, every `invariant` requirement), run by the engine and
+judged on its exit code, so no model can talk a failure around; its own
+session only replies `PASS`. `check` is read-only, under `plan`: it holds the
+code between `base` and `head` against a design document, judges only the
+`llm` entries of the requirements file, and answers `NO_DRIFT`, or `DRIFT:`
+plus a JSON list that names the requirement (`req`, or `unlisted`) and the
+commit behind each gap. `drift-nego` is three nodes, `interview → rule → fix`.
 `interview` speaks for the author of each named commit, `rule` gives each item
 fix-code, amend-design or accept-deviation and holds no write tool, and `fix`
 applies the fix-code items only, gated on an engine-run `verify:`. The checker
@@ -751,7 +757,7 @@ which the post-splice rewrite points at `drift/check`.
 - **Nothing in the pair is conditional either.** A `use:` node has no condition
   to carry, so after a `NO_DRIFT` check the three `drift-nego` nodes still run.
   Each prompt answers a `NO_DRIFT` report at once (`fix` with `PASS`), and `fix`'s
-  `verify:` still runs once. That makes about four sessions per run, three of them short.
+  `verify:` still runs once. That makes about five sessions per run, four of them short.
 - **The interview is not the author.** It is a fresh session reading the
   author's commits and messages, not the session that wrote them resumed.
   Resuming the real author session is #386's open question and needs an ADR.

@@ -1,5 +1,6 @@
 # drift-check — one read-only drift check: the code between two refs, held
-# against a design document, answered NO_DRIFT or DRIFT: (#386).
+# against a design document and its requirements, answered NO_DRIFT or DRIFT:
+# (#386), after an engine-run baseline of every invariant requirement.
 #
 # Design drift is the gap a review round does not look for. A review asks "is
 # this diff good?"; this asks "does this diff still do what the design says?".
@@ -7,7 +8,21 @@
 # rule the design states, or widen one — and the design then describes a
 # system that no longer exists.
 #
+# TWO nodes, run in order:
+#
+#   baseline ──▶ check
+#
+#   * baseline runs the deterministic half of the review — the owner's lock,
+#     the requirements format and every `invariant` requirement — as an
+#     engine-run `verify:` (scripts/drift-baseline.sh is the shipped command).
+#     A failure stops the run before any model judges drift.
+#   * check is the model's half: it judges only the requirements whose
+#     measure is `llm`, plus any gap no requirement covers.
+#
 # What stays per-use: which design the code is held to (`design_path`), the
+# requirements file the change is judged against (`requirements_path`), the
+# command the ENGINE runs as the baseline (`baseline_command` — bind it from an
+# input or a literal, never from an artifact: it goes through `sh -c`), the
 # two refs that bound the change (`base`, `head`), and how long the check may
 # take (`check_timeout` — bind "" for the runner's default).
 #
@@ -23,34 +38,66 @@
 #     reached before anyone argues for the code. A checker that reads the
 #     reason first explains the drift away instead of reporting it. Hearing
 #     the authors is `drift-nego`'s interview; ruling is its rule node.
-#   * Each item names the commit that introduced it. That is what lets the
+#   * Each item names the requirement it violates (`req`, or "unlisted" for
+#     a gap no requirement covers — still reported) and the commit that
+#     introduced it. That is what lets the
 #     interview speak for the author of THAT commit rather than for the change
 #     as a whole.
 #   * The verdict contract, and a JSON list a later node can quote inline.
 #
 # `cwd:` and `worktree:` are deliberately absent — they are the using node's,
-# so the citing graph points this at its repository.
+# and they propagate to both spliced nodes, so the citing graph points this at
+# its repository.
 fragment: drift-check
-description: "one read-only drift check — the code between two refs against a design document, answered NO_DRIFT or DRIFT:"
-substitutions: [design_path, base, head, check_timeout]
+description: "an engine-run baseline of the invariant requirements, then one read-only drift check of the llm ones — the code between two refs against a design document, answered NO_DRIFT or DRIFT:"
+substitutions: [design_path, requirements_path, baseline_command, base, head, check_timeout]
 exit: check
 nodes:
+  # Why the deterministic half is a verify and not a model step: the ENGINE
+  # runs `baseline_command` itself, outside any model, and judges it on its
+  # exit code alone. So the lock, format and invariant checks cannot be
+  # talked around — no session reads their output and decides it is fine. A
+  # failure fails this node, and halt-on-fail stops the run before any model
+  # judges drift. The price is one tiny session: a claude-run node is what
+  # carries a verify, so the prompt only asks for a bare PASS.
+  #
+  # No depends_on: the entry node inherits the citing node's.
+  - id: baseline
+    type: claude-run
+    prompt: |
+      Reply with exactly PASS and do nothing else.
+    # Read only, under plan: this session has nothing to do and cannot act.
+    allowed_tools: [Read]
+    permission_mode: plan
+    handoff: artifact
+    success_check:
+      exit_zero: true
+      result_matches: '^[*_`\s]*PASS' # anchored, but tolerant of `**PASS**`
+      verify: { command: "{{ with.baseline_command }}", timeout: 5m }
+
   - id: check
     type: claude-run
+    depends_on: [baseline]
     prompt: |
       Check this change for DESIGN DRIFT. This is a check: do NOT edit
       anything, and do NOT judge whether a deviation is justified — report
       it, and leave the judging to others.
 
       1. Read the design document `{{ with.design_path }}` in full.
-      2. Read the change: `git diff {{ with.base }}..{{ with.head }}`, then
+      2. Read the requirements file `{{ with.requirements_path }}`. Each
+         entry is one line, `ID | measure | source | check | text`; lines
+         starting with `#` and blank lines are ignored. Judge ONLY the
+         entries whose measure is `llm`: every `invariant` entry has already
+         passed, run by the engine in the baseline step before you.
+      3. Read the change: `git diff {{ with.base }}..{{ with.head }}`, then
          every changed file as it stands at `{{ with.head }}`.
-      3. List EVERY place where the code does something the design does not
+      4. List EVERY place where the code does something the design does not
          say, or does not do what the design says. That includes silently
          narrowing a rule the design states (a check that admits less than
          the design promises) and silently widening one (a check that admits
-         more).
-      4. For each item, find the commit that introduced it: use `git log`
+         more). Name the `llm` requirement each item violates. A gap that no
+         requirement covers is STILL reported, with req "unlisted".
+      5. For each item, find the commit that introduced it: use `git log`
          and `git blame` over `{{ with.base }}..{{ with.head }}`.
 
       Finish the check BEFORE you reply. Your FINAL reply IS the verdict: the
@@ -61,7 +108,8 @@ nodes:
         - NO_DRIFT — you held the whole change against the design and found
           nothing.
         - DRIFT: — followed by ONE fenced ```json array, one object per item:
-            {"id": "D1", "clause": "<the design text, quoted>",
+            {"id": "D1", "req": "<requirement ID, or unlisted>",
+             "clause": "<the design text, quoted>",
              "expected": "<what the design says>",
              "actual": "<what the code does>",
              "evidence": "<path:line>",

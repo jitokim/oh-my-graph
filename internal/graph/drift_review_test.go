@@ -46,7 +46,7 @@ func TestDriftFragmentsLoad_386(t *testing.T) {
 		binds []string
 		ids   []string
 	}{
-		{"drift-check", []string{"design_path", "base", "head", "check_timeout"}, []string{"check"}},
+		{"drift-check", []string{"design_path", "requirements_path", "baseline_command", "base", "head", "check_timeout"}, []string{"baseline", "check"}},
 		{"drift-nego", []string{"check_report", "design_path", "verify_command"}, []string{"interview", "rule", "fix"}},
 	} {
 		got, err := InspectFragment(root, tc.name)
@@ -66,12 +66,12 @@ func TestDriftFragmentsLoad_386(t *testing.T) {
 	}
 }
 
-// TestDriftReviewSplicesFourNodes_386 pins the wiring drift-review exists for:
-// two citations, four nodes in one chain, and the check's report reaching both
+// TestDriftReviewSplicesFiveNodes_386 pins the wiring drift-review exists for:
+// two citations, five nodes in one chain — the baseline before the check — and the check's report reaching both
 // the interview and the ruling under the check node's real id. The graph can
 // only write the bare citing id `drift` (an entry graph may not type `/`), so
 // the rewrite to `drift/check` is the engine's, and is what this holds.
-func TestDriftReviewSplicesFourNodes_386(t *testing.T) {
+func TestDriftReviewSplicesFiveNodes_386(t *testing.T) {
 	loaded, err := LoadFile(filepath.Join("..", "..", "graphs", "drift-review.yaml"))
 	if err != nil {
 		t.Fatalf("load drift-review: %v", err)
@@ -83,11 +83,12 @@ func TestDriftReviewSplicesFourNodes_386(t *testing.T) {
 	for _, n := range loaded.Graph.Nodes {
 		ids = append(ids, n.ID)
 	}
-	if want := []string{"drift/check", "nego/interview", "nego/rule", "nego/fix"}; !slices.Equal(ids, want) {
+	if want := []string{"drift/baseline", "drift/check", "nego/interview", "nego/rule", "nego/fix"}; !slices.Equal(ids, want) {
 		t.Fatalf("drift-review's nodes are %v, want %v", ids, want)
 	}
 	for id, parents := range map[string][]string{
-		"drift/check":    nil,
+		"drift/baseline": nil,
+		"drift/check":    {"drift/baseline"},
 		"nego/interview": {"drift/check"},
 		"nego/rule":      {"nego/interview"},
 		"nego/fix":       {"nego/rule"},
@@ -225,5 +226,38 @@ func TestDriftNegoFixIsToldTheGrantItHolds_386(t *testing.T) {
 	}
 	if grantAdmits(fix.AllowedTools, "go test ./...") {
 		t.Errorf("grantAdmits admits `go test` under fix's grant %v", fix.AllowedTools)
+	}
+}
+
+// TestDriftBaselineGatesTheCheck_386 pins the deterministic half of the
+// review: drift/baseline runs before drift/check, holds no write tool, and is
+// judged by the ENGINE running the bound baseline command — not by a model —
+// while the check is pointed at the bound requirements file.
+func TestDriftBaselineGatesTheCheck_386(t *testing.T) {
+	loaded, err := LoadFile(filepath.Join("..", "..", "graphs", "drift-review.yaml"))
+	if err != nil {
+		t.Fatalf("load drift-review: %v", err)
+	}
+	baseline, ok := loaded.Graph.NodeByID("drift/baseline")
+	if !ok {
+		t.Fatal("drift-review has no drift/baseline node")
+	}
+	check, _ := loaded.Graph.NodeByID("drift/check")
+	if !slices.Contains(check.DependsOn, "drift/baseline") {
+		t.Errorf("drift/check depends on %v — it must follow drift/baseline", check.DependsOn)
+	}
+	for _, tool := range baseline.AllowedTools {
+		if strings.HasPrefix(tool, "Edit") || strings.HasPrefix(tool, "Write") {
+			t.Errorf("drift/baseline holds %s — the baseline session must not act", tool)
+		}
+	}
+	if baseline.SuccessCheck.Verify == nil {
+		t.Fatal("drift/baseline declares no verify — the deterministic half is unchecked")
+	}
+	if got := baseline.SuccessCheck.Verify.Command; got != "{{ inputs.baseline }}" {
+		t.Errorf("drift/baseline is judged by %q, want the bound input {{ inputs.baseline }}", got)
+	}
+	if !strings.Contains(check.Prompt, "{{ inputs.requirements }}") {
+		t.Errorf("drift/check's prompt never names the bound requirements file {{ inputs.requirements }}")
 	}
 }
