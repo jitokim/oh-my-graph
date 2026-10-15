@@ -22,7 +22,10 @@
 # What stays per-use: which design the code is held to (`design_path`), the
 # requirements file the change is judged against (`requirements_path`), the
 # command the ENGINE runs as the baseline (`baseline_command` — bind it from an
-# input or a literal, never from an artifact: it goes through `sh -c`), the
+# input or a literal, never from an artifact: it goes through `sh -c`; for the
+# shipped script that is `sh drift-baseline.sh <design> <requirements-file>
+# <lock-file> <head>`, head last so the invariants are refused unless they run
+# on the checked-out commit the check judges), the
 # two refs that bound the change (`base`, `head`), and how long the check may
 # take (`check_timeout` — bind "" for the runner's default).
 #
