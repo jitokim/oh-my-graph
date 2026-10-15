@@ -362,7 +362,9 @@ Graph file has `name`, `version`, `inputs: [..]`, `concurrency: N`,
 `on_fail: halt | continue` (default halt — the graph's own failure policy;
 see "Execution engine" step 4), `nodes: [..]`.
 Full worked example (dev→e2e→parallel reviews→pr) ships as `graphs/dev-review-pr.yaml`;
-the two-node bounded review loop ships as `graphs/review-loop.yaml`.
+the two-node bounded review loop ships as `graphs/review-loop.yaml`;
+a design-drift check followed by a negotiation over what it found (two `use:`
+nodes, four spliced nodes) ships as `graphs/drift-review.yaml` (#386).
 
 `feedback:` keeps the static graph a DAG: the arc lives outside `depends_on`
 and must point strictly backward to a proper `depends_on`-ancestor
@@ -711,7 +713,7 @@ it tops that tree up with payload files it does not have yet (a fragment added
 by a later release), keeping every file already there;
 `internal/graph/testdata/golden/` holds the resolved goldens — one per
 fragment-citing template (`self-dev`, `dev-review-pr`, `backlog-batch`,
-`adr-driven-dev`, `gated-dev`) — that turn any fragment edit into a reviewed multi-template
+`adr-driven-dev`, `gated-dev`, `drift-review`) — that turn any fragment edit into a reviewed multi-template
 diff. A multi-node fragment multiplies that blast radius by its node count, on
 purpose: one edit to `repair-round` moves four nodes in `adr-driven-dev`'s
 golden, and the reviewer sees all four. Nesting adds a hop to that radius: an
@@ -719,6 +721,40 @@ edit to `e2e-verify` now moves a node in `backlog-batch`, which never names it �
 it cites `gated-lane`, which does. The mitigation is the same goldens, and it
 gets harder rather than easier, because the reviewer's diff is two files away
 from the file that changed.
+
+**The drift pair — `drift-check` and `drift-nego` (#386).** Two fragments
+`graphs/drift-review.yaml` cites one after the other. They are split because of
+what each session must not know. `drift-check` is one read-only node, under
+`plan`: it holds the code between `base` and `head` against a design document
+and answers `NO_DRIFT`, or `DRIFT:` plus a JSON list that names the commit
+behind each gap. `drift-nego` is three nodes, `interview → rule → fix`.
+`interview` speaks for the author of each named commit, `rule` gives each item
+fix-code, amend-design or accept-deviation and holds no write tool, and `fix`
+applies the fix-code items only, gated on an engine-run `verify:`. The checker
+has to rule **before** it can see the authors' reasons. A checker that reads the
+reason first explains the drift away instead of reporting it. So the check and
+the negotiation are separate fragments, every node is a fresh session, and
+everything passes forward by `handoff: artifact`. The report crosses the
+fragment boundary as a binding, `check_report: "{{ artifacts.drift | inline }}"`,
+which the post-splice rewrite points at `drift/check`.
+
+- **The AMEND_DESIGN stop is a failed check, on purpose.** Changing the design
+  is a person's call, so a ruling with any amend-design item has to halt the run.
+  The natural shape is a gate after `rule`, but a gate cannot be conditional
+  today. It always pauses unless `--auto-approve` names it, and so it would stop
+  every run, drift or not. Instead `rule`'s `result_matches` admits only
+  `NO_DRIFT` and `RESOLVED:`. An `AMEND_DESIGN:` reply fails the node, and
+  halt-on-fail stops the run before `fix` with the ruling in `rule`'s artifact.
+  `rule` retries only on `nonzero_exit`: with `result_mismatch` a second
+  attempt could turn the stop into a pass. A conditional gate is engine work and
+  needs an ADR.
+- **Nothing in the pair is conditional either.** A `use:` node has no condition
+  to carry, so after a `NO_DRIFT` check the three `drift-nego` nodes still run.
+  Each prompt answers a `NO_DRIFT` report at once (`fix` with `PASS`), and `fix`'s
+  `verify:` still runs once. That makes about four sessions per run, three of them short.
+- **The interview is not the author.** It is a fresh session reading the
+  author's commits and messages, not the session that wrote them resumed.
+  Resuming the real author session is #386's open question and needs an ADR.
 
 ## Handoff — artifact default, session opt-in (committed)
 - **artifact (default):** engine persists each node's `.result` to
@@ -1376,12 +1412,12 @@ So a verdict pattern is written in two halves, and both are load-bearing:
   shipped prefix verdict carries the offer: *anything you need to qualify
   goes AFTER the verdict, never before it* — as one unbroken line, so
   `grep -c "Anything you need to qualify" graphs/*.yaml graphs/fragments/*.yaml`
-  is a sweep that cannot silently miss a node. That sweep counts **27
-  declarations, covering 36 runtime nodes** — a fragment states the clause
-  once and every node citing it gets it, which is the point: seven of the 27
-  live in `graphs/fragments/`, in six files, and carry sixteen of the nodes
+  is a sweep that cannot silently miss a node. That sweep counts **31
+  declarations, covering 40 runtime nodes** — a fragment states the clause
+  once and every node citing it gets it, which is the point: eleven of the 31
+  live in `graphs/fragments/`, in eight files, and carry twenty of the nodes
   between them.
-  One of the seven is `read-and-report`, and it covers no runtime node yet:
+  One of the eleven is `read-and-report`, and it covers no runtime node yet:
   no shipped graph cites it. It exists to be citable by a PLANNED node
   (ADR 0038), which is a different reader from the ones above.
   The gap widened by two when `adr-driven-dev`'s two repair rounds became two
@@ -1738,9 +1774,9 @@ other node pays a retry, and keeps the narrow class.
 
 **What reuse can and cannot deduplicate here.** A `use:`/`with:` fragment
 (ADR 0013) puts a verdict rule in one place exactly when the whole NODE is one
-shape. Six shipped fragments carry their own — `e2e-verify`, the two review
-shapes, `pr-publish`, `repair-round` and `gated-lane` — and the three prefix
-verdicts among the first four cover ten runtime nodes between them. It reaches no further, and ADR 0013's Migration update is
+shape. Eight shipped fragments carry their own — `e2e-verify`, the two review
+shapes, `pr-publish`, `repair-round`, `gated-lane`, `drift-check` and
+`drift-nego` — and the three prefix verdicts among the first four cover ten runtime nodes between them. It reaches no further, and ADR 0013's Migration update is
 the measurement: the patterns still repeated in the templates are shared by
 nodes that share nothing else. The six nodes declaring ``^[*_`\s]*DONE\b`` have
 **zero** words of prompt in common and four different tool grants. A fragment
@@ -2976,7 +3012,7 @@ off.
   tool outside `Read`, `Glob`, `Grep`); `permission_mode` (any); and
   `planner-refused field` (`plannedNodeRefusals`, the function behind the
   dispositions table below, on every resolved node). On this repository it
-  admits `read-and-report` alone, of seven.
+  admits `read-and-report` alone, of nine.
 - **The read-only tool rule (ADR 0038 §9.2).** An admitted fragment's
   `allowed_tools` must be a subset of `Read`, `Glob` and `Grep`, the set
   defined once as `reuseReadOnlyTools` (`internal/coordinator/reusecatalog.go:49`).
@@ -4069,7 +4105,7 @@ internal/runstatus/{runstatus,skipped}.go + _test  the one shared rule (ADR 0015
 internal/serve/{serve,dashboard,card,resolve,transcript,gate,build}.go + ui/ + _test  `serve`: 127.0.0.1-only web views — the dashboard (`dashboard.go`/`card.go`: one live mini-DAG card per run, run views mounted at /run/<id>/) and the live view of one run — embedded static UI (go:embed) + vendored cytoscape.js; a run-feed consumer with token-guarded gate actions — every route reads the contract (plus the live transcript tail of a running node's own session) except the mutating pair (`gate.go`: approve/reject the paused gate through the injected GateResumer — ADR 0014); `build.go` names the build answering the page, stat'd once per process
 internal/ledger/ledger.go + _test              RunLedger summary + total cost
 graphs/haiku-smoke.yaml, graphs/dev-review-pr.yaml, graphs/self-dev.yaml, … + graphs/embed.go  the shipped pipelines, embedded with `//go:embed *.yaml fragments/*.yaml` (globs, so a new template or fragment ships automatically; the second pattern is required because `*.yaml` does not descend, and a template citing `use:` needs its fragments/ sibling on disk) — `oh-my-graph init [dir]` walks that payload and unpacks it into <dir>/graphs/, nested paths included (dir defaults to `.`), never overwriting: an existing target is kept untouched and reported as `kept` while the missing ones are written (so a re-run delivers a payload addition and an edited template survives it), a kept file whose bytes differ from the payload is marked `DIFFERS` and counted (a top-up can pair a freshly written template with a kept older fragment, which fails at load, not at `init`), and a failure partway through removes the files AND directories it created — `graphs/` itself included when that run made it
-graphs/fragments/{e2e-verify,review-security,review-style,pr-publish,repair-round,gated-lane}.yaml  the shipped node shapes and loops the templates cite with use: (ADR 0013, ADR 0027, ADR 0029); cited by self-dev.yaml, dev-review-pr.yaml, backlog-batch.yaml, adr-driven-dev.yaml and gated-dev.yaml (+ internal/graph/shipped_graphs_test.go asserts every shipped graph loads BOTH from the checkout and from the binary's own unpacked payload — the second is what proves `init` emits graphs that load)
+graphs/fragments/{e2e-verify,review-security,review-style,pr-publish,repair-round,gated-lane,read-and-report,drift-check,drift-nego}.yaml  the shipped node shapes and loops the templates cite with use: (ADR 0013, ADR 0027, ADR 0029); cited by self-dev.yaml, dev-review-pr.yaml, backlog-batch.yaml, adr-driven-dev.yaml, gated-dev.yaml and drift-review.yaml (read-and-report by no template: it is offered to `auto`'s planner) (+ internal/graph/shipped_graphs_test.go asserts every shipped graph loads BOTH from the checkout and from the binary's own unpacked payload — the second is what proves `init` emits graphs that load)
 docs/adr/00{01..30}-*.md                       (0020 is the retry ADR, renumbered from the 0016 it collided on; the build-evidence ADR kept 0016, so every bare "ADR 0016" in the tree resolves)
 docs/measurements/{*.md,probes/<adr>-<name>/}  the raw record behind a measured claim: pre-registrations written before the first spawn, the runner scripts, every prompt file verbatim, and one line per spawn — so a number in an ADR or a CHANGELOG entry is re-derivable rather than quotable
 CHANGELOG.md + changelog.d/{README.md,<issue>-<slug>.md}  the released sections, and each unreleased entry as its own file, owned by the PR that adds it, so two PRs never edit a common file (ADR 0042); `## [Unreleased]` holds a pointer to changelog.d/ and no entries
