@@ -4110,6 +4110,7 @@ docs/adr/00{01..30}-*.md                       (0020 is the retry ADR, renumbere
 docs/measurements/{*.md,probes/<adr>-<name>/}  the raw record behind a measured claim: pre-registrations written before the first spawn, the runner scripts, every prompt file verbatim, and one line per spawn — so a number in an ADR or a CHANGELOG entry is re-derivable rather than quotable
 CHANGELOG.md + changelog.d/{README.md,<issue>-<slug>.md}  the released sections, and each unreleased entry as its own file, owned by the PR that adds it, so two PRs never edit a common file (ADR 0042); `## [Unreleased]` holds a pointer to changelog.d/ and no entries
 scripts/{changelog-entry-check,changelog-fragment-check,changelog-collect,release-notes}.sh  POSIX sh, run by CI and by hand: the per-PR entry gate, the fragment name/shape rule both of the next two ask, the release-cut collector that writes the fragments into `## [vX.Y.Z]` and deletes them, and the release body from that section (+ cmd/oh-my-graph/changelog_scripts_test.go drives each in a temporary git repository)
+scripts/drift-baseline.sh  POSIX sh, no model: a drift review's deterministic half (#386) — the owner's sha256 lock over the design and requirements file (read, never written), the requirements format, then every `invariant` check (+ cmd/oh-my-graph/drift_baseline_script_test.go)
 README.md, SECURITY.md, LICENSE(MIT), go.mod, Makefile(build/test/lint)
 ```
 
