@@ -752,12 +752,20 @@ which the post-splice rewrite points at `drift/check`.
   `NO_DRIFT` and `RESOLVED:`. An `AMEND_DESIGN:` reply fails the node, and
   halt-on-fail stops the run before `fix` with the ruling in `rule`'s artifact.
   `rule` retries only on `nonzero_exit`: with `result_mismatch` a second
-  attempt could turn the stop into a pass. A conditional gate is engine work and
-  needs an ADR.
+  attempt could turn the stop into a pass. The run shows as FAIL, not PAUSED,
+  and cannot be continued with `resume --approve`. A conditional gate is engine
+  work and needs an ADR.
 - **Nothing in the pair is conditional either.** A `use:` node has no condition
   to carry, so after a `NO_DRIFT` check the three `drift-nego` nodes still run.
   Each prompt answers a `NO_DRIFT` report at once (`fix` with `PASS`), and `fix`'s
   `verify:` still runs once. That makes about five sessions per run, four of them short.
+  Skipping `nego` on a clean check needs conditional execution of a node or a
+  `use:`, which needs an ADR — likely the same one as the conditional gate.
+- **`head` has no default.** A graph has no per-graph input defaults (see
+  "Binding inputs"), and an unbound input fails `run --dry-run` and fails the
+  node at run time. So `head` is a required input, and the graph header,
+  docs/EXAMPLES.md and the changelog all say to pass `--input head=HEAD`.
+  Input defaults are a change to the graph language and need an ADR.
 - **The interview is not the author.** It is a fresh session reading the
   author's commits and messages, not the session that wrote them resumed.
   Resuming the real author session is #386's open question and needs an ADR.
