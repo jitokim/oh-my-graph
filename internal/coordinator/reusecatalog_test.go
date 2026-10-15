@@ -83,9 +83,12 @@ node:
 }
 
 // TestReuseCatalog_ShippedCorpus is §9.1 measured by the code (#338): of the
-// seven fragments this repository ships, exactly read-and-report is offered,
-// and the other six are skipped for the reasons ADR 0038 §2.2.1 and §9.2 give —
-// two for a slot that reaches a non-prompt field, three for a tool outside
+// nine fragments this repository ships, exactly read-and-report is offered,
+// and the other eight are skipped for the reasons ADR 0038 §2.2.1 and §9.2 give —
+// four for a slot that reaches a non-prompt field (drift-check's and
+// drift-nego's baseline command — the first slot in drift-nego's fix verify —
+// repair-round's agent, and e2e-verify's verify command),
+// three for a tool outside
 // the read-only set (pr-publish's first is Bash(git *), an exact allowlist
 // member; the reviews' is Bash(git diff*), a narrowing of one). Each of the latter three also declares permission_mode; the tool
 // rule is checked first, so that is the reason recorded. gated-lane cites
@@ -111,6 +114,8 @@ func TestReuseCatalog_ShippedCorpus(t *testing.T) {
 		reason ReuseSkipReason
 		detail string
 	}{
+		"drift-check":     {ReuseSkipNonPromptSlot, `slot "baseline_command" lands in success_check.verify.command`},
+		"drift-nego":      {ReuseSkipNonPromptSlot, `slot "baseline_command" lands in success_check.verify.command`},
 		"e2e-verify":      {ReuseSkipNonPromptSlot, `slot "verify_command" lands in success_check.verify.command`},
 		"gated-lane":      {ReuseSkipNestedUse, `node "gated-lane/e2e" cites the fragment "e2e-verify"`},
 		"repair-round":    {ReuseSkipNonPromptSlot, `slot "review_agent" lands in agent`},
@@ -132,7 +137,7 @@ func TestReuseCatalog_ShippedCorpus(t *testing.T) {
 			t.Errorf("%s skipped for %q (%s), want %q mentioning %s", name, skip.Reason, skip.Detail, w.reason, w.detail)
 		}
 	}
-	if got := catalog.SkippedByReason(); got[ReuseSkipNonPromptSlot] != 2 || got[ReuseSkipTool] != 3 || got[ReuseSkipNestedUse] != 1 {
+	if got := catalog.SkippedByReason(); got[ReuseSkipNonPromptSlot] != 4 || got[ReuseSkipTool] != 3 || got[ReuseSkipNestedUse] != 1 {
 		t.Errorf("SkippedByReason = %v", got)
 	}
 

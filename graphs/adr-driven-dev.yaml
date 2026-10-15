@@ -294,8 +294,9 @@ nodes:
     with:
       # Deliberately empty, not omitted: the standard round runs as a plain
       # claude session under the runner's default bound, and a multi-node use:
-      # declares wiring only — so "no agent" and "no timeout" are said here,
-      # in the binding, rather than by deleting a key.
+      # declares wiring only — so "no agent" and "the default timeout" (20m,
+      # not unbounded) are said here, in the binding, rather than by deleting
+      # a key.
       review_agent: ""
       review_timeout: ""
       verify_command: make local

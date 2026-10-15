@@ -56,7 +56,7 @@ unchanged.
 
 `go install` copies one executable and nothing else, so `init` unpacks the
 example graphs embedded in that executable into `./graphs/` — including
-`./graphs/fragments/`, the shared node shapes three of those templates cite
+`./graphs/fragments/`, the shared node shapes six of those templates cite
 with `use:`, without which they would not load. Pass a directory
 (`oh-my-graph init <dir>`) to write to `<dir>/graphs/` instead.
 
