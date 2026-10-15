@@ -2,14 +2,19 @@
 # Does the repository still meet the requirements its owner wrote down (#386)?
 #
 # This is the deterministic half of a drift review: everything about it that
-# needs no model. It answers in three steps, stopping at the first that fails.
+# needs no model. It answers in four steps, stopping at the first that fails.
 #
-#   a. LOCK        the lock file pins, by sha256, the design and the
-#                  requirements file the review is judged against. A missing
-#                  lock, or a pinned file that is missing or changed, stops
-#                  the review: the yardstick moved, and no one said so.
-#   b. FORMAT      every requirement is a well-formed entry (below).
-#   c. INVARIANTS  every `invariant` entry's check command passes.
+#   a. HEAD        only when head is given: the checked-out commit is head.
+#                  The invariants run on the working tree, so a review of any
+#                  other commit would judge code it never ran.
+#   b. LOCK        the lock file pins, by sha256, the design and the
+#                  requirements file the review is judged against, and must
+#                  have an entry for both. A missing lock, a file it does not
+#                  pin (`LOCK <file> not pinned`), or a pinned file that is
+#                  missing or changed, stops the review: the yardstick moved,
+#                  and no one said so.
+#   c. FORMAT      every requirement is a well-formed entry (below).
+#   d. INVARIANTS  every `invariant` entry's check command passes.
 #
 # On success it prints `OK <n> invariant, <m> llm`; the `llm` entries are left
 # for a model to judge, never by this script.
@@ -22,10 +27,12 @@
 #
 # e.g. `sha256sum DESIGN.md docs/requirements.txt > docs/requirements.lock`.
 # Re-running that after an edit is how the owner says the new text is the spec.
+# The paths in the lock are compared literally with the arguments, so pass the
+# design and the requirements file here exactly as the owner passed them.
 #
 # The requirements file holds one entry per line; blank lines and lines whose
-# first non-blank character is `#` are ignored. An entry is five `|`-separated
-# fields, each trimmed of surrounding whitespace:
+# first non-blank character is `#` are ignored. An entry is exactly five
+# `|`-separated fields, each trimmed of surrounding whitespace:
 #
 #   ID | measure | source | check | text
 #
@@ -34,34 +41,36 @@
 #   source   where the requirement comes from, e.g. DESIGN.md:12
 #   check    invariant: a shell command, run from the repository root, that
 #            exits 0 when the requirement holds; llm: a short check name
-#   text     free text — everything after the fourth `|`, so it may hold `|`
+#   text     free text
+#
+# No field may hold `|`, so an entry with any other count is refused as
+#
+#   <ID> has N fields, want 5 ('|' is not allowed inside a check; put a pipeline in a script file)
 #
 # A bad entry is named by its ID, or by its line number when the ID is empty.
 #
-# Usage:  scripts/drift-baseline.sh <requirements-file> <lock-file>
+# Usage:  scripts/drift-baseline.sh <design> <requirements-file> <lock-file> [head]
 #         (run from the target repository's root)
-# Exit:   0 every step passed   1 a lock, format or invariant finding (each
-#         is printed, one per line)   2 usage
+# Exit:   0 every step passed   1 a head, lock, format or invariant finding
+#         (each is printed, one per line)   2 usage
 set -eu
 
-if [ $# -ne 2 ]; then
-	echo "usage: $0 <requirements-file> <lock-file>" >&2
+if [ $# -lt 3 ] || [ $# -gt 4 ]; then
+	echo "usage: $0 <design> <requirements-file> <lock-file> [head]" >&2
 	exit 2
 fi
-reqs=$1
-lock=$2
+design=$1
+reqs=$2
+lock=$3
 
 trim() {
 	printf '%s' "$1" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
 }
 
-# parse splits one entry into id, measure, source, check and text. fields is
-# 0 when the line has fewer than five fields.
+# parse splits one entry into id, measure, source, check and text, and sets
+# fields to its number of |-separated fields.
 parse() {
-	case "$1" in
-	*'|'*'|'*'|'*'|'*) fields=1 ;;
-	*) fields=0 ;;
-	esac
+	fields=$(($(printf '%s' "$1" | tr -cd '|' | wc -c) + 1))
 	IFS='|' read -r id measure source check text <<EOF
 $1
 EOF
@@ -80,12 +89,49 @@ skip() {
 	return 1
 }
 
-# --- a. LOCK ------------------------------------------------------------------
+# pinned is true when the lock has an entry for the path $1: a sha256sum line
+# `<hash>  <path>` (text mode) or `<hash> *<path>` (binary mode).
+pinned() {
+	while IFS= read -r entry || [ -n "$entry" ]; do
+		path=${entry#* }
+		path=${path#[ *]}
+		[ "$path" != "$1" ] || return 0
+	done <"$lock"
+	return 1
+}
+
+# --- a. HEAD ------------------------------------------------------------------
+
+if [ $# -eq 4 ]; then
+	head=$4
+	if ! here=$(git rev-parse --verify -q HEAD); then
+		echo "HEAD the checked-out tree is not a git commit; cannot compare it with head $head"
+		exit 1
+	fi
+	if ! want=$(git rev-parse --verify -q "$head^{commit}"); then
+		echo "HEAD $here is not head $head: $head does not resolve to a commit"
+		exit 1
+	fi
+	if [ "$here" != "$want" ]; then
+		echo "HEAD $here is not head $want; invariants run on the checked-out tree"
+		exit 1
+	fi
+fi
+
+# --- b. LOCK ------------------------------------------------------------------
 
 if [ ! -f "$lock" ]; then
 	echo "LOCK $lock missing"
 	exit 1
 fi
+unpinned=0
+for f in "$design" "$reqs"; do
+	if ! pinned "$f"; then
+		echo "LOCK $f not pinned"
+		unpinned=1
+	fi
+done
+[ "$unpinned" -eq 0 ] || exit 1
 if ! verdict=$(LC_ALL=C sha256sum -c "$lock" 2>/dev/null); then
 	found=$(printf '%s\n' "$verdict" | sed -n \
 		-e 's/^\(.*\): FAILED open or read$/LOCK \1 missing/p' \
@@ -101,7 +147,7 @@ if [ ! -f "$reqs" ]; then
 	exit 1
 fi
 
-# --- b. FORMAT ----------------------------------------------------------------
+# --- c. FORMAT ----------------------------------------------------------------
 
 bad=0
 seen=$(mktemp)
@@ -114,8 +160,8 @@ while IFS= read -r line || [ -n "$line" ]; do
 	fi
 	parse "$line"
 	problems=
-	if [ "$fields" -eq 0 ]; then
-		problems="fewer than five |-separated fields"
+	if [ "$fields" -ne 5 ]; then
+		problems="has $fields fields, want 5 ('|' is not allowed inside a check; put a pipeline in a script file)"
 	else
 		[ -n "$id" ] || problems="${problems:+$problems; }empty ID"
 		case "$measure" in
@@ -140,7 +186,7 @@ while IFS= read -r line || [ -n "$line" ]; do
 done <"$reqs"
 [ "$bad" -eq 0 ] || exit 1
 
-# --- c. INVARIANTS ------------------------------------------------------------
+# --- d. INVARIANTS ------------------------------------------------------------
 
 invariants=0
 llms=0
