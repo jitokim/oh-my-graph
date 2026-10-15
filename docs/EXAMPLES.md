@@ -137,17 +137,18 @@ Everything else in this file describes the default, Claude. Under Codex:
   figure carrying `unknown` as above — see [Watch a run](#watch-a-run).
 
 **Which shipped graphs run.** Refusal is at load, so it costs nothing to ask:
-`oh-my-graph --runtime codex lint <graph>`. Run against `graphs/`, all nine
+`oh-my-graph --runtime codex lint <graph>`. Run against `graphs/`, all ten
 lint clean under Claude and **one is refused under Codex** — `adr-driven-dev`,
-for the `agent:` on its three review nodes. Five of the eight that load warn
+for the `agent:` on its three review nodes. Five of the nine that load warn
 that a `budget_usd` cannot apply: `review-loop` (its own), and `dev-review-pr`,
 `gated-dev`, `self-dev` and `backlog-batch` (inherited from the `e2e-verify`
 fragment). Before ADR 0026 the four of those that had shipped were refused as
 well, which is what made five of the eight graphs then shipped unloadable. Of
-the eight that load, `apply-flags`, `merge-shepherd`, `dev-review-pr`,
+the nine that load, `apply-flags`, `merge-shepherd`, `dev-review-pr`,
 `gated-dev`, `self-dev` and `backlog-batch` all publish, so they hit the
-network wall — leaving `haiku-smoke` and `review-loop` as the shipped graphs
-with no node that needs the network. The expected verdict for every shipped
+network wall — leaving `haiku-smoke`, `review-loop` and `drift-review` (whose
+`fix` commits locally and never pushes) as the shipped graphs with no node
+that needs the network. The expected verdict for every shipped
 graph under both runtimes is asserted in
 `internal/runner/shipped_graphs_runtime_test.go`, so a graph that stops loading
 under Codex fails `make test` by name.
@@ -1409,6 +1410,39 @@ Spec:
 [ADR 0013](adr/0013-a-fragment-is-a-load-time-node-splice-not-a-runtime-concept.md) ·
 [ADR 0027](adr/0027-the-reusable-unit-is-a-loop-not-a-node.md) ·
 [ADR 0029](adr/0029-a-fragment-may-cite-a-fragment.md).
+
+### Holding a change to its design (`drift-review`)
+
+`graphs/drift-review.yaml` checks whether a change still does what a design
+document says, then settles every gap it finds (#386). It is two `use:` nodes
+and four sessions, each a fresh one that hands on an artifact:
+
+- `drift` cites `drift-check`. A read-only node diffs `base..head` against the
+  design and answers `NO_DRIFT`, or `DRIFT:` with a JSON list naming the commit
+  behind each gap. It never hears the authors' reasons, so it can't explain the
+  drift away.
+- `nego` cites `drift-nego`. `interview` reads each named commit and speaks for
+  its author. `rule` gives every item fix-code, amend-design or
+  accept-deviation, and never edits. `fix` applies the fix-code items, commits
+  them in `repo` on whatever branch is checked out there, and passes only when
+  the engine's own run of your `verify` command does.
+
+A ruling with any amend-design item **fails `rule` and stops the run** before
+`fix`. Changing the design is your call, so read the ruling in `rule`'s
+artifact, amend the design or don't, and run again. When the check finds no
+drift, the three `nego` nodes still run and each answers at once.
+
+```sh
+oh-my-graph run graphs/drift-review.yaml --input repo="$PWD" \
+  --input design=DESIGN.md --input base=main --input head=HEAD \
+  --input verify="make check"
+```
+
+All five inputs are required, `head` included, because a graph has no input
+defaults. Make `verify` a `make` command, since `fix` may run only `git` and
+`make`. **Cost:** about four Claude sessions (one check, one interview, one
+ruling, one fix) plus one run of `verify`. Three of them are short when there
+is no drift.
 
 ## Human gates and failure salvage
 
