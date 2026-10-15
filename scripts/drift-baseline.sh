@@ -132,7 +132,15 @@ for f in "$design" "$reqs"; do
 	fi
 done
 [ "$unpinned" -eq 0 ] || exit 1
-if ! verdict=$(LC_ALL=C sha256sum -c "$lock" 2>/dev/null); then
+if command -v sha256sum >/dev/null 2>&1; then
+	sha256check() { sha256sum -c "$1"; }
+elif command -v shasum >/dev/null 2>&1; then
+	sha256check() { shasum -a 256 -c "$1"; }
+else
+	echo "LOCK cannot verify $lock: neither sha256sum nor shasum is installed"
+	exit 1
+fi
+if ! verdict=$(LC_ALL=C sha256check "$lock" 2>/dev/null); then
 	found=$(printf '%s\n' "$verdict" | sed -n \
 		-e 's/^\(.*\): FAILED open or read$/LOCK \1 missing/p' \
 		-e 's/^\(.*\): FAILED$/LOCK \1 changed/p')
