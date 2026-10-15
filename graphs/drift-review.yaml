@@ -63,9 +63,9 @@ nodes:
       design_path: "{{ inputs.design }}"
       base: "{{ inputs.base }}"
       head: "{{ inputs.head }}"
-      # Deliberately empty, not omitted: "" is the runner's default bound,
-      # and a multi-node fragment's slot must be bound — so "no timeout" is
-      # said here, in the binding.
+      # Deliberately empty, not omitted: a multi-node fragment's slot must
+      # be bound. "" selects the runner's default bound (20m) — it does not
+      # remove the timeout.
       check_timeout: ""
 
   - id: nego
