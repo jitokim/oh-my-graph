@@ -1,0 +1,196 @@
+# drift-nego — negotiate a drift report (#386): an interview that speaks for
+# the authors, a ruling that never edits, then a gated fix that never re-rules.
+# THREE nodes and the edges between them, cited by a single `use:`.
+#
+#   interview ──▶ rule ──▶ fix
+#
+# It is the other half of `drift-check`. The check reports drift without
+# hearing anyone; this hears the authors, rules on each item, and repairs only
+# what the ruling says is the code's fault. The three duties are split so that
+# no node both argues and judges, or both judges and edits:
+#
+#   * interview speaks FOR the author of each drifting commit — reads the
+#     commit and its message, and says why the code differs and which side the
+#     author holds is right. It does not rule.
+#   * rule hears the check's list and the interview's answers and gives each
+#     item one outcome: fix-code, amend-design, or accept-deviation. It holds
+#     no write tool and runs permission_mode: plan.
+#   * fix applies the fix-code items and nothing else, gated on evidence the
+#     ENGINE produces. It does not re-rule.
+#
+# Every node is a FRESH session with handoff: artifact. The interview is not
+# the author's own session resumed — it is a new session reading the author's
+# commits. Resuming the real session is #386's open question and needs an ADR.
+#
+# Why AMEND_DESIGN stops the run as a FAILED check. Changing the design is a
+# person's call, not a model's, so a ruling with any amend-design item has to
+# halt the run for a human. The natural shape is a `type: gate` after rule,
+# but a gate cannot be conditional today: it ALWAYS pauses (unless
+# --auto-approve names it), so it would stop every run, drift or not. So the
+# stop is rule's own success_check, which accepts only NO_DRIFT and RESOLVED:
+# — an AMEND_DESIGN: reply fails the node and halt-on-fail stops the run with
+# the ruling in its artifact. A conditional gate is engine work and needs an
+# ADR.
+#
+# Every node runs even when the check found nothing: a `use:` node cannot be
+# conditional either. Each prompt answers a NO_DRIFT report with a bare
+# NO_DRIFT (fix with PASS) — three short sessions, not three skipped ones.
+#
+# What stays per-use: the check's report (`check_report` — bind it to the
+# citing graph's drift-check artifact, inline), the design the code is held to
+# (`design_path`), and the command the ENGINE runs as fix's evidence
+# (`verify_command`). Bind that last one from an input or a literal, never
+# from an artifact: the engine runs it through `sh -c`, so an artifact binding
+# would hand a model's own output straight to a shell. Bind a `make` command
+# too. The fix's prompt tells it to run that same command itself, and its
+# dontAsk grant runs `git` and `make` and nothing else, so under any other
+# binding the fix cannot run the suite it is judged by. The binding can't be
+# checked at load time.
+#
+# `cwd:` and `worktree:` are deliberately absent — they are the using node's,
+# and they propagate to all three spliced nodes.
+fragment: drift-nego
+description: negotiate a drift report — an interview for the authors, a ruling that never edits, then a gated fix that never re-rules
+substitutions: [check_report, design_path, verify_command]
+exit: fix
+nodes:
+  # No depends_on: the entry node inherits the citing node's, which is how it
+  # comes to follow the check whose report it quotes.
+  - id: interview
+    type: claude-run
+    prompt: |
+      A drift check held a change against the design document
+      `{{ with.design_path }}` and reported this:
+      {{ with.check_report }}
+
+      If that report is NO_DRIFT, there is nothing to answer: reply with the
+      bare token NO_DRIFT and stop.
+
+      Otherwise, for EACH item in its JSON list, speak for the author of the
+      commit it names. Read `git show <commit>` — the diff AND the message —
+      and whatever else that author would have had in front of them. Then
+      answer, as that author would:
+        - why the code differs from the quoted clause;
+        - whether the author holds that the DESIGN is right (the code should
+          change) or the CODE is right (the design is out of date, or the
+          deviation is deliberate).
+      Argue the author's case from what the commit and the code show; where
+      they show nothing, say so rather than inventing a reason. This is an
+      interview: do NOT rule on any item, and do NOT edit anything.
+
+      Finish BEFORE you reply. Your FINAL reply IS the verdict. START it with
+      exactly one of these two bare tokens, as the very FIRST characters, with
+      no markdown emphasis (`**INTERVIEWED:**` is WRONG), no heading, no
+      preamble:
+        - NO_DRIFT — the report was NO_DRIFT.
+        - INTERVIEWED: — followed by ONE fenced ```json array, one object per
+          item: {"id": "<the item's id>", "why": "<the author's account>",
+          "holds": "design" or "code", "evidence": "<path:line or sha>"}.
+      Anything you need to qualify goes AFTER the verdict, never before it: a
+      line of context ahead of the token fails this node even when the
+      interview is finished.
+    # Read verbs only, under plan: the interview argues; it cannot act.
+    allowed_tools: [Read, Grep, Glob, "Bash(git *)"]
+    permission_mode: plan
+    handoff: artifact
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*(NO_DRIFT\b|INTERVIEWED[*_`\s]*:)' }
+
+  - id: rule
+    type: claude-run
+    depends_on: [interview]
+    prompt: |
+      Rule on a drift report. The design document is
+      `{{ with.design_path }}`. The drift check reported:
+      {{ with.check_report }}
+
+      The authors' side, from an interview that read their commits:
+      {{ artifacts.interview | inline }}
+
+      If the report is NO_DRIFT, reply with the bare token NO_DRIFT and stop.
+
+      Otherwise read the design and the code yourself, weigh both sides, and
+      give EVERY item exactly one outcome:
+        - fix-code — the design is right; the code must change to match it.
+        - amend-design — the code is right and the design must change. That
+          is a person's call: it stops this run for a human.
+        - accept-deviation — the code may differ from the design as it is;
+          say why in the reason.
+      This is a ruling: do NOT edit anything, and do NOT fix anything.
+
+      Finish BEFORE you reply. Your FINAL reply IS the verdict. START it with
+      exactly one of these three bare tokens, as the very FIRST characters,
+      with no markdown emphasis (`**RESOLVED:**` is WRONG), no heading, no
+      preamble:
+        - NO_DRIFT — the report was NO_DRIFT.
+        - RESOLVED: — no item is amend-design. Follow it with ONE fenced
+          ```json array, one object per item:
+          {"id": "<the item's id>", "outcome": "fix-code" or
+          "accept-deviation", "reason": "<why>"}.
+        - AMEND_DESIGN: — at least one item is amend-design. Follow it with
+          the same JSON array, every item included.
+      Anything you need to qualify goes AFTER the verdict, never before it: a
+      line of context ahead of the token fails this node even when the ruling
+      is finished.
+    # The judge holds no write tool: a ruling cannot quietly become a fix.
+    allowed_tools: [Read, Grep, Glob, "Bash(git *)"]
+    permission_mode: plan
+    handoff: artifact
+    # AMEND_DESIGN: is refused ON PURPOSE — that failure is the stop for a
+    # human (see the header). `**AMEND_DESIGN:**` is refused just the same.
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*(NO_DRIFT\b|RESOLVED[*_`\s]*:)' }
+    # A crash may be retried; a refused verdict may NOT. With result_mismatch
+    # here, a second attempt could turn an AMEND_DESIGN: into a pass, and the
+    # human the run stopped for would never see it.
+    retry: { max: 1, on: [nonzero_exit] }
+
+  - id: fix
+    type: claude-run
+    depends_on: [rule]
+    prompt: |
+      Apply this drift ruling:
+      {{ artifacts.rule | inline }}
+
+      If the ruling is NO_DRIFT, or it has no fix-code item, change nothing:
+      reply with the bare word PASS and stop.
+
+      Otherwise make the code match the design document
+      `{{ with.design_path }}` for EVERY fix-code item, and ONLY those. Leave
+      accept-deviation items exactly as they are. This is a fix round: do
+      NOT re-rule any item, and do NOT edit the design.
+      Your grant is exactly this: Read, Grep, Glob, Edit, Write, and two
+      programs through Bash, `git` and `make`. Any other call is denied, not
+      asked about. So:
+        - run the tests with `make`. The command the engine runs as your
+          evidence is `{{ with.verify_command }}`, so run exactly that;
+        - commit with `git commit -m '<subject>' -m '<body>'`, adding the
+          trailer `Co-Authored-By: oh-my-graph <graphs@oh-my-graph.dev>`
+          as one more `-m` (the attribution convention in CONTRIBUTING.md),
+          and keep each `-m` on one line;
+        - every Bash call is ONE program: no `cd`, `&&`, `;`, `|`, redirect
+          or heredoc. To act in another directory, use `git -C <dir>` or
+          `make -C <dir>`;
+        - a denied call means the FORM was wrong, not the goal: re-issue it
+          in one of the forms above before you give up on it.
+      Commit as you go, every commit carrying that trailer. Run the tests
+      SYNCHRONOUSLY and wait for them to finish — never in the background.
+      Your FINAL reply is the verdict: never end the turn on an interim
+      report. When tests are green, START the reply with the bare word PASS —
+      those four characters FIRST, no markdown emphasis (`**PASS**` is
+      WRONG), no heading, no preamble. Otherwise start it with a bare FAIL
+      and what is broken. Anything you need to qualify goes AFTER the
+      verdict, never before it: a line of context ahead of the token fails
+      this node even when the tests are green.
+    # The prompt above says this grant word for word (#294), as
+    # repair-round's apply does. Change the two together.
+    allowed_tools: [Read, Grep, Glob, Edit, Write, "Bash(git *)", "Bash(make *)"]
+    permission_mode: dontAsk
+    timeout: 45m # hang guard — generous, so real work is never killed mid-flight
+    handoff: artifact
+    success_check:
+      exit_zero: true
+      result_matches: '^[*_`\s]*PASS' # anchored, but tolerant of `**PASS**`
+      # The evidence. The engine runs this itself and judges the exit code, so
+      # a fix that reports PASS without the suite passing does not pass — and
+      # a "nothing to fix" PASS is held to the same suite.
+      verify: { command: "{{ with.verify_command }}", timeout: 5m }
+    retry: { max: 1, on: [nonzero_exit, verify_failed] }
