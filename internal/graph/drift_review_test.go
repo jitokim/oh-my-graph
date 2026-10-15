@@ -47,7 +47,7 @@ func TestDriftFragmentsLoad_386(t *testing.T) {
 		ids   []string
 	}{
 		{"drift-check", []string{"design_path", "requirements_path", "baseline_command", "base", "head", "check_timeout"}, []string{"baseline", "check"}},
-		{"drift-nego", []string{"check_report", "design_path", "verify_command"}, []string{"interview", "rule", "fix"}},
+		{"drift-nego", []string{"check_report", "design_path", "verify_command", "baseline_command"}, []string{"interview", "rule", "fix"}},
 	} {
 		got, err := InspectFragment(root, tc.name)
 		if err != nil {
@@ -200,20 +200,29 @@ func TestDriftRuleRefusesAmendDesign_386(t *testing.T) {
 }
 
 // TestDriftNegoFixIsToldTheGrantItHolds_386 is #294's rule for drift-nego's
-// fix, copied from repair-round's apply. One difference: drift-review binds
+// fix, copied from repair-round's apply. Two differences: drift-review binds
 // the evidence command from an input, so the shipped command is the token
-// `{{ inputs.verify }}`, which grantAdmits cannot judge. What can be held is
-// that the prompt names that same command and the grant holds `make`, the
-// program the graph's header tells the user to bind.
+// `{{ inputs.verify }}`, which grantAdmits cannot judge; and the engine runs
+// the baseline ahead of it, so a fix that touched the design, requirements or
+// lock fails on the lock whatever it replies. What can be held is that the
+// prompt names the verify half — and never the baseline, which fix is not
+// told to run — and the grant holds `make`, the program the graph's header
+// tells the user to bind.
 func TestDriftNegoFixIsToldTheGrantItHolds_386(t *testing.T) {
 	fix := driftNode(t, "drift-nego", "fix")
 	assertPromptStatesBashGrant(t, fix)
 	if fix.SuccessCheck.Verify == nil {
 		t.Fatalf("%s declares no verify — the evidence command the prompt names is gone", fix.ID)
 	}
-	command := fix.SuccessCheck.Verify.Command
-	if command != "{{ inputs.verify }}" {
-		t.Errorf("%s is judged by %q, want drift-review's input {{ inputs.verify }} — never an artifact", fix.ID, command)
+	const baseline, command = "{{ inputs.baseline }}", "{{ inputs.verify }}"
+	if got, want := fix.SuccessCheck.Verify.Command, baseline+" && "+command; got != want {
+		t.Errorf("%s is judged by %q, want drift-review's inputs %q — never an artifact", fix.ID, got, want)
+	}
+	if !strings.Contains(fix.SuccessCheck.Verify.Command, baseline) {
+		t.Errorf("%s's verify %q no longer re-runs the baseline %s — a fix that edits the design would pass", fix.ID, fix.SuccessCheck.Verify.Command, baseline)
+	}
+	if strings.Contains(fix.Prompt, baseline) {
+		t.Errorf("%s's prompt names the baseline %s — fix is told to run only its verify command", fix.ID, baseline)
 	}
 	if !strings.Contains(fix.Prompt, "`"+command+"`") {
 		t.Errorf("%s's prompt never names its evidence command `%s` as the test run", fix.ID, command)
@@ -254,8 +263,8 @@ func TestDriftBaselineGatesTheCheck_386(t *testing.T) {
 	if baseline.SuccessCheck.Verify == nil {
 		t.Fatal("drift/baseline declares no verify — the deterministic half is unchecked")
 	}
-	if got := baseline.SuccessCheck.Verify.Command; got != "{{ inputs.baseline }}" {
-		t.Errorf("drift/baseline is judged by %q, want the bound input {{ inputs.baseline }}", got)
+	if got := baseline.SuccessCheck.Verify.Command; got != "{{ inputs.baseline }} {{ inputs.head }}" {
+		t.Errorf("drift/baseline is judged by %q, want the bound inputs {{ inputs.baseline }} {{ inputs.head }}", got)
 	}
 	if !strings.Contains(check.Prompt, "{{ inputs.requirements }}") {
 		t.Errorf("drift/check's prompt never names the bound requirements file {{ inputs.requirements }}")

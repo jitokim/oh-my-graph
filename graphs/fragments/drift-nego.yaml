@@ -38,20 +38,22 @@
 #
 # What stays per-use: the check's report (`check_report` — bind it to the
 # citing graph's drift-check artifact, inline), the design the code is held to
-# (`design_path`), and the command the ENGINE runs as fix's evidence
-# (`verify_command`). Bind that last one from an input or a literal, never
-# from an artifact: the engine runs it through `sh -c`, so an artifact binding
-# would hand a model's own output straight to a shell. Bind a `make` command
-# too. The fix's prompt tells it to run that same command itself, and its
-# dontAsk grant runs `git` and `make` and nothing else, so under any other
-# binding the fix cannot run the suite it is judged by. The binding can't be
-# checked at load time.
+# (`design_path`), the command the ENGINE runs as fix's evidence
+# (`verify_command`), and the baseline the ENGINE re-runs ahead of it
+# (`baseline_command` — the same lock, format and invariant check drift-check
+# ran before the check). Bind both commands from an input or a literal, never
+# from an artifact: the engine runs them through `sh -c`, so an artifact
+# binding would hand a model's own output straight to a shell. Bind
+# verify_command to a `make` command too. The fix's prompt tells it to run
+# that same command itself, and its dontAsk grant runs `git` and `make` and
+# nothing else, so under any other binding the fix cannot run the suite it is
+# judged by. Neither binding can be checked at load time.
 #
 # `cwd:` and `worktree:` are deliberately absent — they are the using node's,
 # and they propagate to all three spliced nodes.
 fragment: drift-nego
 description: negotiate a drift report — an interview for the authors, a ruling that never edits, then a gated fix that never re-rules
-substitutions: [check_report, design_path, verify_command]
+substitutions: [check_report, design_path, verify_command, baseline_command]
 exit: fix
 nodes:
   # No depends_on: the entry node inherits the citing node's, which is how it
@@ -150,6 +152,16 @@ nodes:
     # the human stop, which the human would then never see.
     retry: { max: 1, on: [nonzero_exit] }
 
+  # The prompt's "do NOT edit the design" is only a request; the guarantee is
+  # the engine-run re-check of the baseline in this node's verify. If fix
+  # edited or rewrote the design, the requirements or the lock file, the lock
+  # no longer matches, the baseline exits non-zero, and the ENGINE fails the
+  # node — its one retry is held to the same check — and halt-on-fail stops
+  # the run, whatever fix replied. The one way past it is a lock rewritten
+  # with the edited files' exact sha256: fix's grant holds no `sha256sum`,
+  # but a Makefile it edits could run one, and that commit stays in the
+  # history it leaves. The grant stays `git` and `make` only, and the prompt
+  # does not hand fix the baseline: it runs only its verify command.
   - id: fix
     type: claude-run
     depends_on: [rule]
@@ -198,6 +210,8 @@ nodes:
       result_matches: '^[*_`\s]*PASS' # anchored, but tolerant of `**PASS**`
       # The evidence. The engine runs this itself and judges the exit code, so
       # a fix that reports PASS without the suite passing does not pass — and
-      # a "nothing to fix" PASS is held to the same suite.
-      verify: { command: "{{ with.verify_command }}", timeout: 5m }
+      # a "nothing to fix" PASS is held to the same suite. The baseline runs
+      # first, so a fix that touched the design, requirements or lock fails
+      # here before the suite is even run (see the comment on fix).
+      verify: { command: "{{ with.baseline_command }} && {{ with.verify_command }}", timeout: 5m }
     retry: { max: 1, on: [nonzero_exit, verify_failed] }

@@ -85,8 +85,9 @@ node:
 // TestReuseCatalog_ShippedCorpus is §9.1 measured by the code (#338): of the
 // nine fragments this repository ships, exactly read-and-report is offered,
 // and the other eight are skipped for the reasons ADR 0038 §2.2.1 and §9.2 give —
-// four for a slot that reaches a non-prompt field (drift-check's timeout,
-// repair-round's agent, and drift-nego's and e2e-verify's verify command),
+// four for a slot that reaches a non-prompt field (drift-check's and
+// drift-nego's baseline command — the first slot in drift-nego's fix verify —
+// repair-round's agent, and e2e-verify's verify command),
 // three for a tool outside
 // the read-only set (pr-publish's first is Bash(git *), an exact allowlist
 // member; the reviews' is Bash(git diff*), a narrowing of one). Each of the latter three also declares permission_mode; the tool
@@ -114,7 +115,7 @@ func TestReuseCatalog_ShippedCorpus(t *testing.T) {
 		detail string
 	}{
 		"drift-check":     {ReuseSkipNonPromptSlot, `slot "baseline_command" lands in success_check.verify.command`},
-		"drift-nego":      {ReuseSkipNonPromptSlot, `slot "verify_command" lands in success_check.verify.command`},
+		"drift-nego":      {ReuseSkipNonPromptSlot, `slot "baseline_command" lands in success_check.verify.command`},
 		"e2e-verify":      {ReuseSkipNonPromptSlot, `slot "verify_command" lands in success_check.verify.command`},
 		"gated-lane":      {ReuseSkipNestedUse, `node "gated-lane/e2e" cites the fragment "e2e-verify"`},
 		"repair-round":    {ReuseSkipNonPromptSlot, `slot "review_agent" lands in agent`},

@@ -8,8 +8,9 @@
 #
 #   - drift cites `drift-check`:
 #       baseline is the deterministic half. The ENGINE runs your `baseline`
-#       command itself (scripts/drift-baseline.sh: the lock, the requirements
-#       format, then every `invariant` requirement) and judges its exit code,
+#       command itself, with `head` appended (scripts/drift-baseline.sh: head
+#       is the checked-out commit, the lock, the requirements format, then
+#       every `invariant` requirement) and judges its exit code,
 #       so no model can talk a failure around. A failure stops the run before
 #       any model judges drift. The node's own session only replies PASS;
 #       check is a read-only session that diffs base..head against the design
@@ -24,31 +25,38 @@
 #       needs an ADR;
 #       rule gives each item fix-code, amend-design or accept-deviation, and
 #       never edits;
-#       fix applies the fix-code items only, commits them, and is gated on the
-#       `verify` command the ENGINE runs itself.
+#       fix applies the fix-code items only, commits them, and is gated on
+#       `<baseline> && <verify>`, which the ENGINE runs itself: the baseline
+#       again (the lock, so a fix that touched the design, the requirements or
+#       the lock fails) and then your suite.
 #
 # The AMEND_DESIGN stop. When the ruling says the DESIGN must change, that is a
 # person's call, so rule fails its own check on an AMEND_DESIGN: verdict and
 # the run halts there, before fix, with the ruling in rule's artifact. Read it,
 # amend the design (or don't), and run the graph again. It is a failed check
 # rather than a gate because a gate cannot be conditional today: it would
-# pause every run, drift or not.
+# pause every run, drift or not. To tell that stop from a real failure: the
+# run shows FAIL at nego/rule; open that node's output
+# (~/.oh-my-graph/runs/<run-id>/failed/nego~rule.out, or via `show`) and its
+# first token is AMEND_DESIGN.
 #
 # Nothing here is conditional, either: when the check finds NO_DRIFT the three
 # nego nodes still run, each answering NO_DRIFT (fix: PASS) at once.
 #
 # Cost, honestly: about five claude sessions — one tiny baseline, one check,
-# one interview, one ruling, one fix — plus one run of your `baseline` command
-# and one of your `verify` command. Three of them are short when there is no
-# drift, and only the baseline runs when the baseline fails. The fix node edits and commits in `repo`
-# itself, on whatever branch is checked out there.
+# one interview, one ruling, one fix — plus two runs of your `baseline`
+# command (before the check, and again ahead of fix's evidence) and one of your
+# `verify` command. Three of the sessions are short when there is no drift,
+# and only the baseline runs when the baseline fails. The fix node edits and
+# commits in `repo` itself, on whatever branch is checked out there.
 #
 # Inputs:
 #   repo    the git repository to check (every node runs there)
 #   design  the design document, as a path inside repo (e.g. DESIGN.md)
 #   base    the ref the change starts from (e.g. main)
-#   head    the ref the change ends at. There are no input defaults, so pass
-#           HEAD explicitly for the checked-out commit
+#   head    the ref the change ends at. It must be the commit checked out in
+#           repo (the baseline refuses any other): pass HEAD, or the ref
+#           checked out there. There are no input defaults, so pass it
 #   verify  the command the engine runs as fix's evidence, e.g. "make check".
 #           Make it a `make` command: fix's grant runs `git` and `make` only,
 #           and it is told to run exactly this
@@ -56,12 +64,15 @@
 #           requirements.txt) — one `ID | measure | source | check | text`
 #           entry per line; the check judges its `llm` entries
 #   baseline  the command the engine runs as the baseline, from repo's root,
-#           e.g. "sh /path/to/oh-my-graph/scripts/drift-baseline.sh
-#           requirements.txt drift.lock"
+#           e.g. "sh /path/to/oh-my-graph/scripts/drift-baseline.sh DESIGN.md
+#           requirements.txt drift.lock" — design first; the graph appends
+#           head itself for the check's baseline
 #
-# The lock is owned by a person. The baseline script only reads it and never
-# writes it; creating or updating it is the owner's decision — it is how the
-# owner says "this text is the spec". From repo's root:
+# The lock is owned by a person. It must pin BOTH the design and the
+# requirements file, under the same paths the baseline command names. The
+# baseline script only reads it and never writes it; creating or updating it
+# is the owner's decision — it is how the owner says "this text is the spec".
+# From repo's root:
 #
 #   sha256sum DESIGN.md requirements.txt > drift.lock
 #
@@ -73,7 +84,7 @@
 #     --input head=HEAD \
 #     --input verify="make check" \
 #     --input requirements=requirements.txt \
-#     --input baseline="sh /path/to/oh-my-graph/scripts/drift-baseline.sh requirements.txt drift.lock"
+#     --input baseline="sh /path/to/oh-my-graph/scripts/drift-baseline.sh DESIGN.md requirements.txt drift.lock"
 name: drift-review
 version: "0.1"
 inputs: [repo, design, base, head, verify, requirements, baseline]
@@ -85,8 +96,10 @@ nodes:
     with:
       design_path: "{{ inputs.design }}"
       requirements_path: "{{ inputs.requirements }}"
-      # From an input, never an artifact: the engine runs it through `sh -c`.
-      baseline_command: "{{ inputs.baseline }}"
+      # From inputs, never an artifact: the engine runs it through `sh -c`.
+      # head goes on as the script's 4th argument, so the invariants are
+      # refused unless they run on the commit the check judges.
+      baseline_command: "{{ inputs.baseline }} {{ inputs.head }}"
       base: "{{ inputs.base }}"
       head: "{{ inputs.head }}"
       # Deliberately empty, not omitted: a multi-node fragment's slot must
@@ -106,3 +119,9 @@ nodes:
       design_path: "{{ inputs.design }}"
       # From an input, never an artifact: the engine runs it through `sh -c`.
       verify_command: "{{ inputs.verify }}"
+      # The SAME input as drift's baseline, but WITHOUT head: fix commits,
+      # which moves HEAD, so a sha passed as head would no longer be the
+      # checked-out commit at fix's re-check. What that re-check guards is the
+      # lock (fix left the design, requirements and lock alone) and the
+      # invariants, not which commit is checked out.
+      baseline_command: "{{ inputs.baseline }}"
