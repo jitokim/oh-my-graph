@@ -726,8 +726,9 @@ from the file that changed.
 `graphs/drift-review.yaml` cites one after the other. They are split because of
 what each session must not know. `drift-check` is two nodes, `baseline → check`.
 `baseline` is the deterministic half: its `verify:` is the bound
-`baseline_command` (`scripts/drift-baseline.sh` — the owner's lock, the
-requirements format, every `invariant` requirement), run by the engine and
+`baseline_command` (`scripts/drift-baseline.sh` — the checked-out commit,
+the owner's lock, the requirements format, every `invariant` requirement), run
+by the engine and
 judged on its exit code, so no model can talk a failure around; its own
 session only replies `PASS`. `check` is read-only, under `plan`: it holds the
 code between `base` and `head` against a design document, judges only the
@@ -736,7 +737,10 @@ plus a JSON list that names the requirement (`req`, or `unlisted`) and the
 commit behind each gap. `drift-nego` is three nodes, `interview → rule → fix`.
 `interview` speaks for the author of each named commit, `rule` gives each item
 fix-code, amend-design or accept-deviation and holds no write tool, and `fix`
-applies the fix-code items only, gated on an engine-run `verify:`. The checker
+applies the fix-code items only, gated on an engine-run `verify:` that is the
+baseline command followed by the verify command. `drift-nego`'s substitutions
+are `check_report`, `design_path`, `verify_command` and `baseline_command`.
+The checker
 has to rule **before** it can see the authors' reasons. A checker that reads the
 reason first explains the drift away instead of reporting it. So the check and
 the negotiation are separate fragments, every node is a fresh session, and
@@ -746,38 +750,58 @@ which the post-splice rewrite points at `drift/check`.
 
 **The requirements list.** The change is judged against a requirements file,
 one requirement per line; blank lines and lines whose first non-blank character
-is `#` are ignored. An entry is five `|`-separated fields, each trimmed:
+is `#` are ignored. An entry is exactly five `|`-separated fields, each trimmed:
 `ID | measure | source | check | text`. `measure` is `invariant` or `llm`.
 `source` says where the requirement comes from (`DESIGN.md:12`). For an
 `invariant`, `check` is a shell command run from the repository root that exits
 0 when the requirement holds; for an `llm`, it is a short check name. `text` is
-everything after the fourth `|`, so it may itself hold `|`. An entry is an
-error when it has fewer than five fields, an empty ID, an empty `source` or an
+free text. No field may hold `|`, the check included, so an entry with any other
+number of fields is refused as `<ID> has N fields, want 5 ('|' is not allowed
+inside a check; put a pipeline in a script file)`. An entry is also an
+error when it has an empty ID, an empty `source` or an
 empty `check`, a measure that is neither `invariant` nor `llm`, or an ID an
 earlier line already used; each error is named by its ID, or by its line
 number when the ID is empty.
 
 **Invariants first.** What needs no model is settled before any model looks.
-`scripts/drift-baseline.sh <requirements-file> <lock-file>` checks, in order
-and stopping at the first that fails, the lock, then the format, then every
-`invariant` entry's `check`, with no model anywhere; it prints
-`OK <n> invariant, <m> llm` on success. The engine runs it as `baseline`'s
+`scripts/drift-baseline.sh <design> <requirements-file> <lock-file> [head]`
+checks, in order and stopping at the first that fails, HEAD, LOCK, FORMAT and
+INVARIANTS: that the checked-out commit is `head` (only when `head` is given —
+the invariants run on the working tree, so a review of any other commit would
+judge code they never ran), the lock, the format, then every `invariant`
+entry's `check`, with no model anywhere; it prints `OK <n> invariant, <m> llm`
+on success, exits 1 on a finding and 2 on a usage error. `head` must be the
+checked-out commit: `drift-review` binds drift's `baseline_command` to
+`{{ inputs.baseline }} {{ inputs.head }}`, appending `head`, but binds
+`drift-nego`'s to `{{ inputs.baseline }}` alone, because `fix` commits and so
+moves HEAD before its own re-check. The engine runs it as `baseline`'s
 `success_check.verify`, so its exit code is the verdict and no session reads
 its output. Only then does `check` run, and it judges only the `llm` entries.
 Each item it reports carries `req`, the ID it violates, or `"unlisted"` for a
 gap no requirement covers — still reported, because a list is never complete.
 
 **The lock is owned by a person.** It pins, by sha256, the design and the
-requirements file the review is judged against. The script only verifies it,
-with `sha256sum -c`, and never writes it; a missing lock, or a pinned file that
-is missing or changed, fails the baseline, because the yardstick moved and no
-one said so. Creating or updating it is the owner's decision — not the
+requirements file the review is judged against, and must have an entry for
+both, under the same paths the baseline command names (compared literally); a
+file it does not pin prints `LOCK <file> not pinned`. The script only verifies
+it, with `sha256sum -c`, and never writes it; a missing lock, an unpinned file,
+or a pinned file that is missing or changed, fails the baseline, because the
+yardstick moved and no one said so. Creating or updating it is the owner's decision — not the
 script's, and not a model's — and re-running it after an edit is how the owner
 says the new text is the spec. From the repository root:
 
 ```sh
 sha256sum <design> <requirements-file> > <lock-file>
 ```
+
+- **`fix` re-runs the baseline before its suite.** `fix`'s engine `verify:` is
+  `<baseline_command> && <verify_command>`. Its prompt says not to edit the
+  design, but that is only a request; the engine re-check is the guarantee. If
+  `fix` edited the design, the requirements or the lock, the lock no longer
+  matches, the baseline exits non-zero, and the engine fails the node and
+  stops the run, whatever `fix` replied. The one way past it is a lock
+  rewritten with the edited files' exact sha256 — `fix` holds no `sha256sum`,
+  but a Makefile it edits could run one — and that commit stays in its history.
 
 - **The AMEND_DESIGN stop is a failed check, on purpose.** Changing the design
   is a person's call, so a ruling with any amend-design item has to halt the run.
@@ -4159,7 +4183,7 @@ docs/adr/00{01..30}-*.md                       (0020 is the retry ADR, renumbere
 docs/measurements/{*.md,probes/<adr>-<name>/}  the raw record behind a measured claim: pre-registrations written before the first spawn, the runner scripts, every prompt file verbatim, and one line per spawn — so a number in an ADR or a CHANGELOG entry is re-derivable rather than quotable
 CHANGELOG.md + changelog.d/{README.md,<issue>-<slug>.md}  the released sections, and each unreleased entry as its own file, owned by the PR that adds it, so two PRs never edit a common file (ADR 0042); `## [Unreleased]` holds a pointer to changelog.d/ and no entries
 scripts/{changelog-entry-check,changelog-fragment-check,changelog-collect,release-notes}.sh  POSIX sh, run by CI and by hand: the per-PR entry gate, the fragment name/shape rule both of the next two ask, the release-cut collector that writes the fragments into `## [vX.Y.Z]` and deletes them, and the release body from that section (+ cmd/oh-my-graph/changelog_scripts_test.go drives each in a temporary git repository)
-scripts/drift-baseline.sh  POSIX sh, no model: a drift review's deterministic half (#386) — the owner's sha256 lock over the design and requirements file (read, never written), the requirements format, then every `invariant` check (+ cmd/oh-my-graph/drift_baseline_script_test.go)
+scripts/drift-baseline.sh  POSIX sh, no model: a drift review's deterministic half (#386), `<design> <requirements-file> <lock-file> [head]` — the checked-out commit is head, the owner's sha256 lock pins both the design and requirements file (read, never written), the five-field requirements format, then every `invariant` check (+ cmd/oh-my-graph/drift_baseline_script_test.go)
 README.md, SECURITY.md, LICENSE(MIT), go.mod, Makefile(build/test/lint)
 ```
 
