@@ -261,3 +261,23 @@ func TestDriftBaselineGatesTheCheck_386(t *testing.T) {
 		t.Errorf("drift/check's prompt never names the bound requirements file {{ inputs.requirements }}")
 	}
 }
+
+// TestDriftRetriesOnlyWhatDoesNotRule_386 pins the drift fragments' retry
+// policy: check and interview retry on result_mismatch, because a misplaced
+// token is a formatting slip and neither node rules, while rule never does —
+// its AMEND_DESIGN: failure is the stop for a human, and a retry on mismatch
+// would re-roll the ruling until it passes.
+func TestDriftRetriesOnlyWhatDoesNotRule_386(t *testing.T) {
+	for _, n := range []Node{
+		driftNode(t, "drift-check", "check"),
+		driftNode(t, "drift-nego", "interview"),
+	} {
+		if n.Retry == nil || !slices.Contains(n.Retry.On, CauseResultMismatch) {
+			t.Errorf("%s does not retry on %s — one misplaced token halts the run", n.ID, CauseResultMismatch)
+		}
+	}
+	rule := driftNode(t, "drift-nego", "rule")
+	if rule.Retry != nil && slices.Contains(rule.Retry.On, CauseResultMismatch) {
+		t.Errorf("%s retries on %s %v — a retry could turn AMEND_DESIGN: into a pass", rule.ID, CauseResultMismatch, rule.Retry.On)
+	}
+}

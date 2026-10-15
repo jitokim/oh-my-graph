@@ -78,15 +78,18 @@ nodes:
       they show nothing, say so rather than inventing a reason. This is an
       interview: do NOT rule on any item, and do NOT edit anything.
 
-      Finish BEFORE you reply. Your FINAL reply IS the verdict. START it with
-      exactly one of these two bare tokens, as the very FIRST characters, with
-      no markdown emphasis (`**INTERVIEWED:**` is WRONG), no heading, no
-      preamble:
+      Finish ALL of the interview BEFORE you reply. Your FINAL reply IS the
+      verdict: the node's turn ends the moment you reply, so a commit you
+      promise to read afterwards is never read. START the reply with exactly
+      one of these two bare tokens, as the very FIRST characters of the
+      reply. No preamble line ("Checks are finished; writing up the
+      verdict." ahead of the token is WRONG), no heading, and no markdown
+      emphasis (`**INTERVIEWED:**` is WRONG):
         - NO_DRIFT — the report was NO_DRIFT.
         - INTERVIEWED: — followed by ONE fenced ```json array, one object per
           item: {"id": "<the item's id>", "why": "<the author's account>",
           "holds": "design" or "code", "evidence": "<path:line or sha>"}.
-      Anything you need to qualify goes AFTER the verdict, never before it: a
+      Anything you need to qualify goes AFTER the token, never before it: a
       line of context ahead of the token fails this node even when the
       interview is finished.
     # Read verbs only, under plan: the interview argues; it cannot act.
@@ -94,6 +97,9 @@ nodes:
     permission_mode: plan
     handoff: artifact
     success_check: { exit_zero: true, result_matches: '^[*_`\s]*(NO_DRIFT\b|INTERVIEWED[*_`\s]*:)' }
+    # A misplaced token is a formatting slip, not a judgement, and the
+    # interview does not rule — so one fresh retry on a mismatch is safe.
+    retry: { max: 1, on: [result_mismatch] }
 
   - id: rule
     type: claude-run
@@ -138,9 +144,10 @@ nodes:
     # AMEND_DESIGN: is refused ON PURPOSE — that failure is the stop for a
     # human (see the header). `**AMEND_DESIGN:**` is refused just the same.
     success_check: { exit_zero: true, result_matches: '^[*_`\s]*(NO_DRIFT\b|RESOLVED[*_`\s]*:)' }
-    # A crash may be retried; a refused verdict may NOT. With result_mismatch
-    # here, a second attempt could turn an AMEND_DESIGN: into a pass, and the
-    # human the run stopped for would never see it.
+    # A crash may be retried; a refused verdict may NOT. AMEND_DESIGN: is a
+    # deliberate failed check for a human, so retrying on result_mismatch
+    # would re-roll the ruling until it says something that passes — gaming
+    # the human stop, which the human would then never see.
     retry: { max: 1, on: [nonzero_exit] }
 
   - id: fix
