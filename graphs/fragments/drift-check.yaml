@@ -1,0 +1,82 @@
+# drift-check — one read-only drift check: the code between two refs, held
+# against a design document, answered NO_DRIFT or DRIFT: (#386).
+#
+# Design drift is the gap a review round does not look for. A review asks "is
+# this diff good?"; this asks "does this diff still do what the design says?".
+# A change can be clean, tested and well-argued and still silently narrow a
+# rule the design states, or widen one — and the design then describes a
+# system that no longer exists.
+#
+# What stays per-use: which design the code is held to (`design_path`), the
+# two refs that bound the change (`base`, `head`), and how long the check may
+# take (`check_timeout` — bind "" for the runner's default).
+#
+# What the fragment fixes, once, for every user:
+#
+#   * The checker never edits. It holds read verbs and nothing else, under
+#     permission_mode: plan, so "do NOT edit anything" is enforced rather
+#     than asked for — the same half of the one-direction discipline
+#     `repair-round`'s review carries.
+#   * The checker never sees the authors' justifications, and never judges
+#     whether a deviation is justified. Its only question is "what does the
+#     code do that the design does not say?", and that answer has to be
+#     reached before anyone argues for the code. A checker that reads the
+#     reason first explains the drift away instead of reporting it. Hearing
+#     the authors is `drift-nego`'s interview; ruling is its rule node.
+#   * Each item names the commit that introduced it. That is what lets the
+#     interview speak for the author of THAT commit rather than for the change
+#     as a whole.
+#   * The verdict contract, and a JSON list a later node can quote inline.
+#
+# `cwd:` and `worktree:` are deliberately absent — they are the using node's,
+# so the citing graph points this at its repository.
+fragment: drift-check
+description: "one read-only drift check — the code between two refs against a design document, answered NO_DRIFT or DRIFT:"
+substitutions: [design_path, base, head, check_timeout]
+exit: check
+nodes:
+  - id: check
+    type: claude-run
+    prompt: |
+      Check this change for DESIGN DRIFT. This is a check: do NOT edit
+      anything, and do NOT judge whether a deviation is justified — report
+      it, and leave the judging to others.
+
+      1. Read the design document `{{ with.design_path }}` in full.
+      2. Read the change: `git diff {{ with.base }}..{{ with.head }}`, then
+         every changed file as it stands at `{{ with.head }}`.
+      3. List EVERY place where the code does something the design does not
+         say, or does not do what the design says. That includes silently
+         narrowing a rule the design states (a check that admits less than
+         the design promises) and silently widening one (a check that admits
+         more).
+      4. For each item, find the commit that introduced it: use `git log`
+         and `git blame` over `{{ with.base }}..{{ with.head }}`.
+
+      Finish the check BEFORE you reply. Your FINAL reply IS the verdict: the
+      node's turn ends the moment you reply, so a file you promise to read
+      afterwards is never read. START the reply with exactly one of these two
+      bare tokens, as the very FIRST characters, with no markdown emphasis
+      (`**NO_DRIFT**` and `**DRIFT:**` are WRONG), no heading, no preamble:
+        - NO_DRIFT — you held the whole change against the design and found
+          nothing.
+        - DRIFT: — followed by ONE fenced ```json array, one object per item:
+            {"id": "D1", "clause": "<the design text, quoted>",
+             "expected": "<what the design says>",
+             "actual": "<what the code does>",
+             "evidence": "<path:line>",
+             "commit": "<short sha>", "subject": "<commit subject>"}
+          Number the ids D1, D2, … in the order you list them.
+      Anything you need to qualify goes AFTER the verdict, never before it: a
+      line of context ahead of the token fails this node even when the check
+      is finished.
+    # Read verbs only, under plan: the checker cannot edit even if it tries.
+    allowed_tools: [Read, Grep, Glob, "Bash(git *)"]
+    permission_mode: plan
+    timeout: "{{ with.check_timeout }}"
+    handoff: artifact
+    # Either verdict passes; an interim "still checking" does not. A check's
+    # job is to judge, not to find nothing — the same reasoning as
+    # repair-round's review. `NO_DRIFTING` and a bare `DRIFT` with no colon
+    # are refused, and so is any line of preamble before the token.
+    success_check: { exit_zero: true, result_matches: '^[*_`\s]*(NO_DRIFT\b|DRIFT[*_`\s]*:)' }
