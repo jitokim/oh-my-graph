@@ -744,6 +744,41 @@ everything passes forward by `handoff: artifact`. The report crosses the
 fragment boundary as a binding, `check_report: "{{ artifacts.drift | inline }}"`,
 which the post-splice rewrite points at `drift/check`.
 
+**The requirements list.** The change is judged against a requirements file,
+one requirement per line; blank lines and lines whose first non-blank character
+is `#` are ignored. An entry is five `|`-separated fields, each trimmed:
+`ID | measure | source | check | text`. `measure` is `invariant` or `llm`.
+`source` says where the requirement comes from (`DESIGN.md:12`). For an
+`invariant`, `check` is a shell command run from the repository root that exits
+0 when the requirement holds; for an `llm`, it is a short check name. `text` is
+everything after the fourth `|`, so it may itself hold `|`. An entry is an
+error when it has fewer than five fields, an empty ID, an empty `source` or an
+empty `check`, a measure that is neither `invariant` nor `llm`, or an ID an
+earlier line already used; each error is named by its ID, or by its line
+number when the ID is empty.
+
+**Invariants first.** What needs no model is settled before any model looks.
+`scripts/drift-baseline.sh <requirements-file> <lock-file>` checks, in order
+and stopping at the first that fails, the lock, then the format, then every
+`invariant` entry's `check`, with no model anywhere; it prints
+`OK <n> invariant, <m> llm` on success. The engine runs it as `baseline`'s
+`success_check.verify`, so its exit code is the verdict and no session reads
+its output. Only then does `check` run, and it judges only the `llm` entries.
+Each item it reports carries `req`, the ID it violates, or `"unlisted"` for a
+gap no requirement covers — still reported, because a list is never complete.
+
+**The lock is owned by a person.** It pins, by sha256, the design and the
+requirements file the review is judged against. The script only verifies it,
+with `sha256sum -c`, and never writes it; a missing lock, or a pinned file that
+is missing or changed, fails the baseline, because the yardstick moved and no
+one said so. Creating or updating it is the owner's decision — not the
+script's, and not a model's — and re-running it after an edit is how the owner
+says the new text is the spec. From the repository root:
+
+```sh
+sha256sum <design> <requirements-file> > <lock-file>
+```
+
 - **The AMEND_DESIGN stop is a failed check, on purpose.** Changing the design
   is a person's call, so a ruling with any amend-design item has to halt the run.
   The natural shape is a gate after `rule`, but a gate cannot be conditional
