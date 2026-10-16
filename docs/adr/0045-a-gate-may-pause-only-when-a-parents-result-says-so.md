@@ -251,6 +251,9 @@ every parent has a PASS record, `pause_when.node` included.
    gives (`internal/handoff/handoff.go:758`). In a fresh leg that is the path
    `PersistOutput` just recorded. In a resumed leg it is the path `Seed`
    restored from the snapshot (`handoff.go:384`). Neither is model-chosen.
+   A resumed leg handed an expected hash for this gate (a resume of a
+   conditional pause, §2.5) first compares the sha256 of those bytes with it,
+   and on a mismatch, or a missing hash, goes to step 6 without matching.
 2. The pattern is compiled with `regexp.Compile` and matched with
    `MatchString`, with **no flags added**, exactly as `evaluateSuccessCheck`
    does for `result_matches` (`scheduler.go:1910-1917`). It is RE2:
@@ -268,11 +271,18 @@ every parent has a PASS record, `pause_when.node` included.
    (`gate.go:42-48`). It never clears and never pauses. A missing artifact
    behind a PASS record breaks an engine invariant, and a pause would ask a
    human to decide about a result nobody can show them.
+6. **Hash mismatch on resume → the gate fails** (§2.5). The artifact is not
+   the one the pause showed, so the pattern is not matched over it: the gate
+   never clears and the controller's decision is never applied. Like step 5,
+   it never pauses.
 
 `GateController`'s signature does not change. The `internal/gate` package stays
 ignorant of results and handoff. The "scheduler … never branches on 'am I
 resuming'" rule (DESIGN.md:2053-2085) holds: every leg that reaches the gate
-evaluates the condition the same way, over the same persisted file.
+evaluates the condition the same way. A leg handed an expected hash (a resume
+of a conditional pause, §2.5) first checks the artifact against it and fails
+the gate on a mismatch, without matching. The hash is data the leg is given,
+like the recorded decisions, not a branch on which leg it is.
 
 A parent that ran inside a feedback loop (ADR 0010) is evaluated over its last
 PASS, which is the result its artifact holds. A gate can never be inside a
@@ -592,6 +602,7 @@ than invent another. Scope here is the gate only.
 | no match | the gate **clears**: PASS, provenance `cleared`, `gate_cleared` event, no decision |
 | match | an ordinary gate: approve / reject / pause, plus the condition record |
 | unreadable result | the gate fails; it never clears and never pauses |
+| hash mismatch on resume | the gate fails without matching; it never clears and never applies the decision (§2.5) |
 | record | `gate_condition` {node, pattern, matched, line ≤200 B, sha256} on event, node record, ledger detail |
 | schemas | stream 3 → 4 (new event, fifth provenance); snapshot unchanged, `cleared` included |
 | pattern style | errs toward pausing: the example is `(?i)` and separator-tolerant |
