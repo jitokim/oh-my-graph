@@ -186,10 +186,11 @@ change to the fragment; this ADR does not.
     depends_on: [rule]
     description: "The ruling has amend-design items. Amend the design (and its lock), then approve to apply the fix-code items, or reject to stop."
     # Pauses on the AMEND_DESIGN: verdict, or on any item ruled amend-design,
-    # even under a RESOLVED: headline.
+    # even under a RESOLVED: headline. Case-insensitive and tolerant of the
+    # separator on purpose: a wrong clear costs more than a wrong pause.
     pause_when:
       node: rule
-      result_matches: '^[*_`\s]*AMEND_DESIGN[*_`\s]*:|"outcome"\s*:\s*"amend-design"'
+      result_matches: '(?i)^[*_`\s]*AMEND[-_ ]?DESIGN[*_`\s]*:|"outcome"\s*:\s*"\s*amend[-_ ]?design'
 
   - id: fix
     depends_on: [amend-design]
@@ -202,6 +203,21 @@ have amended the design, and the lock is mine to update, so apply the fix-code
 items." Rejecting it prunes `fix` and exits 1 (DESIGN.md:2408-2410). `rule`'s
 retry policy stays as it is. The implementation PR may revisit it, but not
 inside this ADR.
+
+**Patterns err toward pausing.** The two mistakes a `pause_when` can make do
+not cost the same. A wrong pause costs one `resume --approve`. A wrong clear
+lets `fix` run past a stop a human was owed, and nothing later in the run
+notices. So a pattern should match the *meaning* the author wants to stop on,
+not one spelling of it. The example opts in to `(?i)` and accepts `-`, `_`,
+a space or nothing between the two words, so `"Outcome": "Amend_Design"`
+pauses just as the prompt's exact `"outcome": "amend-design"` does. It also
+leaves the value's closing quote unmatched, so a qualified value
+(`"amend-design (partial)"`) pauses too. The engine still adds no flag of its
+own (§2.2): the tolerance is written in the graph, where the reader sees it.
+The headline alternative is case-insensitive as well. That costs nothing,
+because `rule`'s own case-sensitive `result_matches` already fails any
+headline spelt other than `AMEND_DESIGN:`, so only well-formed verdicts reach
+the gate.
 
 **Rejected.**
 - A list of conditions, or `any:`/`all:` combinators. One parent and one
@@ -316,7 +332,7 @@ Each evaluation carries one record, the **condition**:
 ```json
 "gate_condition": {
   "node": "nego/rule",
-  "result_matches": "^[*_`\\s]*AMEND_DESIGN[*_`\\s]*:|\"outcome\"\\s*:\\s*\"amend-design\"",
+  "result_matches": "(?i)^[*_`\\s]*AMEND[-_ ]?DESIGN[*_`\\s]*:|\"outcome\"\\s*:\\s*\"\\s*amend[-_ ]?design",
   "matched": false,
   "line": "NO_DRIFT",
   "result_sha256": "…"
@@ -389,15 +405,71 @@ Where it goes:
   that did not pause needs no approval, so the pre-approval stays unused and
   the record says so: `auto_approve` lists the id, and the node's provenance is
   `cleared`.
-- **`resume --approve|--reject <gate>`** is unchanged. A conditional gate can
-  only be `PausedAt` after a match, so ADR 0014's precondition and the explicit
-  gate id rule (DESIGN.md:2402-2407) carry over as they are. The resumed leg
-  reaches the gate again, re-evaluates the condition over the same persisted
-  artifact (a PASSED parent's record and artifact are kept), gets the same
-  match, and then asks the `RecordedController`, which returns the new decision.
-  If the artifact were edited by hand between the legs, the second evaluation
-  is recorded on its own event with its own `result_sha256`. The disagreement
-  is in the record, not hidden.
+
+  Listing a conditional gate in `--auto-approve` therefore means exactly what
+  it means for an ordinary gate: **an amend-design ruling goes to `fix` with no
+  human**. It is **not** needed to keep a clean run from stopping, because the
+  clear already does that. An operator who adds it "so clean runs do not
+  pause" has removed the stop the gate exists for. `lint` cannot warn about
+  this: it reads the graph, and `--auto-approve` is a launch flag the graph
+  never holds. The warning goes where the flag and the graph meet instead,
+  `run --dry-run` (§2.9).
+- **`resume --approve|--reject <gate>` never silently skips the decision.** A
+  conditional gate can only be `PausedAt` after a match, so ADR 0014's
+  precondition and the explicit gate id rule (DESIGN.md:2402-2407) carry over
+  as they are. The resumed leg reaches the gate again and reads the parent's
+  artifact as §2.2 says. **Before matching anything**, it compares the sha256
+  of those bytes with the `result_sha256` recorded at the pause, in
+  `gate.paused_gate_condition`.
+  - **Same hash:** the evaluation is the one the pause made, so it matches
+    again. The `RecordedController` returns the new decision, which is applied
+    as today, and the decided record's `gate_condition` is the one the pause
+    recorded.
+  - **Different hash:** the gate **fails**. It never clears, and it never
+    re-evaluates the pattern over the new bytes. The decision on the command
+    line was given over the result the pause showed, and those bytes are gone.
+    Applying it would approve, or reject, something nobody was shown. Clearing
+    would let a `resume --reject` end with `fix` running. The failure goes
+    through the same path as a controller error (`recordFail`), with $0 and
+    no session, and records:
+    - `state.json` node record: `verdict: FAIL`, the `gate_condition` copied
+      from `paused_gate_condition` (the result the human was shown, with its
+      hash), and `reason` as below. `gate.decisions` gets **no** entry for the
+      gate: the supplied decision was never applied, so the implementation
+      drops it from the merged map before the leg's first snapshot write, and
+      no later leg can replay it over bytes it was not given for.
+      `paused_at` and `paused_gate_*` are cleared, as on any leg that settles
+      the gate. The snapshot schema does not move: every field is one §2.4
+      already defines.
+    - `events.jsonl`: `node_failed` for the gate with that reason as its
+      detail. No `gate_*` event, because nothing was decided and nothing
+      cleared. The run ends `run_finished` / `failed`, and the exit code is 1.
+      `fix` never starts: halt-on-fail halts, and `--continue-on-fail` prunes
+      the gate's subtree.
+    - ledger row and `show` DETAIL: FAIL, $0, the same reason.
+    - reason (wording indicative): `gate %q: %q's result changed since the
+      pause (sha256 %s at pause, %s now); the --%s given for the paused result
+      was not applied`.
+
+    The way on is the operator's call, made with the change in the record:
+    restore the artifact and run `resume --retry-failed`, or retry over the
+    edited bytes. A retry leg evaluates the gate as a first evaluation with
+    no decision in hand, so a match pauses for a decision about the new bytes.
+  - **No recorded hash** (a `paused_gate_condition` missing or empty for a
+    conditional gate) is treated as a mismatch. A binary that drops
+    `pause_when` cannot produce a conditional pause (§2.3), so this case only
+    exists if the snapshot was damaged, and it fails for the same reason.
+
+  The check is data, not a branch on "am I resuming". `resume` hands the
+  scheduler the recorded hash for the paused gate, as it hands it the
+  recorded decisions. A fresh leg hands it none, and a gate with no expected
+  hash is evaluated as §2.2 says. DESIGN.md:2053-2085 holds.
+
+  *Rejected in one line:* skipping re-evaluation and applying the recorded
+  decision as-is. It cannot clear, but it applies a human's approve to bytes
+  they never saw, and `fix` reads those bytes through
+  `{{ artifacts.rule | inline }}`. The hash check costs one comparison, keeps
+  one evaluation path, and fails closed.
 - **`resume --retry-failed`** never re-rolls the human stop again. The
   amend-design ruling now PASSES and pauses, and a gate-paused run is
   redirected to `--approve`/`--reject` (DESIGN.md:2434-2447). The cross-leg
@@ -432,9 +504,11 @@ two:
    drift case, the rewritten `rule` admits only `NO_DRIFT`, `RESOLVED:` and
    `AMEND_DESIGN:`.
 2. **A pattern that reads the body as well as the headline.** The example's
-   second alternative, `"outcome"\s*:\s*"amend-design"`, pauses on any item
-   ruled amend-design even under a `RESOLVED:` headline. A model that wants to
-   avoid the stop has to misstate the ruling itself, and not only its summary.
+   second alternative, `"outcome"\s*:\s*"\s*amend[-_ ]?design` under `(?i)`,
+   pauses on any item ruled amend-design even under a `RESOLVED:` headline,
+   however the value is cased or joined (§2.1). A model that wants to avoid
+   the stop has to misstate the ruling itself, and not only its summary or its
+   spelling.
 
 Nothing in the engine can stop a model from ruling fix-code where a human would
 have ruled amend-design. That is a judgement about the content, and a gate on
@@ -490,7 +564,13 @@ than invent another. Scope here is the gate only.
   `[gate: pauses when nego/rule matches /…/]`. This changes the dry-run output
   for every gate, which today is unmarked. That is intended: the plan is where
   the reader learns where the run can stop. `printAutoApproved`
-  (`dryrun.go:104-113`) is unchanged.
+  (`dryrun.go:104-113`) keeps its lines and adds one advisory per conditional
+  gate it lists: `warning: nego/amend-design is conditional; --auto-approve
+  sends a matching result on with no human, and a clean result already clears
+  without it` (§2.5). It is a warning and the dry run still succeeds:
+  pre-approving a gate is legitimate, just never needed to avoid clean-run
+  pauses. This is the advisory `lint` cannot give, because `lint` never sees
+  the flag.
 - **`show`** (`cmd/oh-my-graph/show.go`): a cleared gate is a row like any
   other, verdict PASS, and its DETAIL is the ledger detail of §2.4
   (`pause_when unmatched on nego/rule: "NO_DRIFT"`), so the evaluation is on
@@ -514,8 +594,9 @@ than invent another. Scope here is the gate only.
 | unreadable result | the gate fails; it never clears and never pauses |
 | record | `gate_condition` {node, pattern, matched, line ≤200 B, sha256} on event, node record, ledger detail |
 | schemas | stream 3 → 4 (new event, fifth provenance); snapshot unchanged, `cleared` included |
-| `--auto-approve` | used if it matches; unused and visible if it clears |
-| `resume --approve` | unchanged; re-evaluates over the same artifact |
+| pattern style | errs toward pausing: the example is `(?i)` and separator-tolerant |
+| `--auto-approve` | used if it matches, sending amend-design to `fix` with no human; unused and visible if it clears; never needed for clean runs; `--dry-run` warns |
+| `resume --approve` / `--reject` | checks the artifact's sha256 against `paused_gate_condition.result_sha256`; same → applies the decision; different or missing → the gate fails (FAIL record, `node_failed`, no `decisions` entry), never clears, never re-decides |
 | `--retry-failed` | can no longer re-roll the human stop |
 | `--continue-on-fail` | a failed parent prunes the gate; never evaluated over a FAIL |
 | model influence | none over the predicate; can withhold the token, bounded by §2.6 |
@@ -630,9 +711,11 @@ File and function names only. No code lands with this ADR.
   `GateState.PausedGateCondition`, and recording both in
   `RecordDescribedPause` and on decision.
 - `cmd/oh-my-graph/`: `lint.go` (summary line and warning), `dryrun.go`
-  (`printResolvedPlan` gate marks), `resume.go` (carry the paused condition
-  into the decided gate's record, as `gate_description` is carried), and the
-  `serve` live view.
+  (`printResolvedPlan` gate marks, `printAutoApproved`'s advisory),
+  `resume.go` (carry the paused condition into the decided gate's record, as
+  `gate_description` is carried; hand the scheduler the paused gate's
+  recorded `result_sha256`; drop the supplied decision when the check fails),
+  and the `serve` live view.
 - `internal/coordinator/`: no code change. A test pins that the planned-gate
   refusal still fires for a conditional gate.
 - Documentation to update when it lands: DESIGN.md ("Gate nodes and `resume`",
@@ -683,9 +766,9 @@ All engine tests use `FakeRunner`. No real model is spawned.
     bytes on a rune boundary.
 12. **`show`.** A cleared gate's row is PASS, and its DETAIL holds the
     unmatched line.
-13. **`resume --approve`** on a conditional pause re-evaluates, matches,
-    approves, and runs the dependents. The decided record carries the
-    condition. **`--reject`** prunes and exits 1.
+13. **`resume --approve`** on a conditional pause, artifact unchanged,
+    re-evaluates, matches, approves, and runs the dependents. The decided
+    record carries the condition. **`--reject`** prunes and exits 1.
 14. **`--auto-approve`, matched:** no pause. `decisions[id] = approve`,
     provenance `approved`, and the condition is recorded.
 15. **`--auto-approve`, unmatched:** the gate clears. `auto_approve` still
@@ -703,6 +786,33 @@ All engine tests use `FakeRunner`. No real model is spawned.
 20. **The coordinator still refuses gates.** A planned graph holding a gate
     with `pause_when` is refused with the planned-gate refusal, and a planned
     non-gate carrying `pause_when` is refused by validation.
+21. **Changed artifact, `resume --reject`.** Pause on an `AMEND_DESIGN:`
+    reply, then rewrite `rule`'s artifact to `NO_DRIFT` (which the pattern does
+    not match), then `resume --reject`. `fix` does not run (the fake runner
+    sees no call for it). The gate's record is FAIL, holds the paused
+    `gate_condition` and names both hashes. `node_failed` is emitted for it and
+    no `gate_cleared` or `gate_rejected`. `gate.decisions` has no entry for it,
+    `paused_at` is empty, and the exit code is 1.
+22. **Changed artifact, `resume --approve`.** The same, with `--approve`. The
+    gate fails exactly as in 21 and does not clear. No `gate_approved` or
+    `gate_cleared` is emitted, `fix` does not run, and `decisions` has no
+    `approve` for a later `--retry-failed` to replay. A variant edits the
+    artifact so the pattern *still* matches: it fails the same way, because
+    the check is on the bytes, not on the match.
+23. **Missing recorded hash.** A snapshot paused at a conditional gate whose
+    `paused_gate_condition` is removed fails the gate on `--approve`, as in
+    22.
+24. **The example pattern errs toward pausing.** §2.1's pattern pauses on a
+    `RESOLVED:` reply whose array holds the item line in the exact shape the
+    `drift-nego` prompt asks for (`graphs/fragments/drift-nego.yaml`, `rule`'s
+    prompt: `{"id": "<the item's id>", "outcome": "fix-code" or` /
+    `"accept-deviation", "reason": "<why>"}`), filled in as
+    `{"id": "D1", "outcome": "amend-design", "reason": "…"}`. It also pauses
+    on one variant spelling, `{"id": "D1", "Outcome": "Amend_Design", "reason":
+    "…"}`. A reply whose items are all `fix-code` or `accept-deviation` clears.
+25. **Dry-run advisory.** `run --dry-run --auto-approve nego/amend-design`
+    prints §2.9's warning and exits 0. An unconditional gate in
+    `--auto-approve` prints no warning.
 
 ## 5. Falsification
 
