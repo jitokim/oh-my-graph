@@ -288,7 +288,9 @@ already covers are.
 token, so a reply without one passes and the gate clears" (§2.6). A parent
 gated only by `verify:` is legitimate, so this is a warning and nothing more.
 
-The graph decoder sets no `KnownFields` (`internal/graph/graph.go:345`). An
+The graph decoder sets no `KnownFields`: `decode` is a plain `yaml.Unmarshal`
+(`internal/graph/graph.go:483`), as the `Use` field's comment notes
+(`graph.go:345`). An
 older binary therefore drops `pause_when` without a word, and a misspelt key
 (`pause_wen:`) is dropped the same way. Both fall back to today's
 **always-pause** gate. That is the safe direction: a stop nobody needed, never
@@ -345,11 +347,22 @@ Where it goes:
   value travels in the same bump: RUN-FEED calls the set "a closed set of four"
   (RUN-FEED.md:633-641), and a fifth member is a change an existing reader
   could misread.
-- The **snapshot schema does not move.** `gate_condition` and
-  `paused_gate_condition` are optional fields old readers ignore
-  (RUN-FEED.md:869-876). An old reader that ignores them sees a gate PASS,
-  which is true. An old binary cannot produce or resume such a run in any case,
-  because it drops `pause_when` at decode (§2.3).
+- The **snapshot schema does not move**, and that covers the new provenance
+  value too. `gate_condition` and `paused_gate_condition` are optional fields
+  old readers ignore (RUN-FEED.md:869-876). `provenance: "cleared"` in a node
+  record is exempt for a different reason: `state.json` never declared its
+  provenance a closed set. RUN-FEED's snapshot field list does not name it
+  (RUN-FEED.md:180-188); the closed set of four is a property of the stream's
+  `node_passed` (RUN-FEED.md:633-641). In the snapshot it is only carried
+  forward (`resume.go:578`, `show.go:207`) and printed verbatim by
+  `ledger.VerdictCell` (`internal/ledger/ledger.go:372-377`), so an old binary
+  reading the file renders `PASS (cleared)`, which is true. Nothing derives a
+  status from it: `runstatus` counts PASS by verdict alone. The implementation
+  rewrites the comment on `NodeRecord.Provenance`
+  (`internal/runstate/runstate.go:296-316`), which today says "one of
+  runfeed's four qualifiers", to name the stream's set without a count. An old
+  binary cannot produce such a run in any case, because it drops `pause_when`
+  at decode (§2.3).
 
 **Rejected.**
 - No record for a cleared gate, or a "skipped" verdict. Either makes a clean
@@ -500,7 +513,7 @@ than invent another. Scope here is the gate only.
 | match | an ordinary gate: approve / reject / pause, plus the condition record |
 | unreadable result | the gate fails; it never clears and never pauses |
 | record | `gate_condition` {node, pattern, matched, line ≤200 B, sha256} on event, node record, ledger detail |
-| schemas | stream 3 → 4; snapshot unchanged |
+| schemas | stream 3 → 4 (new event, fifth provenance); snapshot unchanged, `cleared` included |
 | `--auto-approve` | used if it matches; unused and visible if it clears |
 | `resume --approve` | unchanged; re-evaluates over the same artifact |
 | `--retry-failed` | can no longer re-roll the human stop |
@@ -659,8 +672,11 @@ All engine tests use `FakeRunner`. No real model is spawned.
    then `node_passed` with `provenance: "cleared"`. A matched gate's `gate_*`
    event carries `matched: true` and the matched line. Every event has
    `schema: 4`.
-10. **`state.json`.** The cleared gate's node record carries `gate_condition`,
-    and `gate.decisions` has no entry for it. The snapshot schema is unchanged.
+10. **`state.json`.** The cleared gate's node record carries `gate_condition`
+    and `provenance: "cleared"`, and `gate.decisions` has no entry for it. The
+    snapshot schema is unchanged by both. A resumed leg that loads the record
+    prints `PASS (cleared)` for it, and `runstatus.Derive` counts it as
+    completed.
 11. **Evidence line.** The line is the one holding the match start, or the
     first non-blank line when nothing matches. It is sanitised (an escape
     sequence in the reply does not reach the record) and truncated at 200
