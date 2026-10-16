@@ -314,6 +314,10 @@ already covers are.
 token, so a reply without one passes and the gate clears" (§2.6). A parent
 gated only by `verify:` is legitimate, so this is a warning and nothing more.
 
+The `--auto-approve` advisory of §2.5 is not a `lint` warning: `lint` reads
+only the graph, and the flag is given at launch. It is printed by
+`run --dry-run` (§2.9), where the graph and the flag meet.
+
 The graph decoder sets no `KnownFields`: `decode` is a plain `yaml.Unmarshal`
 (`internal/graph/graph.go:483`), as the `Use` field's comment notes
 (`graph.go:345`). An
@@ -424,13 +428,21 @@ Where it goes:
   this: it reads the graph, and `--auto-approve` is a launch flag the graph
   never holds. The warning goes where the flag and the graph meet instead,
   `run --dry-run` (§2.9).
-- **`resume --approve|--reject <gate>` never silently skips the decision.** A
-  conditional gate can only be `PausedAt` after a match, so ADR 0014's
+- **`resume --approve|--reject <gate>` never silently skips the decision.**
+  The rule, plainly: **when the snapshot holds a pause or a decision for this
+  gate, the resumed leg compares the sha256 of the parent's artifact with the
+  `result_sha256` recorded at the pause. On a mismatch the gate fails with a
+  clear reason. It never clears and never re-decides on the new content.**
+  The recorded hash is read from `gate.paused_gate_condition` while the gate
+  is paused, and from the gate's node record `gate_condition` when a leg is
+  handed a decision already recorded in `gate.decisions` (that record was
+  copied from the pause, so it holds the same hash).
+
+  A conditional gate can only be `PausedAt` after a match, so ADR 0014's
   precondition and the explicit gate id rule (DESIGN.md:2402-2407) carry over
   as they are. The resumed leg reaches the gate again and reads the parent's
-  artifact as §2.2 says. **Before matching anything**, it compares the sha256
-  of those bytes with the `result_sha256` recorded at the pause, in
-  `gate.paused_gate_condition`.
+  artifact as §2.2 says. **Before matching anything**, it makes the comparison
+  above.
   - **Same hash:** the evaluation is the one the pause made, so it matches
     again. The `RecordedController` returns the new decision, which is applied
     as today, and the decided record's `gate_condition` is the one the pause
@@ -442,33 +454,42 @@ Where it goes:
     would let a `resume --reject` end with `fix` running. The failure goes
     through the same path as a controller error (`recordFail`), with $0 and
     no session, and records:
-    - `state.json` node record: `verdict: FAIL`, the `gate_condition` copied
-      from `paused_gate_condition` (the result the human was shown, with its
-      hash), and `reason` as below. `gate.decisions` gets **no** entry for the
-      gate: the supplied decision was never applied, so the implementation
-      drops it from the merged map before the leg's first snapshot write, and
-      no later leg can replay it over bytes it was not given for.
-      `paused_at` and `paused_gate_*` are cleared, as on any leg that settles
-      the gate. The snapshot schema does not move: every field is one §2.4
-      already defines.
-    - `events.jsonl`: `node_failed` for the gate with that reason as its
-      detail. No `gate_*` event, because nothing was decided and nothing
-      cleared. The run ends `run_finished` / `failed`, and the exit code is 1.
-      `fix` never starts: halt-on-fail halts, and `--continue-on-fail` prunes
-      the gate's subtree.
-    - ledger row and `show` DETAIL: FAIL, $0, the same reason.
-    - reason (wording indicative): `gate %q: %q's result changed since the
-      pause (sha256 %s at pause, %s now); the --%s given for the paused result
-      was not applied`.
+    - the failure reason, which is the node's `detail` on every surface
+      (wording indicative): `result changed since the pause: sha256 <recorded>
+      at pause, <observed> now; the --<approve|reject> given was not applied`.
+      Both hashes are written **in full**. The wording names no node id (the
+      parent is in `gate_condition.node`, the gate is the record's own), so
+      its length is fixed at about 220 runes and fits under the shared
+      240-rune `detail` cap (`runfeed.go:184-188`) without truncating either
+      hash.
+    - `state.json` node record: `verdict: FAIL`, `detail` as above, no
+      `provenance` and no `judged` (a FAIL qualifies nothing, and no work was
+      judged wrong), and the `gate_condition` copied from the pause (the
+      result the human was shown, with its `result_sha256`, which is the
+      recorded hash). `gate.decisions` gets **no** entry for the gate: the
+      supplied decision was never applied, so the implementation drops it
+      from the merged map before the leg's first snapshot write, and no later
+      leg can replay it over bytes it was not given for. `paused_at` and
+      `paused_gate_*` are cleared, as on any leg that settles the gate. The
+      snapshot schema does not move: the observed hash lives in `detail`, and
+      every other field is one §2.4 already defines.
+    - `events.jsonl`: `node_failed` for the gate, with the same `detail`. No
+      `gate_*` event, because nothing was decided and nothing cleared. The
+      run ends `run_finished` / `failed`, and the exit code is 1. `fix` never
+      starts: halt-on-fail halts, and `--continue-on-fail` prunes the gate's
+      subtree.
+    - ledger row and `show` DETAIL: FAIL, $0, the same `detail`.
 
     The way on is the operator's call, made with the change in the record:
     restore the artifact and run `resume --retry-failed`, or retry over the
     edited bytes. A retry leg evaluates the gate as a first evaluation with
     no decision in hand, so a match pauses for a decision about the new bytes.
-  - **No recorded hash** (a `paused_gate_condition` missing or empty for a
-    conditional gate) is treated as a mismatch. A binary that drops
-    `pause_when` cannot produce a conditional pause (§2.3), so this case only
-    exists if the snapshot was damaged, and it fails for the same reason.
+  - **No recorded hash** (a `paused_gate_condition`, or a decided record's
+    `gate_condition`, missing or empty for a conditional gate) is treated as
+    a mismatch, with `<none>` in place of the recorded hash in `detail`. A
+    binary that drops `pause_when` cannot produce a conditional pause (§2.3),
+    so this case only exists if the snapshot was damaged, and it fails for
+    the same reason.
 
   The check is data, not a branch on "am I resuming". `resume` hands the
   scheduler the recorded hash for the paused gate, as it hands it the
@@ -476,10 +497,12 @@ Where it goes:
   hash is evaluated as §2.2 says. DESIGN.md:2053-2085 holds.
 
   *Rejected in one line:* skipping re-evaluation and applying the recorded
-  decision as-is. It cannot clear, but it applies a human's approve to bytes
-  they never saw, and `fix` reads those bytes through
-  `{{ artifacts.rule | inline }}`. The hash check costs one comparison, keeps
-  one evaluation path, and fails closed.
+  decision as-is. It cannot clear, but applying an old ruling to content the
+  human never saw is itself a silent skip of a decision: nobody decided about
+  those bytes, yet `fix` reads them through `{{ artifacts.rule | inline }}`.
+  Failing puts the change in the record and hands the decision back to a
+  person; it costs one comparison, keeps one evaluation path, and fails
+  closed.
 - **`resume --retry-failed`** never re-rolls the human stop again. The
   amend-design ruling now PASSES and pauses, and a gate-paused run is
   redirected to `--approve`/`--reject` (DESIGN.md:2434-2447). The cross-leg
@@ -602,12 +625,12 @@ than invent another. Scope here is the gate only.
 | no match | the gate **clears**: PASS, provenance `cleared`, `gate_cleared` event, no decision |
 | match | an ordinary gate: approve / reject / pause, plus the condition record |
 | unreadable result | the gate fails; it never clears and never pauses |
-| hash mismatch on resume | the gate fails without matching; it never clears and never applies the decision (§2.5) |
+| hash mismatch on resume | whenever the snapshot holds a pause or a decision for the gate: the gate fails without matching; it never clears, never applies the decision and never re-decides on the new content (§2.5); applying the old ruling is rejected as a silent skip |
 | record | `gate_condition` {node, pattern, matched, line ≤200 B, sha256} on event, node record, ledger detail |
 | schemas | stream 3 → 4 (new event, fifth provenance); snapshot unchanged, `cleared` included |
 | pattern style | errs toward pausing: the example is `(?i)` and separator-tolerant |
-| `--auto-approve` | used if it matches, sending amend-design to `fix` with no human; unused and visible if it clears; never needed for clean runs; `--dry-run` warns |
-| `resume --approve` / `--reject` | checks the artifact's sha256 against `paused_gate_condition.result_sha256`; same → applies the decision; different or missing → the gate fails (FAIL record, `node_failed`, no `decisions` entry), never clears, never re-decides |
+| `--auto-approve` | as for an ordinary gate: used if it matches, sending amend-design to `fix` with no human; unused and visible if it clears; never needed for clean runs; `--dry-run` warns (not `lint`, which never sees the flag) |
+| `resume --approve` / `--reject` | checks the artifact's sha256 against `result_sha256` in `paused_gate_condition` (or a decided record's `gate_condition`); same → applies the decision; different or missing → the gate fails: FAIL record whose `detail` names both full hashes, `gate_condition` kept from the pause, `node_failed` with the same `detail`, no `gate_*` event, no `decisions` entry, `paused_*` cleared, exit 1; never clears, never re-decides |
 | `--retry-failed` | can no longer re-roll the human stop |
 | `--continue-on-fail` | a failed parent prunes the gate; never evaluated over a FAIL |
 | model influence | none over the predicate; can withhold the token, bounded by §2.6 |
@@ -801,8 +824,10 @@ All engine tests use `FakeRunner`. No real model is spawned.
     reply, then rewrite `rule`'s artifact to `NO_DRIFT` (which the pattern does
     not match), then `resume --reject`. `fix` does not run (the fake runner
     sees no call for it). The gate's record is FAIL, holds the paused
-    `gate_condition` and names both hashes. `node_failed` is emitted for it and
-    no `gate_cleared` or `gate_rejected`. `gate.decisions` has no entry for it,
+    `gate_condition` (recorded hash in `result_sha256`), and its `detail`
+    names both full hashes, recorded and observed, untruncated.
+    `node_failed` is emitted for it with the same `detail`, and no
+    `gate_cleared` or `gate_rejected`. The ledger row is FAIL, $0. `gate.decisions` has no entry for it,
     `paused_at` is empty, and the exit code is 1.
 22. **Changed artifact, `resume --approve`.** The same, with `--approve`. The
     gate fails exactly as in 21 and does not clear. No `gate_approved` or
