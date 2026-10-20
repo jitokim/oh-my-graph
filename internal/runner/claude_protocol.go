@@ -60,6 +60,16 @@ func (claudeProtocol) appendsCompoundShellRule(spec NodeInvocation) bool {
 	return NeedsCompoundShellRule(spec.PermissionMode, spec.Policy.AllowedTools)
 }
 
+// costIncludesResumedSession is true exactly when the invocation resumes a
+// session: claude's total_cost_usd then "continues from the total its
+// transcript saved" (the CLI's own description of the field, 2.1.295), so the
+// figure parse reads is the whole session's, the resumed parent's spend
+// included (#398). A cold start — a root, an artifact node, a retry that
+// dropped its ResumeSession — reports its own spend alone.
+func (claudeProtocol) costIncludesResumedSession(spec NodeInvocation) bool {
+	return spec.ResumeSession != ""
+}
+
 func (claudeProtocol) prepareSession(spec *NodeInvocation) string {
 	if spec.ResumeSession != "" {
 		return spec.ResumeSession

@@ -169,6 +169,13 @@ type Event struct {
 	// CostUnknown marks an accounted call whose runtime reported no USD amount.
 	CostUnknown bool       `json:"cost_unknown,omitempty"`
 	Usage       TokenUsage `json:"usage,omitzero"`
+	// ReportedCostUSD is the call's cost exactly as its CLI reported it, before
+	// the session-cost correction (#398) — for a session-resuming node a
+	// cumulative session total, so it is never summed: CostUSD is the figure
+	// to total. Present only beside a session id and a known USD amount, the
+	// same rule as runstate.NodeRecord.ReportedCostUSD. An additive optional
+	// field, no schema bump.
+	ReportedCostUSD *float64 `json:"reported_cost_usd,omitempty"`
 	// SessionID is the selected CLI's resumable session. It is published as
 	// soon as that CLI owns it (pre-assigned for Claude, thread.started for
 	// Codex) so a consumer can locate a RUNNING node's transcript; terminal

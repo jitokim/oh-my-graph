@@ -197,6 +197,10 @@ type cliProtocol interface {
 	// appendsCompoundShellRule answers whether buildArgs appends
 	// CompoundShellRule to this invocation (#380).
 	appendsCompoundShellRule(NodeInvocation) bool
+	// costIncludesResumedSession answers whether the USD total this protocol
+	// parses for the invocation counts the spend of the session it resumed
+	// (#398) — the fact NodeOutcome.CostIncludesResumedSession carries.
+	costIncludesResumedSession(NodeInvocation) bool
 	parse(stdout, stderr []byte, sessionStarted func(string)) (NodeOutcome, error)
 	// isLimitCause answers whether a failure cause THIS protocol produced is
 	// its provider's subscription limit — implemented in sessionlimit.go, where
@@ -446,6 +450,7 @@ func (r *CLIRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOutcome, 
 	if exitCode != 0 {
 		outcome.ExitCode = exitCode
 	}
+	outcome.CostIncludesResumedSession = r.protocol.costIncludesResumedSession(spec)
 	if exitCode != 0 && outcome.FailureCause == "" {
 		outcome.FailureCause = flattenLines(tailOf(stderr.Bytes(), maxStderrInError))
 	}

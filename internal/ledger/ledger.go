@@ -41,7 +41,13 @@ type Record struct {
 	// CostUnknown means the runtime reported no USD amount. CostUSD is then a
 	// known subtotal of zero, never evidence that the invocation was free.
 	CostUnknown bool
-	Usage       TokenUsage
+	// ReportedCostUSD and ReportedCostUnknown are the cost exactly as the CLI
+	// reported it, before the scheduler's session-cost correction (#398). They
+	// differ from CostUSD/CostUnknown only for a node that resumed a session,
+	// whose reported total is cumulative; CostUSD is what every total sums.
+	ReportedCostUSD     float64
+	ReportedCostUnknown bool
+	Usage               TokenUsage
 	// BudgetUSD is the budget_usd the node declared, or 0 when it declared none.
 	// Recorded next to CostUSD so the budget-vs-actual delta is derivable from a
 	// Record alone, without consulting the graph it came from.

@@ -247,6 +247,21 @@ type NodeRecord struct {
 	// (schema 3), while Usage preserves the runtime's token accounting.
 	CostUnknown bool       `json:"cost_unknown,omitempty"`
 	Usage       TokenUsage `json:"usage,omitzero"`
+	// ReportedCostUSD is the execution's cost exactly as its CLI reported it,
+	// before the session-cost correction (#398). It differs from CostUSD only
+	// for a node that resumed a session, whose reported total is cumulative;
+	// CostUSD is still what every total sums. It is the baseline a later
+	// leg's `handoff: session` child subtracts when it resumes this node's
+	// session, so it is written only beside a SessionID — a record with no
+	// session is nobody's baseline.
+	//
+	// nil means unknown: the CLI reported no USD, the record has no session,
+	// or the snapshot predates the field. A session child of such a parent
+	// records its own cost unknown rather than guessing. Additive and
+	// optional, so there is NO schema bump; it does not accumulate across
+	// feedback rounds the way CostUSD does, because a baseline is the last
+	// execution's figure, not a sum.
+	ReportedCostUSD *float64 `json:"reported_cost_usd,omitempty"`
 	// BudgetUSD is the node's declared budget_usd, or 0 when it declared none
 	// (schema 2). Mirrors ledger.Record.BudgetUSD so `resume` can rebuild a
 	// Record that reports the same budget-vs-actual delta the original leg's
