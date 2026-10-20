@@ -1,6 +1,6 @@
 ### Changed
 
-- **With `--verify-cmd`, planned nodes no longer run the whole suite.** The
+- **With `--verify-cmd`, code-changing nodes no longer run the whole suite.** The
   engine already runs that command once after the final node, so the
   planner prompt now says no planned node runs the verify command itself,
   even when the goal names it, and a node that changes code runs only the
