@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"math"
@@ -10,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/jitokim/oh-my-graph/internal/browser"
+	"github.com/jitokim/oh-my-graph/internal/coordinator"
+	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 )
@@ -157,5 +160,34 @@ func stripReportedCost(t *testing.T, runID, nodeID string) {
 	}
 	if err := os.WriteFile(path, out, 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestResume_SessionCostConsumersShowTheCorrectedFigure: after the resumed
+// leg, `show` and the goal loop's run total read the corrected per-node
+// cost_usd — dev 0.40 + e2e 0.25 = $0.65, the session's final raw total —
+// never the raw sum 0.40 + 0.65.
+func TestResume_SessionCostConsumersShowTheCorrectedFigure(t *testing.T) {
+	runID := runSessionCostLeg1(t)
+	resumeSessionCostLeg2(t, runID)
+
+	var shown bytes.Buffer
+	if err := showRun(&shown, runDirFor(runID), runID); err != nil {
+		t.Fatalf("show: %v", err)
+	}
+	if !strings.Contains(shown.String(), "TOTAL COST: $0.6500\n") {
+		t.Fatalf("show must total the corrected costs to $0.6500:\n%s", shown.String())
+	}
+	if !strings.Contains(shown.String(), "0.2500") {
+		t.Fatalf("show must list e2e at its own 0.2500:\n%s", shown.String())
+	}
+
+	plan := coordinator.Plan{Graph: &graph.Graph{Nodes: []graph.Node{{ID: "dev"}, {ID: "e2e"}}}}
+	evidence, err := cycleEvidence(runID, plan, true)
+	if err != nil {
+		t.Fatalf("cycleEvidence: %v", err)
+	}
+	if evidence.RunCostUnknown || !nearlyUSD(evidence.RunCostUSD, 0.65) {
+		t.Fatalf("goal run total = %v (unknown %v), want the corrected 0.65", evidence.RunCostUSD, evidence.RunCostUnknown)
 	}
 }
