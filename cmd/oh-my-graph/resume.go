@@ -164,7 +164,7 @@ func executeResume(flags *resumeFlags, nodeRunner runner.NodeRunner, web browser
 	// gate is named.
 	g, parseErr := graph.Parse(snap.Graph)
 	if parseErr != nil {
-		return fmt.Errorf("reconstruct graph for run %q: %w", runID, parseErr)
+		return reconstructGraphError(runID, parseErr)
 	}
 	if err := gateDescriptionRefusal(g); err != nil {
 		return fmt.Errorf("resume run %q: %w", runID, err)
@@ -241,7 +241,7 @@ func resumeGateLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner
 func resumeRetryLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner.NodeRunner, web browser.Opener) error {
 	g, err := graph.Parse(snap.Graph)
 	if err != nil {
-		return fmt.Errorf("reconstruct graph for run %q: %w", flags.runID, err)
+		return reconstructGraphError(flags.runID, err)
 	}
 	retained, cleared := partitionForRetry(g, snap)
 	banner := fmt.Sprintf("Resuming run %q (retrying failed nodes: %s)", flags.runID, strings.Join(cleared, ", "))
@@ -374,7 +374,7 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 
 	g, err := graph.Parse(snap.Graph)
 	if err != nil {
-		return fmt.Errorf("reconstruct graph for run %q: %w", runID, err)
+		return reconstructGraphError(runID, err)
 	}
 	// A resumed leg does not take an auto graph's success_check.verify from
 	// disk (ADR 0016 §4). graph.Parse re-parses whatever the run directory
@@ -1069,6 +1069,20 @@ func decisionVerb(d gate.Decision) string {
 		return "approved"
 	}
 	return "rejected"
+}
+
+// reconstructGraphError is the one refusal for a snapshot whose graph does not
+// parse, shared by every resume mode. A snapshot taken before #402 may give
+// one parent two handoff: session children; resume refuses it like any other
+// invalid graph — a snapshot gets no exemption — but no edit to the run
+// directory could make it resumable, so that one refusal also says to start
+// a new run with a fixed graph.
+func reconstructGraphError(runID string, err error) error {
+	var siblings *graph.SessionSiblingsError
+	if errors.As(err, &siblings) {
+		return fmt.Errorf("reconstruct graph for run %q: %w\nrun %q cannot be resumed: its graph gives one parent two handoff: session children; start a new run with a fixed graph (handoff: artifact on all but one child, or chain them)", runID, err, runID)
+	}
+	return fmt.Errorf("reconstruct graph for run %q: %w", runID, err)
 }
 
 // warnIfGraphSourceChanged prints a stderr warning when snap.GraphSourcePath

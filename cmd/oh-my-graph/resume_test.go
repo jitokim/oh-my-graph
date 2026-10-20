@@ -175,6 +175,51 @@ func TestResume_BothApproveAndRejectIsRejected(t *testing.T) {
 
 // --- resuming a run that never paused ----------------------------------------
 
+// TestResume_SessionSiblingsSnapshotSaysStartANewRun_402: #402 — a run whose
+// snapshot gives one parent two handoff: session children (taken before the
+// rule) is refused in every mode as the parse failure it is, with one more
+// line saying the run cannot be resumed and a new run is needed, before any
+// node runs.
+func TestResume_SessionSiblingsSnapshotSaysStartANewRun_402(t *testing.T) {
+	for _, args := range [][]string{{"--approve", "approve"}, {}, {"--retry-failed"}} {
+		t.Run(strings.Join(append([]string{"resume"}, args...), " "), func(t *testing.T) {
+			isolateRunHome(t)
+			runID, _ := pausedGateFlowRun(t)
+			_, snap := loadRunSnapshot(t, runID)
+			snap.Graph = json.RawMessage(`{"name":"gate-flow","nodes":[
+				{"id":"a","prompt":"a"},
+				{"id":"approve","type":"gate","depends_on":["a"]},
+				{"id":"e2e","prompt":"e2e","depends_on":["a"],"handoff":"session"},
+				{"id":"docs","prompt":"docs","depends_on":["a"],"handoff":"session"}]}`)
+			_, parseErr := graph.Parse(snap.Graph)
+			var siblings *graph.SessionSiblingsError
+			if !errors.As(parseErr, &siblings) {
+				t.Fatalf("fixture graph must fail as session siblings, got %T: %v", parseErr, parseErr)
+			}
+			if err := runstate.Write(filepath.Join(runDirFor(runID), stateFileName), snap); err != nil {
+				t.Fatalf("write state.json: %v", err)
+			}
+
+			fake := runner.NewFakeRunner(nil)
+			var err error
+			captureStdout(t, func() {
+				err = executeResume(parseResumeFlags(t, append([]string{runID}, args...)), fake, nil)
+			})
+			want := "reconstruct graph for run \"" + runID + "\": " + parseErr.Error() +
+				"\nrun \"" + runID + "\" cannot be resumed: its graph gives one parent two handoff: session children; start a new run with a fixed graph (handoff: artifact on all but one child, or chain them)"
+			if err == nil || err.Error() != want {
+				t.Fatalf("got %v, want %q", err, want)
+			}
+			if !errors.As(err, &siblings) {
+				t.Errorf("the refusal no longer wraps the sibling error: %v", err)
+			}
+			if n := len(fake.Invocations()); n != 0 {
+				t.Errorf("%d nodes ran on a session-siblings snapshot, want 0", n)
+			}
+		})
+	}
+}
+
 func TestResume_RunNotPausedErrors(t *testing.T) {
 	isolateRunHome(t)
 	g := mustParse(t, `{"name":"no-gate","nodes":[{"id":"a","prompt":"a"}]}`)
