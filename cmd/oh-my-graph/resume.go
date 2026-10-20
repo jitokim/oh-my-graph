@@ -790,6 +790,9 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// re-executed body nodes stamp round k on their events and records,
 		// and the declarer's remaining budget is max − k (ADR 0010).
 		NodeRounds: nodeRounds,
+		// CarriedRecords hands the scheduler each carried PASS's raw reported
+		// cost, the baseline a session child of it subtracts in this leg (#398).
+		CarriedRecords: records,
 	})
 
 	fmt.Fprintf(os.Stdout, "%s\n\n", banner)

@@ -63,7 +63,7 @@ var falsifiedByADR0032 = []falsified{
 		absolute:  regexp.MustCompile(`as every planned node('s)? (always )?has`),
 		qualifier: optIn,
 		address: "internal/coordinator/coordinator.go:962-965 sets policy.StrictMCPConfig = false " +
-			"under --accept-loaded-user-config, and internal/runner/claude_protocol.go:110-112 " +
+			"under --accept-loaded-user-config, and internal/runner/claude_protocol.go:120-122 " +
 			"emits --strict-mcp-config only when it is true, so such a node's argv carries none",
 		anchors: []string{"if loadedUserConfig {", "if policy.StrictMCPConfig {"},
 	},
@@ -109,7 +109,7 @@ var statedByShippedBehaviour = []stated{
 			regexp.MustCompile(`Either signal alone is noise`),
 			regexp.MustCompile(`scrubHint`),
 		},
-		address: "internal/schedule/scheduler.go:1735-1746 — scrubHint returns the sentence " +
+		address: "internal/schedule/scheduler.go:1757-1768 — scrubHint returns the sentence " +
 			"only for a name that is BOTH in result.ScrubbedFromEnv and contained in the " +
 			"full result.Output, and returns the first such name in childenv's list order",
 		anchors: []string{"func scrubHint(result verify.Result) string {"},
@@ -123,9 +123,9 @@ var statedByShippedBehaviour = []stated{
 			regexp.MustCompile(`branchEvidenceRule`),
 			regexp.MustCompile(`The pattern itself is unchanged`),
 		},
-		address: "internal/coordinator/coordinator.go:2209-2216 — branchEvidenceRule reserves PASS " +
+		address: "internal/coordinator/coordinator.go:2231-2238 — branchEvidenceRule reserves PASS " +
 			"for the assertion holding and nothing a reader would act on differently, and sends " +
-			"anything else into the FAIL branch; internal/coordinator/coordinator.go:2287 — the " +
+			"anything else into the FAIL branch; internal/coordinator/coordinator.go:2309 — the " +
 			"pattern the same paragraph hands out is unchanged, anchored at both ends",
 		anchors: []string{
 			"markdown. Anything the node does need to report goes in the FAIL branch,",

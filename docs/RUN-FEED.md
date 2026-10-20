@@ -180,7 +180,7 @@ runs only — see "Goal cycles" below), `build_evidence` (auto-mode launches onl
 `nodes` (map of node id →
 terminal record: `verdict`, `session_id`, `cost_usd`, `cost_unknown`, `usage`
 (`input_tokens`, `cached_input_tokens`, `output_tokens`,
-`reasoning_output_tokens`), `budget_usd`, `duration`
+`reasoning_output_tokens`), `reported_cost_usd` — see below — `budget_usd`, `duration`
 in nanoseconds, `artifact_path`, `detail`, `judged` — for executions inside a
 feedback loop (ADR 0010) — `round`, the 1-based round ordinal, absent on any
 execution outside one, `verification` — see below — and `gate_description`,
@@ -414,6 +414,21 @@ recorded `cost_usd` accumulates across its rounds (a superseded round's spend
 carries into the record that replaces it), so the per-node figures still sum
 to the run's true total.
 
+`reported_cost_usd` (additive, [#398](https://github.com/jitokim/oh-my-graph/issues/398) —
+no schema bump) is the execution's cost exactly as its CLI reported it, before
+the session-cost correction. For a `handoff: session` node on Claude that
+figure is the **whole resumed session's** running total, so the engine books
+`cost_usd` as this figure minus the `reported_cost_usd` of its session parent's
+last PASS; for every other execution the two are equal. It is written only
+beside a `session_id` and a known USD amount, and is replaced, not summed,
+across feedback rounds. Absent means unknown: the CLI reported no USD, the
+record has no session, or the snapshot was written by an engine that predates
+the field. A session child whose parent's figure is unknown — or whose own
+reported total is below its parent's — is recorded with `cost_unknown: true`
+(never `$0`) and a `detail` note beginning `session-cost correction not
+applied:`; this holds across a `resume`, which reads the parent's figure from
+this file. **Sum `cost_usd`, never `reported_cost_usd`.**
+
 Guarantees:
 
 - The file is written via temp-file + fsync + atomic rename, so a reader
@@ -557,8 +572,8 @@ write leaves its event on the stream and its `⚠` on the progress feed.
 |---|---|---|
 | `run_started` | `phase`, `cost_usd`, `cost_unknown`, `usage`, `engine_version`, `engine_commit`, `engine_modified` *(optional)* | A leg begins. The `engine_*` fields name the build that ran this leg; see "The build on `run_started`" below. With no `phase`, a scheduler leg, before any node launches — this is every `run_started` written before ADR 0023 and every one a `run` or `resume` leg will ever write. When an auto plan commits, this unphased boundary carries the planner call's accounting. With `phase: "planning"`, the leg an `auto` run's PLANNER CALL runs inside, before any graph exists; see "Two `run_started`s per auto run" below. |
 | `node_started` | `node_id`, `session_id`, `compound_shell_rule` *(optional)* | A node (model-CLI node or gate) begins execution. |
-| `node_passed` | `node_id`, `verdict` (`"PASS"`), `cost_usd`, `cost_unknown`, `usage`, `session_id`, `retries`, `detail`, `provenance` *(optional)* | A node reaches a terminal PASS (including an approved gate). `provenance` says **how** — see below. |
-| `node_failed` | `node_id`, `verdict` (`"FAIL"`), `cost_usd`, `cost_unknown`, `usage`, `session_id`, `retries`, `detail` | A node reaches a terminal FAIL (any check, the verifier, its budget, the runner, or a rejected gate). |
+| `node_passed` | `node_id`, `verdict` (`"PASS"`), `cost_usd`, `cost_unknown`, `usage`, `reported_cost_usd` *(optional)*, `session_id`, `retries`, `detail`, `provenance` *(optional)* | A node reaches a terminal PASS (including an approved gate). `provenance` says **how** — see below. |
+| `node_failed` | `node_id`, `verdict` (`"FAIL"`), `cost_usd`, `cost_unknown`, `usage`, `reported_cost_usd` *(optional)*, `session_id`, `retries`, `detail` | A node reaches a terminal FAIL (any check, the verifier, its budget, the runner, or a rejected gate). |
 | `node_retried` | `node_id`, `retries` (1-based retry ordinal), `session_id`, `round`, `cost_usd`, `cost_unknown`, `usage`, `compound_shell_rule` *(optional)* | A retry attempt begins after a failed one — or a feedback arc fires (ADR 0010): the declarer's non-final judgment failure re-arms its loop body, with `round` the 1-based round now beginning, `retries` 0, no `session_id` (the re-run's ids arrive on its own `node_started`s), and a `detail` of the form `feedback round 1/2: re-running impl → review`. That feedback form carries the completed declarer attempt's accounting because no terminal event is emitted for it. |
 | `run_finished` | `outcome` (`"passed"` \| `"failed"` \| `"paused"`), `detail`, `cost_usd`, `cost_unknown`, `usage` *(optional)* | The leg ends — every launch settled. A plan rejected before a graph exists carries the paid planner call's accounting here. A gate pause is `"paused"`, not `"failed"`. A subscription session-limit pause (ADR 0009) is also `"paused"`, distinguished by a `detail` naming the limited node(s) and the CLI's own limit message (an additive field — no schema bump; absent on every other outcome). The limited nodes carry **no** terminal node event: they are un-run, not FAILED, and re-run on `resume --retry-failed`. |
 | `gate_paused` | `node_id` | *(schema 2)* A gate node decided to pause: no new work launches, in-flight siblings drain, and the leg closes with outcome `"paused"`. `node_id` is the gate a resume must decide. |
@@ -612,7 +627,9 @@ may therefore sum these fields over the stream without runtime-specific logic.
 On terminal node events, `retries` is the number of retries that preceded the
 terminal attempt (0 for a first-attempt verdict), `cost_usd` is the node's
 reported spend, `cost_unknown` distinguishes an unreported USD value from a
-free call, `usage` carries input/cached-input/output/reasoning-output token
+free call, `reported_cost_usd` is the raw CLI figure `cost_usd` was derived
+from (the same field, and the same never-sum rule, as in `state.json`),
+`usage` carries input/cached-input/output/reasoning-output token
 counts, `session_id` is the selected runtime's session/thread, and `detail`
 is the same short note the run ledger records (the failure cause on a FAIL;
 the retry/budget note, possibly empty, on a PASS). The producer caps the
