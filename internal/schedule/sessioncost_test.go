@@ -168,6 +168,49 @@ nodes:
 	}
 }
 
+// (f) The node budget is judged on the corrected cost: a child whose own
+// delta is under budget_usd passes even though its cumulative total is over.
+func TestSessionCost_BudgetJudgesTheDelta(t *testing.T) {
+	led := runSessionGraph(t, `
+name: session-budget
+nodes:
+  - { id: dev, prompt: dev }
+  - { id: e2e, prompt: e2e, depends_on: [dev], handoff: session, budget_usd: 0.30 }
+`, runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"dev": pass("s-dev", 0.40),
+		"e2e": pass("s-dev", 0.60), // delta 0.20 <= 0.30 < 0.60 cumulative
+	}))
+
+	e2e := mustRecord(t, led, "e2e")
+	if e2e.Verdict != ledger.VerdictPass || !nearly(e2e.CostUSD, 0.20) {
+		t.Fatalf("e2e = %+v, want a PASS at its own 0.20", e2e)
+	}
+	if !strings.Contains(e2e.Detail, "under budget by $0.1000") {
+		t.Fatalf("e2e detail %q should state the headroom against the delta", e2e.Detail)
+	}
+}
+
+// The budget check still fails a child whose own delta is over budget_usd.
+func TestSessionCost_BudgetStillFailsAnOverspentDelta(t *testing.T) {
+	s, h, led := newHarness(t, runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"dev": pass("s-dev", 0.40),
+		"e2e": pass("s-dev", 0.80), // delta 0.40 > 0.30
+	}), Options{})
+	err := s.Run(context.Background(), mustGraph(t, `
+name: session-budget-over
+nodes:
+  - { id: dev, prompt: dev }
+  - { id: e2e, prompt: e2e, depends_on: [dev], handoff: session, budget_usd: 0.30 }
+`), h, led)
+	if err == nil {
+		t.Fatalf("expected the overspent child to fail the run")
+	}
+	e2e := mustRecord(t, led, "e2e")
+	if e2e.Verdict != ledger.VerdictFail || !strings.Contains(e2e.Detail, "$0.4000 actual") {
+		t.Fatalf("e2e = %+v, want a FAIL naming the delta $0.4000 as actual", e2e)
+	}
+}
+
 // A codex session child is never subtracted: the runner, which knows the
 // runtime, does not flag its figure as cumulative.
 func TestSessionCost_CodexIsNeverSubtracted(t *testing.T) {
@@ -222,5 +265,14 @@ func TestCorrectSessionCost(t *testing.T) {
 				t.Fatalf("note = %q, want %q", out.CostNote, tc.wantNote)
 			}
 		})
+	}
+}
+
+// A native budget kill on a session child whose own spend could not be derived
+// names no invented figure.
+func TestNodeBudgetError_ActualUnknownNamesNoFigure(t *testing.T) {
+	msg := (&NodeBudgetError{NodeID: "e2e", BudgetUSD: 0.30, ActualUnknown: true}).Error()
+	if !strings.Contains(msg, "actual cost unknown") || strings.Contains(msg, "$0.0000 actual") {
+		t.Fatalf("message %q should say the actual cost is unknown, not $0", msg)
 	}
 }

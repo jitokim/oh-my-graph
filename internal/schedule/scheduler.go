@@ -1013,7 +1013,7 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 			// There is nothing to persist and nothing to verify: the run was
 			// interrupted before a result existed (unlike a post-hoc overspend,
 			// which completed and keeps its artifact).
-			verdictErr = &NodeBudgetError{NodeID: node.ID, BudgetUSD: node.BudgetUSD, ActualUSD: outcome.TotalCostUSD}
+			verdictErr = &NodeBudgetError{NodeID: node.ID, BudgetUSD: node.BudgetUSD, ActualUSD: outcome.TotalCostUSD, ActualUnknown: outcome.CostUnknown}
 		} else {
 			// Cheapest predicates first: exit_zero and result_matches are in-memory,
 			// the verification spawns a process. A node that already failed one of

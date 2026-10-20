@@ -152,6 +152,15 @@ type NodeInvocation struct {
 	// node (a resumed run does not re-count the parent session's spend). A
 	// non-positive value adds no flag and leaves the argv unchanged.
 	//
+	// A session child gets the flag unchanged — the node's own budget_usd, not
+	// one adjusted for its parent's spend — because the CLI applies it against
+	// its OWN accounting, not against the total_cost_usd it reports. The CLI's
+	// description of that field (claude 2.1.295) says a resumed session's total
+	// "continues from the total its transcript saved" while "maxBudgetUsd
+	// counts only the spend since this query() call started or last /clear".
+	// That sentence is the whole evidence here: the cumulative figure is what
+	// the scheduler corrects (#398), and the flag needs no correction.
+	//
 	// A plain scalar, deliberately NOT folded into Policy: it bounds spend, not
 	// capability, and the two have no reason to change together.
 	BudgetUSD float64

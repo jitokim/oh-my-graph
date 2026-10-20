@@ -65,9 +65,17 @@ type NodeBudgetError struct {
 	NodeID    string
 	BudgetUSD float64
 	ActualUSD float64
+	// ActualUnknown marks a native kill whose own spend could not be derived:
+	// a session child whose parent's raw cost is unknown (#398). The CLI still
+	// stopped it at budget_usd, so the failure stands without a figure.
+	ActualUnknown bool
 }
 
 func (e *NodeBudgetError) Error() string {
+	if e.ActualUnknown {
+		return fmt.Sprintf("node %q exceeded budget_usd: claude stopped it at $%.4f budgeted; actual cost unknown",
+			e.NodeID, e.BudgetUSD)
+	}
 	return fmt.Sprintf("node %q exceeded budget_usd: $%.4f actual vs $%.4f budgeted (over by $%.4f)",
 		e.NodeID, e.ActualUSD, e.BudgetUSD, e.ActualUSD-e.BudgetUSD)
 }
