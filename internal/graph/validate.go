@@ -127,7 +127,8 @@ func (g *Graph) Validate() error {
 //  4. the depends_on relation is acyclic (DFS three-colour);
 //  5. a session-handoff node has exactly one parent — the session it resumes
 //     (a root has no session to resume; more than one can't be merged) — and
-//     that parent is not a gate, which never records a session at all;
+//     that parent is not a gate, which never records a session at all; and a
+//     parent has at most one session child, since two would share its session;
 //  6. every success_check is judgeable: a compilable result_matches regex, and
 //     a verify that is runnable — a command, a parseable timeout within the
 //     ceiling, a compilable output_matches regex;
