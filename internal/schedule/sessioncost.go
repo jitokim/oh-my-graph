@@ -4,7 +4,9 @@ import (
 	"fmt"
 
 	"github.com/jitokim/oh-my-graph/internal/graph"
+	"github.com/jitokim/oh-my-graph/internal/ledger"
 	"github.com/jitokim/oh-my-graph/internal/runner"
+	"github.com/jitokim/oh-my-graph/internal/runstate"
 )
 
 // Session-cost correction (#398). claude's total_cost_usd is cumulative for the
@@ -38,11 +40,45 @@ func (s *Scheduler) rememberReportedCost(nodeID string, outcome runner.NodeOutco
 	s.reportedCosts[nodeID] = reportedCost{usd: outcome.ReportedCostUSD, unknown: outcome.ReportedCostUnknown}
 }
 
+// carriedReportedCosts seeds a leg's baselines from the records an earlier
+// leg persisted, so a session child that runs after a `resume` subtracts its
+// parent's raw figure exactly as it would have in the parent's own leg. Only
+// a PASS is a baseline, as only recordPass remembers one in-leg. A nil
+// ReportedCostUSD — unknown, or a record from before the field — seeds an
+// unknown baseline rather than none, though correctSessionCost treats the
+// two alike. Never nil.
+func carriedReportedCosts(records map[string]runstate.NodeRecord) map[string]reportedCost {
+	costs := make(map[string]reportedCost, len(records))
+	for id, rec := range records {
+		if rec.Verdict != runstate.VerdictPass {
+			continue
+		}
+		if rec.ReportedCostUSD == nil {
+			costs[id] = reportedCost{unknown: true}
+			continue
+		}
+		costs[id] = reportedCost{usd: *rec.ReportedCostUSD}
+	}
+	return costs
+}
+
+// persistedReportedCost is the raw figure a record carries into state.json
+// and onto its terminal event: nil unless the record has a session — the only
+// thing a later child can resume, and so the only thing that is anyone's
+// baseline — and its CLI reported a USD amount.
+func persistedReportedCost(rec ledger.Record) *float64 {
+	if rec.SessionID == "" || rec.ReportedCostUnknown {
+		return nil
+	}
+	usd := rec.ReportedCostUSD
+	return &usd
+}
+
 // sessionBaseline returns the raw figure of the execution a session-resuming
 // spec continues — its session parent's last pass — and whether this leg
 // holds one. It is read before the spawn, so the baseline is the session as it
-// stood when the child resumed it. A parent that passed in an EARLIER leg has
-// none here.
+// stood when the child resumed it. A parent that passed in an EARLIER leg is
+// here through Options.CarriedRecords.
 func (s *Scheduler) sessionBaseline(node graph.Node, spec runner.NodeInvocation) (reportedCost, bool) {
 	if spec.ResumeSession == "" || len(node.DependsOn) != 1 {
 		return reportedCost{}, false

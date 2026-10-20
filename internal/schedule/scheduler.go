@@ -373,6 +373,14 @@ type Options struct {
 	// declarer's remaining budget is max − k. nil for a fresh run — every
 	// node starts at round 0.
 	NodeRounds map[string]int
+	// CarriedRecords is the node records an earlier leg left in state.json —
+	// nil for a fresh run. The scheduler reads only each PASS record's
+	// ReportedCostUSD, as the baseline a session child launched in THIS leg
+	// subtracts when it resumes that node's session (#398): the figure lived
+	// only in memory on the leg that ran the parent. A record without one
+	// (unknown, or written before the field existed) seeds an unknown
+	// baseline, so such a child records its cost unknown with a note.
+	CarriedRecords map[string]runstate.NodeRecord
 	// OpeningAccounting is accounting completed immediately before this
 	// scheduler leg opened, currently the planner phase of an auto run. It is
 	// attached to run_started so the phase transition is durable in one event.
@@ -527,7 +535,7 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 		newTicker:             newTicker,
 		now:                   now,
 		heartbeats:            map[string]*heartbeat{},
-		reportedCosts:         map[string]reportedCost{},
+		reportedCosts:         carriedReportedCosts(opts.CarriedRecords),
 	}
 }
 
@@ -1412,12 +1420,13 @@ func toNodeRecord(rec ledger.Record, artifactPath string, round int, judged bool
 			InputTokens: rec.Usage.InputTokens, CachedInputTokens: rec.Usage.CachedInputTokens,
 			OutputTokens: rec.Usage.OutputTokens, ReasoningOutputTokens: rec.Usage.ReasoningOutputTokens,
 		},
-		BudgetUSD:    rec.BudgetUSD,
-		Duration:     rec.Duration,
-		ArtifactPath: artifactPath,
-		Detail:       rec.Detail,
-		Round:        round,
-		Judged:       judged,
+		ReportedCostUSD: persistedReportedCost(rec),
+		BudgetUSD:       rec.BudgetUSD,
+		Duration:        rec.Duration,
+		ArtifactPath:    artifactPath,
+		Detail:          rec.Detail,
+		Round:           round,
+		Judged:          judged,
 		// Empty on every FAIL (failRecord sets none), so the two qualifiers
 		// never appear on the same record — see runstate.NodeRecord.
 		Provenance: rec.Provenance,
@@ -1441,10 +1450,11 @@ func terminalEvent(eventType runfeed.EventType, rec ledger.Record, retries, roun
 			InputTokens: rec.Usage.InputTokens, CachedInputTokens: rec.Usage.CachedInputTokens,
 			OutputTokens: rec.Usage.OutputTokens, ReasoningOutputTokens: rec.Usage.ReasoningOutputTokens,
 		},
-		SessionID: rec.SessionID,
-		Retries:   retries,
-		Detail:    rec.Detail,
-		Round:     round,
+		ReportedCostUSD: persistedReportedCost(rec),
+		SessionID:       rec.SessionID,
+		Retries:         retries,
+		Detail:          rec.Detail,
+		Round:           round,
 		// Only a PASS record carries one, so node_failed emits none without
 		// this needing to know which event type it is building.
 		Provenance: rec.Provenance,
