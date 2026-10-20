@@ -202,8 +202,8 @@ func TestPlan_PromptRequiresBranchAssertionInCheckNodes(t *testing.T) {
 // written and a run whose PRs both existed reported FAIL. A pull request is a
 // property of the repository and survives that; a checked-out HEAD is not.
 func TestPlannerPromptAsksForRepositoryStateNotCheckoutState(t *testing.T) {
-	for _, supplied := range []bool{true, false} {
-		prompt := plannerPromptNoMenu(t, "fix the bug and open a PR", supplied)
+	for _, verifyCmd := range []string{"make test", ""} {
+		prompt := plannerPromptNoMenu(t, "fix the bug and open a PR", verifyCmd)
 
 		for _, want := range []string{
 			// remote state first, then the ref — both repository-scoped
@@ -214,7 +214,7 @@ func TestPlannerPromptAsksForRepositoryStateNotCheckoutState(t *testing.T) {
 			"NEVER assert on 'git rev-parse --abbrev-ref HEAD', with or without\n    '-C <path>'",
 		} {
 			if !strings.Contains(prompt, want) {
-				t.Errorf("verify-cmd supplied=%v: prompt lost the repository-state rule: missing %q", supplied, want)
+				t.Errorf("verify-cmd %q: prompt lost the repository-state rule: missing %q", verifyCmd, want)
 			}
 		}
 
@@ -225,7 +225,7 @@ func TestPlannerPromptAsksForRepositoryStateNotCheckoutState(t *testing.T) {
 			"runs 'git rev-parse --abbrev-ref HEAD'",
 		} {
 			if strings.Contains(prompt, gone) {
-				t.Errorf("verify-cmd supplied=%v: prompt still mandates a checkout-scoped assertion: %q", supplied, gone)
+				t.Errorf("verify-cmd %q: prompt still mandates a checkout-scoped assertion: %q", verifyCmd, gone)
 			}
 		}
 	}
@@ -256,8 +256,8 @@ func TestPlannerPromptAsksForRepositoryStateNotCheckoutState(t *testing.T) {
 // ordering — token first, report after — and the caveat clause that keeps the
 // report from climbing above it.
 func TestPlannerPromptReservesTheWholeReplyPinForAssertingNodes(t *testing.T) {
-	for _, supplied := range []bool{true, false} {
-		prompt := plannerPromptNoMenu(t, "audit the corpus and record what you find", supplied)
+	for _, verifyCmd := range []string{"make test", ""} {
+		prompt := plannerPromptNoMenu(t, "audit the corpus and record what you find", verifyCmd)
 
 		for _, want := range []string{
 			// who the pin is for
@@ -280,7 +280,7 @@ func TestPlannerPromptReservesTheWholeReplyPinForAssertingNodes(t *testing.T) {
 			"that is two\n  nodes, never one",
 		} {
 			if !strings.Contains(prompt, want) {
-				t.Errorf("verify-cmd supplied=%v: prompt lost the rule reserving the whole-reply pin for asserting nodes: missing %q", supplied, want)
+				t.Errorf("verify-cmd %q: prompt lost the rule reserving the whole-reply pin for asserting nodes: missing %q", verifyCmd, want)
 			}
 		}
 	}
@@ -289,7 +289,7 @@ func TestPlannerPromptReservesTheWholeReplyPinForAssertingNodes(t *testing.T) {
 	// hands out the whole-reply pattern, and plannedVerdictPatternIn still finds
 	// the real one first (the new prose deliberately spells its counter-example
 	// without the "result_matches" marker, so it cannot be picked up instead).
-	prompt := plannerPromptNoMenu(t, "audit the corpus and record what you find", false)
+	prompt := plannerPromptNoMenu(t, "audit the corpus and record what you find", "")
 	if got := plannedVerdictPatternIn(t, prompt); got != plannedVerdictPattern {
 		t.Errorf("the pattern the planner is handed is no longer the whole-reply pin: %q", got)
 	}
