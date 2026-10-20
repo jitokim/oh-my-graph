@@ -122,7 +122,8 @@ Claude protocol assigned, so the id is published on
 transcript; a resuming node gets `--resume` instead — the two are mutually
 exclusive (`claude --help`, verified 2026-08-02: `--session-id <uuid>`, "must
 be a valid UUID").
-run with `cwd` = node.cwd. JSON envelope → `session_id`, `result`, `total_cost_usd`.
+run with `cwd` = node.cwd. JSON envelope → `session_id`, `result`, `total_cost_usd`
+(cumulative for a resumed session — see "Session-cost correction").
 On a failed run the runner also captures WHY as a one-line
 `NodeOutcome.FailureCause` — the envelope's own error report (`errors` /
 `is_error`), else the stderr tail on a non-zero exit — so the failure detail
@@ -1321,9 +1322,13 @@ non-zero yet still prints a parseable `--output-format json` envelope whose
 `budget_exceeded` — not the generic `nonzero_exit` its exit code alone would
 imply — keeping the retry contract intact (a bare `nonzero_exit` policy never
 re-spends a budget-killed node). The bound is **per `claude -p` invocation**,
-which is exactly one oh-my-graph node: a resumed session does *not* re-count its
-parent's spend (verified empirically), so it fits a per-node budget even under
-`handoff: session`. A natively-killed node persists **no** artifact — the run
+which is exactly one oh-my-graph node: the CLI applies `--max-budget-usd` to the
+spend since this invocation started, not to the session's running total, so it
+fits a per-node budget even under `handoff: session` and the flag is passed
+unadjusted. The `total_cost_usd` the same CLI *reports* is the other way round
+— cumulative for the whole resumed session (#398) — so the post-hoc verdict, and
+the `ActualUSD` a native kill reports, read the session-corrected cost described
+under "Session-cost correction" below, never the raw total. A natively-killed node persists **no** artifact — the run
 was interrupted before a result existed — whereas a post-hoc overspend completed
 and keeps its output; the two failure shapes are deliberately distinct.
 
@@ -1354,6 +1359,39 @@ can estimate — and is **rejected for now**: the installed CLI's `claude --help
 documents no `--max-turns` flag (verified 2026-08-02), so the engine could ship
 only the schema, not the enforcement. See ADR 0007 for the recorded design and
 the revisit condition.
+
+**Session-cost correction (#398).** claude's `total_cost_usd` is cumulative for
+the whole session, so a `handoff: session` node that resumed its parent reports
+the parent's spend as well as its own. Booked as-is, every session child would
+be charged for its ancestors — in its own row, the run total, the ledger, the
+goal total and its `budget_usd` verdict. The scheduler therefore rewrites such
+an outcome, before anything reads its cost, into this execution's own spend:
+
+    recorded = reported(child) − reported(the session parent's last PASS)
+
+so a chain A → B(session) → C(session) books B = rawB − rawA and
+C = rawC − rawB. Whether a figure is cumulative is the runner's answer
+(`NodeOutcome.CostIncludesResumedSession`): it is set for a claude invocation
+that resumed a session, and never for a cold start (a retry or a cold-started
+session child) or for any codex invocation. The correction never guesses: when
+the parent's raw figure is unknown, or the child's reported total is below it,
+the child's cost is recorded **unknown** (`cost_unknown`, never `$0`) and the
+row's `detail` carries a `session-cost correction not applied: …` note. A
+native budget kill whose own spend cannot be derived that way still fails as
+`budget_exceeded`, with the actual cost reported unknown.
+
+The raw figure is persisted beside the corrected one as `reported_cost_usd` on
+each node record in `state.json` and on each terminal node event, so the
+correction survives a `resume` in a new process: `resume` hands the carried
+records to the scheduler (`Options.CarriedRecords`), and each carried PASS
+seeds its node's baseline. A carried PASS with no `reported_cost_usd` — an
+unknown cost, or a record from an engine that predates the field — seeds an
+unknown baseline, so its session child is recorded unknown with the note. The
+key is written only beside a `session_id` and a known USD amount (a record with
+no session is nobody's baseline), is replaced rather than summed across
+feedback rounds (a baseline is the latest execution's figure), and is additive:
+no schema bump, and older snapshots still load. Every total sums `cost_usd`,
+never `reported_cost_usd`; see docs/RUN-FEED.md for the field reference.
 
 ## Success checks — evidence-grounded verification (v1.1)
 `success_check` is a conjunction of predicates, cheapest first, evaluated only
@@ -2213,7 +2251,10 @@ incompatible snapshot is refused rather than misread:
   `recordGateApprove` path every approval takes. Optional and additive too:
   absent on every flag-less `run` and on every `auto`, schema still 3.
 - **per-node completion records**: verdict, **session id**, cost, duration,
-  artifact path. The session id is the one thing resume needs that today exists
+  artifact path. The cost is the session-corrected `cost_usd`; beside a session
+  id and a known USD amount the record also carries `reported_cost_usd`, the raw
+  figure the CLI reported, which a later leg's session child subtracts (#398,
+  see "Session-cost correction"). The session id is the one thing resume needs that today exists
   only in `Handoff.sessions` in memory — without it a `handoff: session` child
   cannot `--resume` its parent on the second leg. The `.out` artifact files stay
   exactly as they are; they remain the `{{ artifacts.<id> }}` target.
@@ -4231,8 +4272,11 @@ in "Auto mode" above.
    crosses the budget (verified on claude 2.1.220 — a parseable JSON envelope
    with `subtype: error_max_budget_usd`, mapped to `BudgetExhausted` and raised
    as the same `budget_exceeded` `*NodeBudgetError`). The kill is **per `claude
-   -p` invocation = one node** (a resumed session does not re-count its parent's
-   spend), so it bounds a runaway node without a fabricated $/minute heuristic.
+   -p` invocation = one node** (the flag counts only the spend since that
+   invocation started, though the reported `total_cost_usd` of a resumed
+   session is cumulative, which the session-cost correction (#398) subtracts
+   before either layer judges it), so it bounds a runaway node without a
+   fabricated $/minute heuristic.
    Still deferred: sub-call cost observation (the one in-flight call past the
    threshold can overshoot, which the post-hoc layer backstops) and any
    cross-node/whole-graph budget — those would need `--output-format

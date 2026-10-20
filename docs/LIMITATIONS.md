@@ -200,6 +200,10 @@ has no open issue behind it.
   overshoot before the abort lands; and each node's cap is independent — there is
   no whole-graph budget. Closing the first needs incremental cost
   (`--output-format stream-json`), a `NodeRunner`-contract change.
+- **The session-cost correction is Claude-only.** A `handoff: session` node is
+  booked at its own spend, not its resumed session's running total, only under
+  the claude runtime; codex reports no USD figure to correct.
+  ([#398](https://github.com/jitokim/oh-my-graph/issues/398))
 - **Codex has token accounting, not USD budgeting.** Under `--runtime codex`,
   USD cost is explicitly unknown and token usage is persisted and printed —
   `parseCodexJSONL` starts every outcome at `CostUnknown: true` and never

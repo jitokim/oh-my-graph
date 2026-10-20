@@ -415,14 +415,19 @@ carries into the record that replaces it), so the per-node figures still sum
 to the run's true total.
 
 `reported_cost_usd` (additive, [#398](https://github.com/jitokim/oh-my-graph/issues/398) —
-no schema bump) is the execution's cost exactly as its CLI reported it. For a
-`handoff: session` node on Claude that figure is the **whole resumed session's**
-running total, so the engine books `cost_usd` as this figure minus its session
-parent's `reported_cost_usd`; elsewhere the two are equal. It is written only
-beside a `session_id` and a known USD amount, and absent means unknown — as in a
-snapshot written before the field existed, whose session children a later
-`resume` therefore records at an unknown cost, with a `detail` note saying why.
-**Sum `cost_usd`, never `reported_cost_usd`.**
+no schema bump) is the execution's cost exactly as its CLI reported it, before
+the session-cost correction. For a `handoff: session` node on Claude that
+figure is the **whole resumed session's** running total, so the engine books
+`cost_usd` as this figure minus the `reported_cost_usd` of its session parent's
+last PASS; for every other execution the two are equal. It is written only
+beside a `session_id` and a known USD amount, and is replaced, not summed,
+across feedback rounds. Absent means unknown: the CLI reported no USD, the
+record has no session, or the snapshot was written by an engine that predates
+the field. A session child whose parent's figure is unknown — or whose own
+reported total is below its parent's — is recorded with `cost_unknown: true`
+(never `$0`) and a `detail` note beginning `session-cost correction not
+applied:`; this holds across a `resume`, which reads the parent's figure from
+this file. **Sum `cost_usd`, never `reported_cost_usd`.**
 
 Guarantees:
 
