@@ -2006,7 +2006,7 @@ func plannerPrompt(goal string, inputKeys []string, verifyCommand string, offere
 		sort.Strings(sorted)
 		keys = strings.Join(sorted, ", ")
 	}
-	paragraph := finalCheckWithoutVerifyCommand
+	paragraph := finalCheckWithoutVerifyCommand()
 	if verifyCommand != "" {
 		paragraph = finalCheckWithVerifyCommand(verifyCommand)
 	}
@@ -2065,13 +2065,23 @@ func plannerPrompt(goal string, inputKeys []string, verifyCommand string, offere
 // reading as a measurement, and §2 is what gathers evidence. This half is a
 // hope, and measurement (a) — plan the same goal with and without this wording
 // and compare what the check node claims — is what decides whether it stays.
-const (
-	finalCheckWithoutVerifyCommand = branchEvidenceRule + `- Nothing in this graph can compile, build or test the code: no build
-  command is available to any node. A check node's prompt must therefore
-  only assert things it can actually observe with the tools it declared,
-  and must never be written as though its PASS meant the code works.
+//
+// The without-command spelling carries the same done-list rule (#399): with
+// no engine run to defer to, a command the goal's done list names is run by
+// the final check node when a planned pattern covers it, and is otherwise a
+// FAIL naming it — never a PASS over a done item nothing ran.
+func finalCheckWithoutVerifyCommand() string {
+	return branchEvidenceRule + `- oh-my-graph runs no build verification of its own in this run: no
+  command was supplied for the ENGINE to execute after the final node, so
+  nothing outside this graph will compile, build or test the code.
+- If the goal's done list names a command ("make test", "go test ./...",
+  "npm test" or similar), there is no engine verification in this mode,
+  so a planned node's run is the only run that command gets — nothing
+  else runs it.` + doneListCommandRule() + `- Beyond that, a check node's prompt must only assert things it can
+  actually observe with the tools it declared, and must never be written
+  as though its PASS meant the code works.
 `
-)
+}
 
 // finalCheckWithVerifyCommand renders the with-command spelling around the
 // verify command's exact text. The text is strconv.Quote'd onto a line of its
@@ -2079,10 +2089,10 @@ const (
 // and its % signs are doubled because the result is still the format string
 // plannerPrompt hands the verdict pattern and the reporting pointer to.
 // The final check node runs a done-list suite only when one of
-// plannedBashPatterns covers it, and otherwise replies FAIL naming it.
+// plannedBashPatterns covers it, and otherwise replies FAIL naming it — the
+// rule doneListCommandRule spells for both paragraphs.
 func finalCheckWithVerifyCommand(command string) string {
 	quoted := strings.ReplaceAll(strconv.Quote(command), "%", "%%")
-	patterns := strings.ReplaceAll(strings.Join(plannedBashPatterns(), ", "), "%", "%%")
 	return `- oh-my-graph itself runs an independent build verification after the final
   node — a command the user supplied at invocation, which the ENGINE
   executes and judges on its exit code. Its exact text is:
@@ -2103,7 +2113,21 @@ func finalCheckWithVerifyCommand(command string) string {
 - If the goal's done list names a whole-suite command ("make local", "make
   test", "make check", "go test ./..." or similar) that is NOT the verify
   command shown above, character for character, the engine's run does not
-  cover it. A planned node can declare only these Bash patterns:
+  cover it.` + doneListCommandRule() + `  If the named command IS that verify command, the same
+  exact text, no node runs it — the engine's run covers it.
+` + branchEvidenceRule
+}
+
+// doneListCommandRule is the done-list half both final-check spellings share
+// (#392, #399): it names plannedBashPatterns — never a retyped list — and says
+// what the final check node does with a done-list command one of them covers
+// and with one none of them does. One spelling, so the paragraphs cannot
+// drift. It opens mid-sentence after the caller's lead-in line and ends with
+// a newline. Its % signs are doubled because both callers' results are still
+// the format string plannerPrompt renders.
+func doneListCommandRule() string {
+	patterns := strings.ReplaceAll(strings.Join(plannedBashPatterns(), ", "), "%", "%%")
+	return ` A planned node can declare only these Bash patterns:
       ` + patterns + `
   If one of them covers it, the FINAL check node runs that command once,
   declares that pattern in its allowed_tools, and its PASS requires that
@@ -2112,9 +2136,7 @@ func finalCheckWithVerifyCommand(command string) string {
   check node does NOT try to: it replies FAIL and states that this done
   item could not be run by any planned node, naming the command. Never a
   PASS over a done item nothing ran.
-  If the named command IS that verify command, the same
-  exact text, no node runs it — the engine's run covers it.
-` + branchEvidenceRule
+`
 }
 
 // plannedBashPatterns is the Bash(...) half of plannedToolAllowlist, in its

@@ -486,8 +486,8 @@ func mustParse(t *testing.T, spec string) *graph.Graph {
 
 // TestPlannerPromptStatesWhoGathersBuildEvidence pins both halves of ADR 0016
 // §5 — that the planner is told the engine verifies independently when a
-// command was supplied, and is told the opposite (nothing here can build) when
-// one was not. Enforcement never depends on the model reading this; a planner
+// command was supplied, and is told the opposite (no engine run builds the
+// code) when one was not. Enforcement never depends on the model reading this; a planner
 // that is not told keeps writing check nodes whose PASS reads as a build
 // verdict, which is #119's own failure shape.
 func TestPlannerPromptStatesWhoGathersBuildEvidence(t *testing.T) {
@@ -503,8 +503,8 @@ func TestPlannerPromptStatesWhoGathersBuildEvidence(t *testing.T) {
 	if strings.Contains(without, "independent build verification") {
 		t.Error("with no --verify-cmd, the planner is told about a verification that will not happen")
 	}
-	if !strings.Contains(without, "Nothing in this graph can compile, build or test the code") {
-		t.Error("with no --verify-cmd, the planner is not told that nothing in the graph can build")
+	if !strings.Contains(without, "oh-my-graph runs no build verification of its own in this run") {
+		t.Error("with no --verify-cmd, the planner is not told that no engine run builds the code")
 	}
 }
 
@@ -598,7 +598,8 @@ func TestPlannerPromptSendsADoneListSuiteANarrowCommandMissesToTheFinalCheck(t *
 // unrunnable case: no planned node may declare a pattern covering "npm test",
 // so the final check node is told to reply FAIL naming the command rather than
 // try it — and the paragraph names the patterns, taken from
-// plannedToolAllowlist, that decide what is covered.
+// plannedToolAllowlist, that decide what is covered. The rule is shared with
+// the no-verify-command spelling (#399), pinned by the tests that follow.
 func TestPlannerPromptFailsADoneListSuiteNoAllowedPatternCovers(t *testing.T) {
 	var patterns []string
 	for _, tool := range plannedToolAllowlist {
@@ -623,9 +624,63 @@ func TestPlannerPromptFailsADoneListSuiteNoAllowedPatternCovers(t *testing.T) {
 		}
 	}
 
-	without := plannerPromptNoMenu(t, "build it; done when npm test passes", "")
-	if strings.Contains(without, "could not be run by any planned node") {
-		t.Error("with no --verify-cmd, the planner prompt carries the done-list FAIL rule")
+}
+
+// TestPlannerPromptWithoutVerifyCommandNamesTheAllowedBashPatterns is #399:
+// with no --verify-cmd the planner is still told exactly which Bash patterns a
+// planned node may declare, rendered from plannedBashPatterns().
+func TestPlannerPromptWithoutVerifyCommandNamesTheAllowedBashPatterns(t *testing.T) {
+	patterns := plannedBashPatterns()
+	if len(patterns) == 0 {
+		t.Fatal("plannedBashPatterns() is empty; the test would prove nothing")
+	}
+	prompt := plannerPromptNoMenu(t, "build it; done when make test passes", "")
+	want := "A planned node can declare only these Bash patterns:\n      " + strings.Join(patterns, ", ") + "\n"
+	if !strings.Contains(prompt, want) {
+		t.Errorf("with no --verify-cmd, the planner prompt lacks %q", want)
+	}
+	if !strings.Contains(prompt, "there is no engine verification in this mode,\n  so a planned node's run is the only run that command gets") {
+		t.Error("with no --verify-cmd, the planner is not told the final check node's run is the only run")
+	}
+}
+
+// TestPlannerPromptWithoutVerifyCommandFailsAnUncoveredDoneListCommand is
+// #399's bug: with no --verify-cmd a done-list "npm test" that no allowed
+// pattern covers was run by nobody and the final check node PASSed anyway.
+// It must reply FAIL naming the command instead.
+func TestPlannerPromptWithoutVerifyCommandFailsAnUncoveredDoneListCommand(t *testing.T) {
+	prompt := plannerPromptNoMenu(t, "build it; done when npm test passes", "")
+	for _, want := range []string{
+		`If none of them covers it — "npm test"`,
+		"check node does NOT try to: it replies FAIL",
+		"could not be run by any planned node, naming the command",
+		"Never a\n  PASS over a done item nothing ran.",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("with no --verify-cmd and a done-list \"npm test\", the planner prompt lacks %q", want)
+		}
+	}
+}
+
+// TestPlannerPromptWithoutVerifyCommandRunsACoveredDoneListCommand is the
+// other half of #399: a done-list "make test" is covered by Bash(make *), so
+// the final check node runs it once and its PASS requires exit 0.
+func TestPlannerPromptWithoutVerifyCommandRunsACoveredDoneListCommand(t *testing.T) {
+	if !plannedToolAllowlistSet["Bash(make *)"] {
+		t.Fatal("Bash(make *) is not an allowed pattern; \"make test\" is no longer a covered example")
+	}
+	prompt := plannerPromptNoMenu(t, "build it; done when make test passes", "")
+	for _, want := range []string{
+		`("make test", "go test ./...",`,
+		"If one of them covers it, the FINAL check node runs that command once,\n  declares that pattern in its allowed_tools",
+		"its PASS requires that\n  command to exit 0",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("with no --verify-cmd and a done-list \"make test\", the planner prompt lacks %q", want)
+		}
+	}
+	if strings.Contains(prompt, "Nothing in this graph can compile, build or test the code") {
+		t.Error("with no --verify-cmd, the planner is still told nothing can build — which contradicts running make test")
 	}
 }
 
