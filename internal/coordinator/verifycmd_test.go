@@ -623,7 +623,6 @@ func TestPlannerPromptFailsADoneListSuiteNoAllowedPatternCovers(t *testing.T) {
 			t.Errorf("with a done-list \"npm test\", the planner prompt lacks %q", want)
 		}
 	}
-
 }
 
 // TestPlannerPromptWithoutVerifyCommandNamesTheAllowedBashPatterns is #399:
