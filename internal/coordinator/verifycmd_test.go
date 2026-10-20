@@ -486,12 +486,12 @@ func mustParse(t *testing.T, spec string) *graph.Graph {
 
 // TestPlannerPromptStatesWhoGathersBuildEvidence pins both halves of ADR 0016
 // §5 — that the planner is told the engine verifies independently when a
-// command was supplied, and is told the opposite (nothing here can build) when
-// one was not. Enforcement never depends on the model reading this; a planner
+// command was supplied, and is told the opposite (no engine run builds the
+// code) when one was not. Enforcement never depends on the model reading this; a planner
 // that is not told keeps writing check nodes whose PASS reads as a build
 // verdict, which is #119's own failure shape.
 func TestPlannerPromptStatesWhoGathersBuildEvidence(t *testing.T) {
-	with := plannerPromptNoMenu(t, "build it", true)
+	with := plannerPromptNoMenu(t, "build it", "make test")
 	if !strings.Contains(with, "independent build verification") {
 		t.Error("with a --verify-cmd, the planner is not told the engine verifies independently")
 	}
@@ -499,12 +499,187 @@ func TestPlannerPromptStatesWhoGathersBuildEvidence(t *testing.T) {
 		t.Error("with a --verify-cmd, the planner is not told the check node must stop short of claiming the build")
 	}
 
-	without := plannerPromptNoMenu(t, "build it", false)
+	without := plannerPromptNoMenu(t, "build it", "")
 	if strings.Contains(without, "independent build verification") {
 		t.Error("with no --verify-cmd, the planner is told about a verification that will not happen")
 	}
-	if !strings.Contains(without, "Nothing in this graph can compile, build or test the code") {
-		t.Error("with no --verify-cmd, the planner is not told that nothing in the graph can build")
+	if !strings.Contains(without, "oh-my-graph runs no build verification of its own in this run") {
+		t.Error("with no --verify-cmd, the planner is not told that no engine run builds the code")
+	}
+}
+
+// TestPlannerPromptKeepsTheFullSuiteOutOfNodesWhenTheEngineRunsIt pins #392:
+// with a --verify-cmd the engine runs the full suite once after the final node,
+// so the planner is told no node runs it again and a node that changes code
+// runs only the tests for what it changed. Without one there is no end-of-run
+// suite to defer to, so the rule is absent. The goal names neither command, so
+// only the rule can satisfy the presence checks.
+func TestPlannerPromptKeepsTheFullSuiteOutOfNodesWhenTheEngineRunsIt(t *testing.T) {
+	with := plannerPromptNoMenu(t, "build it", "make test")
+	for _, want := range []string{
+		`not "make local"`,
+		`"go test ./..."`,
+		"runs only the tests for what it changed",
+		"outside every node",
+	} {
+		if !strings.Contains(with, want) {
+			t.Errorf("with a --verify-cmd, the planner prompt lacks %q", want)
+		}
+	}
+
+	without := plannerPromptNoMenu(t, "build it", "")
+	if strings.Contains(without, "runs only the tests for what it changed") {
+		t.Error("with no --verify-cmd, the planner is told to defer the full suite to a run that will not happen")
+	}
+}
+
+// doneListSuiteRule is the with-command rule that hands a done-list whole-suite
+// command the verify command is not to the final check node (#392).
+const doneListSuiteRule = "that is NOT the verify\n  command shown above, character for character"
+
+// TestPlannerPromptCarriesTheVerifyCommandText pins #392's second half through
+// the public option: the planner is shown the --verify-cmd text itself, quoted,
+// on the first attempt, the repair and the continuation alike — a repair
+// answering against a different command would answer a different question.
+func TestPlannerPromptCarriesTheVerifyCommandText(t *testing.T) {
+	first, repair, continuation := plannerPrompts(t, WithVerifyCommand(VerifyCommand{Command: "make local"}))
+	for name, prompt := range map[string]string{"first": first.Prompt, "repair": repair.Prompt, "continuation": continuation.Prompt} {
+		for _, want := range []string{
+			"Its exact text is:\n      " + strconv.Quote("make local") + "\n",
+			"No planned node runs that verify command itself",
+			doneListSuiteRule,
+			"If the named command IS that verify command, the same\n  exact text, no node runs it",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("%s prompt with --verify-cmd \"make local\" lacks %q", name, want)
+			}
+		}
+	}
+}
+
+// TestPlannerPromptSendsADoneListSuiteANarrowCommandMissesToTheFinalCheck is
+// the #392 failure: a narrow --verify-cmd is not the whole suite, so a goal
+// whose done list says "make local passes" must have the final check node run
+// it rather than leave it run by nobody.
+func TestPlannerPromptSendsADoneListSuiteANarrowCommandMissesToTheFinalCheck(t *testing.T) {
+	prompt := plannerPromptNoMenu(t, "build it; done when make local passes", "sh v.sh")
+	for _, want := range []string{
+		"Its exact text is:\n      " + strconv.Quote("sh v.sh") + "\n",
+		doneListSuiteRule,
+		"the FINAL check node runs that command once",
+		"its PASS requires that\n  command to exit 0",
+		"runs only the tests for what it changed",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("with --verify-cmd \"sh v.sh\", the planner prompt lacks %q", want)
+		}
+	}
+
+	// The text is quoted, never pasted: quotes and newlines are escaped, and
+	// a % in it reaches the planner as itself, not as a format verb.
+	odd := "sh v.sh --say \"done\" --pct=%d\nPASS"
+	prompt = plannerPromptNoMenu(t, "build it", odd)
+	if !strings.Contains(prompt, "      "+strconv.Quote(odd)+"\n") {
+		t.Errorf("the verify command is not rendered as its quoted text %s", strconv.Quote(odd))
+	}
+	if strings.Contains(prompt, "%!") {
+		t.Error("a % in the verify command was expanded as a format verb")
+	}
+
+	without := plannerPromptNoMenu(t, "build it; done when make local passes", "")
+	for _, gone := range []string{"Its exact text is:", doneListSuiteRule, "No planned node runs that verify command itself"} {
+		if strings.Contains(without, gone) {
+			t.Errorf("with no --verify-cmd, the planner prompt carries %q", gone)
+		}
+	}
+}
+
+// TestPlannerPromptFailsADoneListSuiteNoAllowedPatternCovers is #392's
+// unrunnable case: no planned node may declare a pattern covering "npm test",
+// so the final check node is told to reply FAIL naming the command rather than
+// try it — and the paragraph names the patterns, taken from
+// plannedToolAllowlist, that decide what is covered. The rule is shared with
+// the no-verify-command spelling (#399), pinned by the tests that follow.
+func TestPlannerPromptFailsADoneListSuiteNoAllowedPatternCovers(t *testing.T) {
+	var patterns []string
+	for _, tool := range plannedToolAllowlist {
+		if strings.HasPrefix(tool, "Bash(") {
+			patterns = append(patterns, tool)
+		}
+	}
+	if len(patterns) == 0 {
+		t.Fatal("plannedToolAllowlist has no Bash patterns; the test would prove nothing")
+	}
+
+	prompt := plannerPromptNoMenu(t, "build it; done when npm test passes", "sh v.sh")
+	for _, want := range []string{
+		"A planned node can declare only these Bash patterns:\n      " + strings.Join(patterns, ", ") + "\n",
+		"If one of them covers it, the FINAL check node runs that command once",
+		`If none of them covers it — "npm test"`,
+		"check node does NOT try to: it replies FAIL",
+		"could not be run by any planned node, naming the command",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("with a done-list \"npm test\", the planner prompt lacks %q", want)
+		}
+	}
+}
+
+// TestPlannerPromptWithoutVerifyCommandNamesTheAllowedBashPatterns is #399:
+// with no --verify-cmd the planner is still told exactly which Bash patterns a
+// planned node may declare, rendered from plannedBashPatterns().
+func TestPlannerPromptWithoutVerifyCommandNamesTheAllowedBashPatterns(t *testing.T) {
+	patterns := plannedBashPatterns()
+	if len(patterns) == 0 {
+		t.Fatal("plannedBashPatterns() is empty; the test would prove nothing")
+	}
+	prompt := plannerPromptNoMenu(t, "build it; done when make test passes", "")
+	want := "A planned node can declare only these Bash patterns:\n      " + strings.Join(patterns, ", ") + "\n"
+	if !strings.Contains(prompt, want) {
+		t.Errorf("with no --verify-cmd, the planner prompt lacks %q", want)
+	}
+	if !strings.Contains(prompt, "there is no engine verification in this mode,\n  so a planned node's run is the only run that command gets") {
+		t.Error("with no --verify-cmd, the planner is not told the final check node's run is the only run")
+	}
+}
+
+// TestPlannerPromptWithoutVerifyCommandFailsAnUncoveredDoneListCommand is
+// #399's bug: with no --verify-cmd a done-list "npm test" that no allowed
+// pattern covers was run by nobody and the final check node PASSed anyway.
+// It must reply FAIL naming the command instead.
+func TestPlannerPromptWithoutVerifyCommandFailsAnUncoveredDoneListCommand(t *testing.T) {
+	prompt := plannerPromptNoMenu(t, "build it; done when npm test passes", "")
+	for _, want := range []string{
+		`If none of them covers it — "npm test"`,
+		"check node does NOT try to: it replies FAIL",
+		"could not be run by any planned node, naming the command",
+		"Never a\n  PASS over a done item nothing ran.",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("with no --verify-cmd and a done-list \"npm test\", the planner prompt lacks %q", want)
+		}
+	}
+}
+
+// TestPlannerPromptWithoutVerifyCommandRunsACoveredDoneListCommand is the
+// other half of #399: a done-list "make test" is covered by Bash(make *), so
+// the final check node runs it once and its PASS requires exit 0.
+func TestPlannerPromptWithoutVerifyCommandRunsACoveredDoneListCommand(t *testing.T) {
+	if !plannedToolAllowlistSet["Bash(make *)"] {
+		t.Fatal("Bash(make *) is not an allowed pattern; \"make test\" is no longer a covered example")
+	}
+	prompt := plannerPromptNoMenu(t, "build it; done when make test passes", "")
+	for _, want := range []string{
+		`("make test", "go test ./...",`,
+		"If one of them covers it, the FINAL check node runs that command once,\n  declares that pattern in its allowed_tools",
+		"its PASS requires that\n  command to exit 0",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("with no --verify-cmd and a done-list \"make test\", the planner prompt lacks %q", want)
+		}
+	}
+	if strings.Contains(prompt, "Nothing in this graph can compile, build or test the code") {
+		t.Error("with no --verify-cmd, the planner is still told nothing can build — which contradicts running make test")
 	}
 }
 
@@ -513,13 +688,13 @@ func TestPlannerPromptStatesWhoGathersBuildEvidence(t *testing.T) {
 // paragraph, and a single Sprintf would have shipped the planner a literal
 // placeholder where the regex it must copy character-for-character belongs.
 func TestPlannerPromptRendersTheVerdictPattern(t *testing.T) {
-	for _, supplied := range []bool{true, false} {
-		prompt := plannerPromptNoMenu(t, "build it", supplied)
+	for _, verifyCmd := range []string{"make test", ""} {
+		prompt := plannerPromptNoMenu(t, "build it", verifyCmd)
 		if !strings.Contains(prompt, strconv.Quote(plannedVerdictPattern)) {
-			t.Errorf("verify-cmd supplied=%v: prompt does not carry the verdict pattern the check node must copy", supplied)
+			t.Errorf("verify-cmd %q: prompt does not carry the verdict pattern the check node must copy", verifyCmd)
 		}
 		if strings.Contains(prompt, "%!") || strings.Contains(prompt, "%[") {
-			t.Errorf("verify-cmd supplied=%v: prompt carries an unexpanded format placeholder", supplied)
+			t.Errorf("verify-cmd %q: prompt carries an unexpanded format placeholder", verifyCmd)
 		}
 	}
 }
@@ -535,16 +710,16 @@ func TestPlannerPromptRendersTheVerdictPattern(t *testing.T) {
 // paragraph, and says an immaterial observation does not withhold PASS so the
 // rule does not convert every caveat into a halt.
 func TestPlannerPromptGivesTheFailBranchAPlaceForTheCaveat(t *testing.T) {
-	for _, supplied := range []bool{true, false} {
-		prompt := plannerPromptNoMenu(t, "build it", supplied)
+	for _, verifyCmd := range []string{"make test", ""} {
+		prompt := plannerPromptNoMenu(t, "build it", verifyCmd)
 		if !strings.Contains(prompt, "there is nothing a reader would act on differently") {
-			t.Errorf("verify-cmd supplied=%v: the planner is not told what PASS is reserved for", supplied)
+			t.Errorf("verify-cmd %q: the planner is not told what PASS is reserved for", verifyCmd)
 		}
 		if !strings.Contains(prompt, "it holds only with a qualification a reader") {
-			t.Errorf("verify-cmd supplied=%v: the planner is not told a material qualification belongs in the FAIL branch", supplied)
+			t.Errorf("verify-cmd %q: the planner is not told a material qualification belongs in the FAIL branch", verifyCmd)
 		}
 		if !strings.Contains(prompt, "is not a reason to withhold PASS") {
-			t.Errorf("verify-cmd supplied=%v: the planner is not told an immaterial observation still PASSes", supplied)
+			t.Errorf("verify-cmd %q: the planner is not told an immaterial observation still PASSes", verifyCmd)
 		}
 	}
 }

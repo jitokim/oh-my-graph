@@ -591,15 +591,17 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 // instruction for the goal, plus the goal loop's continuation section when a
 // previous cycle left work remaining.
 //
-// verifyCommandSupplied travels through to plannerPrompt because it picks
-// which final-check paragraph the planner is given (ADR 0016 §5), and a repair
-// attempt must be given the same one the first attempt was — a repair that
-// re-planned against the other paragraph would be answering a different
-// question than the one that was refused. offered travels for the same
+// verifyCommand is the --verify-cmd text exactly as the engine will run it,
+// empty when none was supplied. It travels through to plannerPrompt because it
+// picks which final-check paragraph the planner is given (ADR 0016 §5) and,
+// with a command, is quoted into that paragraph; a repair attempt must be
+// given the same paragraph and the same text the first attempt was — a repair
+// that re-planned against another would be answering a different question
+// than the one that was refused. offered travels for the same
 // reason: it is the menu this base shows, and every attempt built from the
 // base is judged against it.
-func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyCommandSupplied bool, offered []ReuseEntry) (string, error) {
-	prompt, err := plannerPrompt(goal, inputKeys, verifyCommandSupplied, offered)
+func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyCommand string, offered []ReuseEntry) (string, error) {
+	prompt, err := plannerPrompt(goal, inputKeys, verifyCommand, offered)
 	if err != nil {
 		return "", err
 	}
@@ -1997,16 +1999,16 @@ var plannerRetryCauses = graph.RetryCauses()
 // directly after the reply shape that describes a node's fields and before the
 // rules (§9.5), and omitted entirely when it is empty. The error is the menu's
 // fence failing to mint a nonce.
-func plannerPrompt(goal string, inputKeys []string, verifyCommandSupplied bool, offered []ReuseEntry) (string, error) {
+func plannerPrompt(goal string, inputKeys []string, verifyCommand string, offered []ReuseEntry) (string, error) {
 	keys := "none"
 	if len(inputKeys) > 0 {
 		sorted := append([]string(nil), inputKeys...)
 		sort.Strings(sorted)
 		keys = strings.Join(sorted, ", ")
 	}
-	paragraph := finalCheckWithoutVerifyCommand
-	if verifyCommandSupplied {
-		paragraph = finalCheckWithVerifyCommand
+	paragraph := finalCheckWithoutVerifyCommand()
+	if verifyCommand != "" {
+		paragraph = finalCheckWithVerifyCommand(verifyCommand)
 	}
 	// Rendered in two steps, not one: the verdict pattern lives inside the
 	// chosen paragraph, and a placeholder substituted INTO a format string is
@@ -2041,29 +2043,113 @@ func plannerPrompt(goal string, inputKeys []string, verifyCommandSupplied bool, 
 // anchored at both ends, so it IS the gate on that node whenever no verify
 // command exists, and a reply carrying anything besides the verdict fails it.
 //
+// The with-command spelling also carries the verify command's exact text and
+// tells the planner (#392): no node runs that command (the engine already
+// does, once, after the final node), a node that changes code runs only the
+// tests for what it changed and never the whole suite, and a whole-suite
+// command the goal's done list names that is NOT the verify command is run
+// once by the final check node, whose PASS then requires it to exit 0. The
+// verify command is not assumed to be the whole suite: a narrow one ("sh
+// v.sh", "go test ./internal/x/...") would otherwise leave a done-list
+// "make local" run by nobody.
+//
+// The match is by exact text and nothing else. A wrapper that runs the suite
+// inside it — "sh v.sh" whose script runs make local — does not match a
+// done-list "make local", so the final check node runs make local and the
+// suite runs twice. That is the safe direction and it is deliberate: the
+// planner cannot see inside the wrapper, and a looser match that guessed
+// wrong would skip a suite nothing then runs. Do not "fix" it into a skip.
+//
 // A prompt is not a mechanism, and this repository has learned that
 // repeatedly: §6's provenance qualifier is what stops a self-report from
 // reading as a measurement, and §2 is what gathers evidence. This half is a
 // hope, and measurement (a) — plan the same goal with and without this wording
 // and compare what the check node claims — is what decides whether it stays.
-const (
-	finalCheckWithoutVerifyCommand = branchEvidenceRule + `- Nothing in this graph can compile, build or test the code: no build
-  command is available to any node. A check node's prompt must therefore
-  only assert things it can actually observe with the tools it declared,
-  and must never be written as though its PASS meant the code works.
+//
+// The without-command spelling carries the same done-list rule (#399): with
+// no engine run to defer to, a command the goal's done list names is run by
+// the final check node when a planned pattern covers it, and is otherwise a
+// FAIL naming it — never a PASS over a done item nothing ran.
+func finalCheckWithoutVerifyCommand() string {
+	return branchEvidenceRule + `- oh-my-graph runs no build verification of its own in this run: no
+  command was supplied for the ENGINE to execute after the final node, so
+  nothing outside this graph will compile, build or test the code.
+- If the goal's done list names a command ("make test", "go test ./...",
+  "npm test" or similar), there is no engine verification in this mode,
+  so a planned node's run is the only run that command gets — nothing
+  else runs it.` + doneListCommandRule() + `- Beyond that, a check node's prompt must only assert things it can
+  actually observe with the tools it declared, and must never be written
+  as though its PASS meant the code works.
 `
+}
 
-	finalCheckWithVerifyCommand = `- oh-my-graph itself runs an independent build verification after the final
+// finalCheckWithVerifyCommand renders the with-command spelling around the
+// verify command's exact text. The text is strconv.Quote'd onto a line of its
+// own, so a command cannot read as prompt prose or close the paragraph early,
+// and its % signs are doubled because the result is still the format string
+// plannerPrompt hands the verdict pattern and the reporting pointer to.
+// The final check node runs a done-list suite only when one of
+// plannedBashPatterns covers it, and otherwise replies FAIL naming it — the
+// rule doneListCommandRule spells for both paragraphs.
+func finalCheckWithVerifyCommand(command string) string {
+	quoted := strings.ReplaceAll(strconv.Quote(command), "%", "%%")
+	return `- oh-my-graph itself runs an independent build verification after the final
   node — a command the user supplied at invocation, which the ENGINE
-  executes and judges on its exit code. It is not a node, it is not in this
-  graph, and no node can run it or influence it. That check is what
-  establishes the code builds.
+  executes and judges on its exit code. Its exact text is:
+      ` + quoted + `
+  It is not a node, it is not in this graph, and no node can run it or
+  influence it. That check is what establishes the code builds.
 - So the final check node must NOT try to prove the code is correct, and
   must not be written as though its verdict covered the build. Keep it to
   what it can observe with the tools it declared, and its PASS is a
   statement about those specific checks and nothing wider.
+- No planned node runs that verify command itself, even when the goal text
+  names it: the engine runs it once after the final node, outside every node.
+- A node that changes code never runs the project's whole suite — that is,
+  not "make local", "make test", "make check", "go test ./..." or similar.
+  It runs only the tests for what it changed (for Go, the changed packages,
+  e.g. "go test ./internal/x/..."), with the matching Bash pattern in its
+  allowed_tools.
+- If the goal's done list names a whole-suite command ("make local", "make
+  test", "make check", "go test ./..." or similar) that is NOT the verify
+  command shown above, character for character, the engine's run does not
+  cover it.` + doneListCommandRule() + `  If the named command IS that verify command, the same
+  exact text, no node runs it — the engine's run covers it.
 ` + branchEvidenceRule
-)
+}
+
+// doneListCommandRule is the done-list half both final-check spellings share
+// (#392, #399): it names plannedBashPatterns — never a retyped list — and says
+// what the final check node does with a done-list command one of them covers
+// and with one none of them does. One spelling, so the paragraphs cannot
+// drift. It opens mid-sentence after the caller's lead-in line and ends with
+// a newline. Its % signs are doubled because both callers' results are still
+// the format string plannerPrompt renders.
+func doneListCommandRule() string {
+	patterns := strings.ReplaceAll(strings.Join(plannedBashPatterns(), ", "), "%", "%%")
+	return ` A planned node can declare only these Bash patterns:
+      ` + patterns + `
+  If one of them covers it, the FINAL check node runs that command once,
+  declares that pattern in its allowed_tools, and its PASS requires that
+  command to exit 0. If none of them covers it — "npm test", "./gradlew
+  test", "pytest" and the like — no planned node can run it, so the final
+  check node does NOT try to: it replies FAIL and states that this done
+  item could not be run by any planned node, naming the command. Never a
+  PASS over a done item nothing ran.
+`
+}
+
+// plannedBashPatterns is the Bash(...) half of plannedToolAllowlist, in its
+// order — the only commands any planned node can run.
+func plannedBashPatterns() []string {
+	var patterns []string
+	for _, tool := range plannedToolAllowlist {
+		if strings.HasPrefix(tool, "Bash(") {
+			patterns = append(patterns, tool)
+		}
+	}
+	return patterns
+}
 
 // branchEvidenceRule is the branch half of the final-check paragraph, shared
 // by both spellings because it is one prompt and the rule does not depend on
