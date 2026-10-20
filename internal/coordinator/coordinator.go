@@ -2078,8 +2078,11 @@ const (
 // own, so a command cannot read as prompt prose or close the paragraph early,
 // and its % signs are doubled because the result is still the format string
 // plannerPrompt hands the verdict pattern and the reporting pointer to.
+// The final check node runs a done-list suite only when one of
+// plannedBashPatterns covers it, and otherwise replies FAIL naming it.
 func finalCheckWithVerifyCommand(command string) string {
 	quoted := strings.ReplaceAll(strconv.Quote(command), "%", "%%")
+	patterns := strings.ReplaceAll(strings.Join(plannedBashPatterns(), ", "), "%", "%%")
 	return `- oh-my-graph itself runs an independent build verification after the final
   node — a command the user supplied at invocation, which the ENGINE
   executes and judges on its exit code. Its exact text is:
@@ -2100,11 +2103,30 @@ func finalCheckWithVerifyCommand(command string) string {
 - If the goal's done list names a whole-suite command ("make local", "make
   test", "make check", "go test ./..." or similar) that is NOT the verify
   command shown above, character for character, the engine's run does not
-  cover it: the FINAL check node runs that command once, declares the
-  matching Bash pattern in its allowed_tools, and its PASS requires that
-  command to exit 0. If the named command IS that verify command, the same
+  cover it. A planned node can declare only these Bash patterns:
+      ` + patterns + `
+  If one of them covers it, the FINAL check node runs that command once,
+  declares that pattern in its allowed_tools, and its PASS requires that
+  command to exit 0. If none of them covers it — "npm test", "./gradlew
+  test", "pytest" and the like — no planned node can run it, so the final
+  check node does NOT try to: it replies FAIL and states that this done
+  item could not be run by any planned node, naming the command. Never a
+  PASS over a done item nothing ran.
+  If the named command IS that verify command, the same
   exact text, no node runs it — the engine's run covers it.
 ` + branchEvidenceRule
+}
+
+// plannedBashPatterns is the Bash(...) half of plannedToolAllowlist, in its
+// order — the only commands any planned node can run.
+func plannedBashPatterns() []string {
+	var patterns []string
+	for _, tool := range plannedToolAllowlist {
+		if strings.HasPrefix(tool, "Bash(") {
+			patterns = append(patterns, tool)
+		}
+	}
+	return patterns
 }
 
 // branchEvidenceRule is the branch half of the final-check paragraph, shared

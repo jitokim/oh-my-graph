@@ -594,6 +594,41 @@ func TestPlannerPromptSendsADoneListSuiteANarrowCommandMissesToTheFinalCheck(t *
 	}
 }
 
+// TestPlannerPromptFailsADoneListSuiteNoAllowedPatternCovers is #392's
+// unrunnable case: no planned node may declare a pattern covering "npm test",
+// so the final check node is told to reply FAIL naming the command rather than
+// try it — and the paragraph names the patterns, taken from
+// plannedToolAllowlist, that decide what is covered.
+func TestPlannerPromptFailsADoneListSuiteNoAllowedPatternCovers(t *testing.T) {
+	var patterns []string
+	for _, tool := range plannedToolAllowlist {
+		if strings.HasPrefix(tool, "Bash(") {
+			patterns = append(patterns, tool)
+		}
+	}
+	if len(patterns) == 0 {
+		t.Fatal("plannedToolAllowlist has no Bash patterns; the test would prove nothing")
+	}
+
+	prompt := plannerPromptNoMenu(t, "build it; done when npm test passes", "sh v.sh")
+	for _, want := range []string{
+		"A planned node can declare only these Bash patterns:\n      " + strings.Join(patterns, ", ") + "\n",
+		"If one of them covers it, the FINAL check node runs that command once",
+		`If none of them covers it — "npm test"`,
+		"check node does NOT try to: it replies FAIL",
+		"could not be run by any planned node, naming the command",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("with a done-list \"npm test\", the planner prompt lacks %q", want)
+		}
+	}
+
+	without := plannerPromptNoMenu(t, "build it; done when npm test passes", "")
+	if strings.Contains(without, "could not be run by any planned node") {
+		t.Error("with no --verify-cmd, the planner prompt carries the done-list FAIL rule")
+	}
+}
+
 // TestPlannerPromptRendersTheVerdictPattern is the regression guard for the
 // two-step render: the verdict pattern lives inside the chosen final-check
 // paragraph, and a single Sprintf would have shipped the planner a literal
