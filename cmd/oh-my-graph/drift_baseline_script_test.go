@@ -155,6 +155,36 @@ func TestDriftBaselineRefusesAMissingPinnedFile(t *testing.T) {
 	r.wantDrift(1, "LOCK DESIGN.md missing")
 }
 
+// macOS's /sbin/sha256sum reports a missing file only on stderr, with nothing
+// on stdout (#395); the script must still name the file as missing.
+func TestDriftBaselineRefusesAMissingPinnedFileWhateverSha256sumPrints(t *testing.T) {
+	r := newDriftRepo(t, driftReqs)
+	r.remove("DESIGN.md")
+	bin := t.TempDir()
+	fake := `#!/bin/sh
+[ "$1" = -c ] || exit 2
+bad=0
+while IFS= read -r entry; do
+	path=${entry#*  }
+	if [ -f "$path" ]; then
+		echo "$path: OK"
+	else
+		echo "sha256sum:  $path: No such file or directory" >&2
+		bad=1
+	fi
+done <"$2"
+exit $bad
+`
+	if err := os.WriteFile(filepath.Join(bin, "sha256sum"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out := r.wantDrift(1, "LOCK DESIGN.md missing")
+	if strings.Contains(out, "unreadable") {
+		t.Errorf("a missing file is not an unreadable lock:\n%s", out)
+	}
+}
+
 func TestDriftBaselineRefusesAnUnpinnedRequirementsFile(t *testing.T) {
 	r := newDriftRepo(t, driftReqs)
 	r.lock("DESIGN.md")

@@ -89,15 +89,35 @@ skip() {
 	return 1
 }
 
-# pinned is true when the lock has an entry for the path $1: a sha256sum line
+# lockpath sets path to the file a lock line $1 pins: a sha256sum line
 # `<hash>  <path>` (text mode) or `<hash> *<path>` (binary mode).
+lockpath() {
+	path=${1#* }
+	path=${path#[ *]}
+}
+
+# pinned is true when the lock has an entry for the path $1.
 pinned() {
 	while IFS= read -r entry || [ -n "$entry" ]; do
-		path=${entry#* }
-		path=${path#[ *]}
+		lockpath "$entry"
 		[ "$path" != "$1" ] || return 0
 	done <"$lock"
 	return 1
+}
+
+# missing prints `LOCK <path> missing` for each well-formed lock line whose
+# file is not a regular file. It is decided here, not from the checker's
+# output: GNU sha256sum reports a missing file on stdout, macOS's only on
+# stderr. A malformed line is left for the checker to call unreadable.
+missing() {
+	while IFS= read -r entry || [ -n "$entry" ]; do
+		hash=${entry%% *}
+		[ "${#hash}" -eq 64 ] || continue
+		case "$hash" in *[!0-9a-fA-F]*) continue ;; esac
+		case "$entry" in "$hash  "?* | "$hash *"?*) ;; *) continue ;; esac
+		lockpath "$entry"
+		[ -f "$path" ] || echo "LOCK $path missing"
+	done <"$lock"
 }
 
 # --- a. HEAD ------------------------------------------------------------------
@@ -140,10 +160,10 @@ else
 	echo "LOCK cannot verify $lock: neither sha256sum nor shasum is installed"
 	exit 1
 fi
-if ! verdict=$(LC_ALL=C sha256check "$lock" 2>/dev/null); then
-	found=$(printf '%s\n' "$verdict" | sed -n \
-		-e 's/^\(.*\): FAILED open or read$/LOCK \1 missing/p' \
-		-e 's/^\(.*\): FAILED$/LOCK \1 changed/p')
+gone=$(missing)
+if ! verdict=$(LC_ALL=C sha256check "$lock" 2>/dev/null) || [ -n "$gone" ]; then
+	changed=$(printf '%s\n' "$verdict" | sed -n 's/^\(.*\): FAILED$/LOCK \1 changed/p')
+	found=$(printf '%s\n%s\n' "$gone" "$changed" | sed '/^$/d')
 	if [ -z "$found" ]; then
 		found="LOCK $lock unreadable — want lines from sha256sum <design> <requirements-file>"
 	fi
