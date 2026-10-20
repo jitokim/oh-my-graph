@@ -462,6 +462,122 @@ nodes:
 	}
 }
 
+// sessionSiblingIssues decodes a graph and returns every issue, so a test can
+// see each refusal rather than only the first Parse returns.
+func sessionSiblingIssues(t *testing.T, yaml string) []error {
+	t.Helper()
+	g, err := decode([]byte(yaml))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return g.Issues()
+}
+
+// TestParse_SessionHandoffSiblingsRejected pins #402: two session children of
+// one parent would both resume — and write — the same session, so every one
+// after the first is refused at load, naming the parent and all the siblings.
+func TestParse_SessionHandoffSiblingsRejected(t *testing.T) {
+	_, err := Parse([]byte(`
+name: session-siblings
+nodes:
+  - { id: dev, prompt: dev }
+  - { id: e2e, prompt: e2e, depends_on: [dev], handoff: session }
+  - { id: docs, prompt: docs, depends_on: [dev], handoff: session }
+`))
+	vErr := asValidationError(t, err)
+	if vErr.NodeID != "docs" {
+		t.Fatalf("error named node %q, want docs", vErr.NodeID)
+	}
+	for _, want := range []string{`"dev"`, `"e2e"`, `"docs"`, "handoff: artifact", "depend on the earlier"} {
+		if !strings.Contains(vErr.Reason, want) {
+			t.Fatalf("reason should contain %s: %q", want, vErr.Reason)
+		}
+	}
+}
+
+// TestParse_SessionHandoffSiblingsIdentifiable pins that the sibling refusal
+// answers errors.As for *SessionSiblingsError through Parse's error — resume
+// keys its start-a-new-run line on it — while it still answers the general
+// *GraphValidationError question, and that another handoff refusal does not.
+func TestParse_SessionHandoffSiblingsIdentifiable(t *testing.T) {
+	_, err := Parse([]byte(`
+name: session-siblings
+nodes:
+  - { id: dev, prompt: dev }
+  - { id: e2e, prompt: e2e, depends_on: [dev], handoff: session }
+  - { id: docs, prompt: docs, depends_on: [dev], handoff: session }
+`))
+	var sibErr *SessionSiblingsError
+	if !errors.As(err, &sibErr) {
+		t.Fatalf("expected *SessionSiblingsError, got %T: %v", err, err)
+	}
+	if vErr := asValidationError(t, err); vErr.NodeID != "docs" {
+		t.Fatalf("error named node %q, want docs", vErr.NodeID)
+	}
+
+	_, err = Parse([]byte(`
+name: fan-in
+nodes:
+  - { id: a, prompt: a }
+  - { id: b, prompt: b }
+  - { id: c, prompt: c, depends_on: [a, b], handoff: session }
+`))
+	asValidationError(t, err)
+	if errors.As(err, &sibErr) {
+		t.Fatalf("a session node with 2 parents is not a sibling error: %v", err)
+	}
+}
+
+func TestParse_SessionHandoffThreeSiblingsRejectedAfterFirst(t *testing.T) {
+	issues := sessionSiblingIssues(t, `
+name: session-triplets
+nodes:
+  - { id: dev, prompt: dev }
+  - { id: one, prompt: one, depends_on: [dev], handoff: session }
+  - { id: two, prompt: two, depends_on: [dev], handoff: session }
+  - { id: three, prompt: three, depends_on: [dev], handoff: session }
+`)
+	var got []string
+	for _, issue := range issues {
+		vErr := asValidationError(t, issue)
+		got = append(got, vErr.NodeID)
+		for _, want := range []string{`"dev"`, `"one"`, `"two"`, `"three"`} {
+			if !strings.Contains(vErr.Reason, want) {
+				t.Fatalf("reason should contain %s: %q", want, vErr.Reason)
+			}
+		}
+	}
+	if !slices.Equal(got, []string{"two", "three"}) {
+		t.Fatalf("issues on %v, want [two three]: %v", got, issues)
+	}
+}
+
+func TestParse_SessionHandoffSessionPlusArtifactSiblingAllowed(t *testing.T) {
+	_, err := Parse([]byte(`
+name: session-and-artifact
+nodes:
+  - { id: dev, prompt: dev }
+  - { id: e2e, prompt: e2e, depends_on: [dev], handoff: session }
+  - { id: docs, prompt: docs, depends_on: [dev], handoff: artifact }
+`))
+	if err != nil {
+		t.Fatalf("one session child plus an artifact sibling should be valid: %v", err)
+	}
+}
+
+func TestParse_SessionHandoffChainAllowed(t *testing.T) {
+	_, err := Parse([]byte(`
+name: session-chain
+nodes:
+  - { id: a, prompt: a }
+  - { id: b, prompt: b, depends_on: [a], handoff: session }
+  - { id: c, prompt: c, depends_on: [b], handoff: session }
+`))
+	if err != nil {
+		t.Fatalf("a session chain should be valid: %v", err)
+	}
+}
+
 func TestParse_VerifyNormalizedAndParsedAtLoad(t *testing.T) {
 	g, err := Parse([]byte(`
 name: verified

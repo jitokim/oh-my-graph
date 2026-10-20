@@ -840,7 +840,10 @@ sha256sum <design> <requirements-file> > <lock-file>
   single session-parent (same cwd/git scope). Use for tight sequential
   continuation (dev→e2e). Validation: a session node must have EXACTLY ONE parent
   — a root node has no session to resume, and a fan-in can't merge sessions;
-  both must use artifact. Rejected at load time. A gate parent is likewise
+  both must use artifact. Rejected at load time. A parent may have at most one
+  `handoff: session` child, also refused at load: two would share one session,
+  so the later one inherits its sibling's conversation, or both write one
+  session file. A gate parent is likewise
   rejected at load (a gate records no session to resume), and `lint` /
   `run --dry-run` warn when a session child's cwd/worktree differs from its
   parent's.

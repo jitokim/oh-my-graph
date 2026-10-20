@@ -57,7 +57,8 @@ let them drift apart.
   result to `~/.oh-my-graph/runs/<run-id>/<node-id>.out` (base overridable via
   `OMG_HOME`); `handoff: session`
   (resuming `--resume <session_id>`) is opt-in and only valid with exactly one
-  session-parent.
+  session-parent, and a parent may have at most one `handoff: session` child
+  (two would share one session).
 - **Never a provider SDK. Never `--bare`. Never `--no-session-persistence`.**
   A node runs as the provider's own CLI subprocess — `claude` or `codex`, one
   runtime for the whole run (ADR 0025) — on whatever login that CLI has saved,

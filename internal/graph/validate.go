@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -72,6 +73,17 @@ type MisplacedDescriptionError struct{ GraphValidationError }
 // UnresolvedFragmentError's Unwrap gives.
 func (e *MisplacedDescriptionError) Unwrap() error { return &e.GraphValidationError }
 
+// SessionSiblingsError is a second (or later) handoff: session child of one
+// parent (#402): both children would resume, and write, the parent's one
+// session. Its own type so `resume` can recognize a snapshot taken before the
+// rule existed and tell the user that run cannot be resumed at all, not just
+// that its graph is invalid.
+type SessionSiblingsError struct{ GraphValidationError }
+
+// Unwrap exposes the embedded GraphValidationError, for the reason
+// UnresolvedFragmentError's Unwrap gives.
+func (e *SessionSiblingsError) Unwrap() error { return &e.GraphValidationError }
+
 // validTypes and validHandoffs are the closed sets a node's type/handoff may
 // take. Kept as maps so membership is a single lookup and the error message can
 // list the allowed values.
@@ -126,7 +138,8 @@ func (g *Graph) Validate() error {
 //  4. the depends_on relation is acyclic (DFS three-colour);
 //  5. a session-handoff node has exactly one parent — the session it resumes
 //     (a root has no session to resume; more than one can't be merged) — and
-//     that parent is not a gate, which never records a session at all;
+//     that parent is not a gate, which never records a session at all; and a
+//     parent has at most one session child, since two would share its session;
 //  6. every success_check is judgeable: a compilable result_matches regex, and
 //     a verify that is runnable — a command, a parseable timeout within the
 //     ceiling, a compilable output_matches regex;
@@ -710,8 +723,18 @@ func (g *Graph) validateReuseSpliced() []error {
 // at "parent has no recorded session id": exactly the failure load-time
 // validation exists to move earlier. A parent id that names no node at all is
 // tolerated here — validateDependenciesExist already reports it.
+//
+// A parent also has at most one session child (#402): two children resuming
+// one parent's session write the same session, so a sequential sibling
+// inherits — and is billed for — the other's whole conversation, and parallel
+// siblings interleave two branches into one session file. Every session child
+// after the first, in declaration order, is reported, and the reason names
+// all of them. A child already refused above (wrong parent count, gate
+// parent) is not counted, so no node is reported twice.
 func (g *Graph) validateHandoffConstraints() []error {
 	var issues []error
+	var parents []string
+	childrenOf := map[string][]string{}
 	for _, n := range g.Nodes {
 		if n.Handoff != HandoffSession {
 			continue
@@ -734,6 +757,34 @@ func (g *Graph) validateHandoffConstraints() []error {
 					parent.ID,
 				),
 			})
+			continue
+		}
+		parent := n.DependsOn[0]
+		if _, ok := g.byID[parent]; !ok {
+			continue
+		}
+		if _, seen := childrenOf[parent]; !seen {
+			parents = append(parents, parent)
+		}
+		childrenOf[parent] = append(childrenOf[parent], n.ID)
+	}
+	for _, parent := range parents {
+		children := childrenOf[parent]
+		if len(children) < 2 {
+			continue
+		}
+		quoted := make([]string, len(children))
+		for i, id := range children {
+			quoted[i] = strconv.Quote(id)
+		}
+		for _, id := range children[1:] {
+			issues = append(issues, &SessionSiblingsError{GraphValidationError{
+				NodeID: id,
+				Reason: fmt.Sprintf(
+					"handoff: session shares parent %q with another session child — %q has %d session children (%s), and each would resume and write the same session; use handoff: artifact on all but %q, or chain them (make each later child depend on the earlier one, so it continues that child's session instead of %q's)",
+					parent, parent, len(children), strings.Join(quoted, ", "), children[0], parent,
+				),
+			}})
 		}
 	}
 	return issues

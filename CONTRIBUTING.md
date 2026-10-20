@@ -253,8 +253,9 @@ without an explicit, discussed design change should not be merged:
   `internal/browser/exec_test.go`) — if you touch env construction, make sure
   those tests still prove the scrub.
 - **Artifact handoff is the default.** `handoff: session` is opt-in and valid
-  only with exactly one session-parent; don't make session handoff a default or
-  an implicit path.
+  only with exactly one session-parent, and a parent may have at most one
+  `handoff: session` child (two would share one session); don't make session
+  handoff a default or an implicit path.
 - **Never a provider SDK.** A node runs as the provider's own CLI subprocess —
   `claude -p ... --output-format json` or `codex exec --json`, one runtime per
   run (ADR 0025) — on that provider's saved login. Don't introduce an

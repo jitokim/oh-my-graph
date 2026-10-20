@@ -251,6 +251,48 @@ func TestPlan_RepairsAFeedbackPlaceholderRefusal(t *testing.T) {
 	}
 }
 
+// sessionSiblingsSpec gives one parent two handoff: session children, each of
+// which would resume and write the same session. Refused by graph.Parse (a
+// LOAD error, #402), so it is the validator's own wording that gets handed back.
+const sessionSiblingsSpec = `{"name":"siblings","version":"1","nodes":[` +
+	`{"id":"dev","prompt":"implement it","allowed_tools":["Edit"]},` +
+	`{"id":"e2e","depends_on":["dev"],"prompt":"add an e2e test","allowed_tools":["Edit"],"handoff":"session"},` +
+	`{"id":"docs","depends_on":["dev"],"prompt":"document it","allowed_tools":["Edit"],"handoff":"session"}]}`
+
+// Auto mode refuses a planned graph with two session children of one parent
+// and routes it into the repair path, quoting the rule that names the second
+// child, the parent and both children.
+func TestPlan_RepairsTwoSessionChildrenOfOneParent(t *testing.T) {
+	fake, repairPrompt := newRepairFake(
+		runner.NodeOutcome{Result: sessionSiblingsSpec, TotalCostUSD: 0.02},
+		runner.NodeOutcome{Result: validSpec, TotalCostUSD: 0.03},
+	)
+
+	plan, err := New(fake).Plan(context.Background(), "implement, test and document it", nil)
+	if err != nil {
+		t.Fatalf("a load refusal from the planner's own output must be repairable, got: %v", err)
+	}
+	if got := fake.InvocationCount("repair"); got != 1 {
+		t.Fatalf("repair call ran %d times, want exactly 1", got)
+	}
+	if plan.Repaired == nil || len(plan.Repaired.Issues) != 1 {
+		t.Fatalf("Repaired = %+v, want exactly one refusal repaired", plan.Repaired)
+	}
+	issue := plan.Repaired.Issues[0]
+	for _, want := range []string{
+		`node "docs": handoff: session shares parent "dev" with another session child`,
+		`"dev" has 2 session children ("e2e", "docs")`,
+		`use handoff: artifact on all but "e2e"`,
+	} {
+		if !strings.Contains(issue, want) {
+			t.Errorf("Repaired.Issues[0] = %q, want it to contain %q", issue, want)
+		}
+		if !strings.Contains(repairPrompt.Prompt, want) {
+			t.Errorf("the repair prompt does not carry %q", want)
+		}
+	}
+}
+
 // Faults the reply's CONTENT did not cause buy nothing: re-running cannot
 // repair a spawn failure, a non-zero exit or a reply with no JSON in it, so
 // paying twice for them is pure loss (ADR 0010's judgment-vs-infrastructure
