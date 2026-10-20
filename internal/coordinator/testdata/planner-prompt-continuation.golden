@@ -32,8 +32,16 @@ Rules:
   prompt (it resolves to a file path; append " | inline" inside the braces to
   inline the content instead).
 - "handoff" is "artifact" unless a node should continue its single parent's
-  claude session, then "session". A "session" node must have exactly one
-  parent.
+  claude session, then "session". When a node continues the SAME work its
+  single parent just did — it edits the same files, or adds the tests or
+  docs for the code its parent just wrote — set "handoff": "session" so it
+  keeps the parent's context: a fresh session re-reads everything, which
+  costs time and money. Keep "artifact" for a node that reviews, checks or
+  judges another node's work, so it judges with fresh eyes. Keep
+  "artifact" for a root node and for a node with more than one parent.
+  Keep "artifact" for every node inside a feedback loop — the rerun
+  target, the reviewer, and anything between them. A "session" node must
+  have exactly one parent.
 - Every node MUST set allowed_tools to a non-empty list drawn ONLY from this
   exact set: Read, Glob, Grep, Edit, Write, Bash(git *), Bash(go *), Bash(make *), Bash(ls *), Bash(cat *), Bash(grep *), Bash(gh pr *)
   Pick just the tools that node needs (least privilege). Any tool outside
