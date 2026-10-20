@@ -226,7 +226,21 @@ Rules:
   When the goal needs BOTH the report and the assertion, that is two
   nodes, never one: the node that does the work and reports it, then a
   check node depending on it that asserts and carries the whole-reply pin.
-- Nothing in this graph can compile, build or test the code: no build
-  command is available to any node. A check node's prompt must therefore
-  only assert things it can actually observe with the tools it declared,
-  and must never be written as though its PASS meant the code works.
+- oh-my-graph runs no build verification of its own in this run: no
+  command was supplied for the ENGINE to execute after the final node, so
+  nothing outside this graph will compile, build or test the code.
+- If the goal's done list names a command ("make test", "go test ./...",
+  "npm test" or similar), there is no engine verification in this mode,
+  so a planned node's run is the only run that command gets — nothing
+  else runs it. A planned node can declare only these Bash patterns:
+      Bash(git *), Bash(go *), Bash(make *), Bash(ls *), Bash(cat *), Bash(grep *), Bash(gh pr *)
+  If one of them covers it, the FINAL check node runs that command once,
+  declares that pattern in its allowed_tools, and its PASS requires that
+  command to exit 0. If none of them covers it — "npm test", "./gradlew
+  test", "pytest" and the like — no planned node can run it, so the final
+  check node does NOT try to: it replies FAIL and states that this done
+  item could not be run by any planned node, naming the command. Never a
+  PASS over a done item nothing ran.
+- Beyond that, a check node's prompt must only assert things it can
+  actually observe with the tools it declared, and must never be written
+  as though its PASS meant the code works.
