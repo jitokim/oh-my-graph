@@ -508,6 +508,31 @@ func TestPlannerPromptStatesWhoGathersBuildEvidence(t *testing.T) {
 	}
 }
 
+// TestPlannerPromptKeepsTheFullSuiteOutOfNodesWhenTheEngineRunsIt pins #392:
+// with a --verify-cmd the engine runs the full suite once after the final node,
+// so the planner is told no node runs it again and a node that changes code
+// runs only the tests for what it changed. Without one there is no end-of-run
+// suite to defer to, so the rule is absent. The goal names neither command, so
+// only the rule can satisfy the presence checks.
+func TestPlannerPromptKeepsTheFullSuiteOutOfNodesWhenTheEngineRunsIt(t *testing.T) {
+	with := plannerPromptNoMenu(t, "build it", true)
+	for _, want := range []string{
+		`not "make local"`,
+		`"go test ./..."`,
+		"runs only the tests for what it changed",
+		"outside every node",
+	} {
+		if !strings.Contains(with, want) {
+			t.Errorf("with a --verify-cmd, the planner prompt lacks %q", want)
+		}
+	}
+
+	without := plannerPromptNoMenu(t, "build it", false)
+	if strings.Contains(without, "runs only the tests for what it changed") {
+		t.Error("with no --verify-cmd, the planner is told to defer the full suite to a run that will not happen")
+	}
+}
+
 // TestPlannerPromptRendersTheVerdictPattern is the regression guard for the
 // two-step render: the verdict pattern lives inside the chosen final-check
 // paragraph, and a single Sprintf would have shipped the planner a literal

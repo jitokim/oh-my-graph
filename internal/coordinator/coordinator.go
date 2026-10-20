@@ -2041,6 +2041,11 @@ func plannerPrompt(goal string, inputKeys []string, verifyCommandSupplied bool, 
 // anchored at both ends, so it IS the gate on that node whenever no verify
 // command exists, and a reply carrying anything besides the verdict fails it.
 //
+// The with-command spelling also tells every planned node not to run the
+// whole suite or the verify command itself, only the tests for what it
+// changed (#392): the engine already runs the full suite once, after the
+// final node, so a node repeating it pays for the same run twice.
+//
 // A prompt is not a mechanism, and this repository has learned that
 // repeatedly: §6's provenance qualifier is what stops a self-report from
 // reading as a measurement, and §2 is what gathers evidence. This half is a
@@ -2062,6 +2067,14 @@ const (
   must not be written as though its verdict covered the build. Keep it to
   what it can observe with the tools it declared, and its PASS is a
   statement about those specific checks and nothing wider.
+- Because the engine runs that command once after the final node, no
+  planned node runs the project's whole suite or that command itself —
+  not "make local", "make test", "make check", "go test ./...", nor the
+  verify command's own text — even when the goal text names it: the full
+  run already happens once, at the end, outside every node. A node that
+  changes code runs only the tests for what it changed (for Go, the
+  changed packages, e.g. "go test ./internal/x/..."), with the matching
+  Bash pattern in its allowed_tools.
 ` + branchEvidenceRule
 )
 
