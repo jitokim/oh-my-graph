@@ -73,6 +73,17 @@ type MisplacedDescriptionError struct{ GraphValidationError }
 // UnresolvedFragmentError's Unwrap gives.
 func (e *MisplacedDescriptionError) Unwrap() error { return &e.GraphValidationError }
 
+// SessionSiblingsError is a second (or later) handoff: session child of one
+// parent (#402): both children would resume, and write, the parent's one
+// session. Its own type so `resume` can recognize a snapshot taken before the
+// rule existed and tell the user that run cannot be resumed at all, not just
+// that its graph is invalid.
+type SessionSiblingsError struct{ GraphValidationError }
+
+// Unwrap exposes the embedded GraphValidationError, for the reason
+// UnresolvedFragmentError's Unwrap gives.
+func (e *SessionSiblingsError) Unwrap() error { return &e.GraphValidationError }
+
 // validTypes and validHandoffs are the closed sets a node's type/handoff may
 // take. Kept as maps so membership is a single lookup and the error message can
 // list the allowed values.
@@ -767,13 +778,13 @@ func (g *Graph) validateHandoffConstraints() []error {
 			quoted[i] = strconv.Quote(id)
 		}
 		for _, id := range children[1:] {
-			issues = append(issues, &GraphValidationError{
+			issues = append(issues, &SessionSiblingsError{GraphValidationError{
 				NodeID: id,
 				Reason: fmt.Sprintf(
 					"handoff: session shares parent %q with another session child — %q has %d session children (%s), and each would resume and write the same session; use handoff: artifact on all but %q, or chain them (make each later child depend on the earlier one, so it continues that child's session instead of %q's)",
 					parent, parent, len(children), strings.Join(quoted, ", "), children[0], parent,
 				),
-			})
+			}})
 		}
 	}
 	return issues

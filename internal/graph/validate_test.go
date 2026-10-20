@@ -495,6 +495,39 @@ nodes:
 	}
 }
 
+// TestParse_SessionHandoffSiblingsIdentifiable pins that the sibling refusal
+// answers errors.As for *SessionSiblingsError through Parse's error — resume
+// keys its start-a-new-run line on it — while it still answers the general
+// *GraphValidationError question, and that another handoff refusal does not.
+func TestParse_SessionHandoffSiblingsIdentifiable(t *testing.T) {
+	_, err := Parse([]byte(`
+name: session-siblings
+nodes:
+  - { id: dev, prompt: dev }
+  - { id: e2e, prompt: e2e, depends_on: [dev], handoff: session }
+  - { id: docs, prompt: docs, depends_on: [dev], handoff: session }
+`))
+	var sibErr *SessionSiblingsError
+	if !errors.As(err, &sibErr) {
+		t.Fatalf("expected *SessionSiblingsError, got %T: %v", err, err)
+	}
+	if vErr := asValidationError(t, err); vErr.NodeID != "docs" {
+		t.Fatalf("error named node %q, want docs", vErr.NodeID)
+	}
+
+	_, err = Parse([]byte(`
+name: fan-in
+nodes:
+  - { id: a, prompt: a }
+  - { id: b, prompt: b }
+  - { id: c, prompt: c, depends_on: [a, b], handoff: session }
+`))
+	asValidationError(t, err)
+	if errors.As(err, &sibErr) {
+		t.Fatalf("a session node with 2 parents is not a sibling error: %v", err)
+	}
+}
+
 func TestParse_SessionHandoffThreeSiblingsRejectedAfterFirst(t *testing.T) {
 	issues := sessionSiblingIssues(t, `
 name: session-triplets
