@@ -48,10 +48,13 @@ func (f *FakeRunner) SetRuntime(runtime Runtime) {
 // real protocol for the fake's runtime, so a scripted run records the rule
 // exactly when the production argv would carry it (#380).
 func (f *FakeRunner) AppendsCompoundShellRule(spec NodeInvocation) bool {
+	return protocolFor(f.currentRuntime()).appendsCompoundShellRule(spec)
+}
+
+func (f *FakeRunner) currentRuntime() Runtime {
 	f.mu.Lock()
-	runtime := f.runtime
-	f.mu.Unlock()
-	return protocolFor(runtime).appendsCompoundShellRule(spec)
+	defer f.mu.Unlock()
+	return f.runtime
 }
 
 // NewFakeRunner builds a FakeRunner from a scripted outcome map. The map is
@@ -135,6 +138,10 @@ func (f *FakeRunner) Run(ctx context.Context, spec NodeInvocation) (NodeOutcome,
 	if !ok {
 		return NodeOutcome{}, fmt.Errorf("fake runner: no scripted outcome for node %q", key)
 	}
+	// Answered by the real protocol for the fake's runtime, as CLIRunner.Run
+	// does, so a scripted claude session child reports a cumulative total and
+	// a scripted codex one never does (#398).
+	outcome.CostIncludesResumedSession = protocolFor(f.currentRuntime()).costIncludesResumedSession(spec)
 	startedID := outcome.SessionID
 	if spec.ResumeSession != "" {
 		startedID = spec.ResumeSession

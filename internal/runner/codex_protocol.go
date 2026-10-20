@@ -18,6 +18,10 @@ func (codexProtocol) binary() string   { return defaultCodexBinary }
 // of, and codex's argv never carries it (#380).
 func (codexProtocol) appendsCompoundShellRule(NodeInvocation) bool { return false }
 
+// costIncludesResumedSession is always false: codex reports no USD total at
+// all (CostUnknown), so there is no figure for the scheduler to correct.
+func (codexProtocol) costIncludesResumedSession(NodeInvocation) bool { return false }
+
 func (codexProtocol) prepareSession(_ *NodeInvocation) string {
 	return ""
 }

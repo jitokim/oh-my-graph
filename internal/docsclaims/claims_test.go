@@ -63,7 +63,7 @@ var falsifiedByADR0032 = []falsified{
 		absolute:  regexp.MustCompile(`as every planned node('s)? (always )?has`),
 		qualifier: optIn,
 		address: "internal/coordinator/coordinator.go:960-963 sets policy.StrictMCPConfig = false " +
-			"under --accept-loaded-user-config, and internal/runner/claude_protocol.go:110-112 " +
+			"under --accept-loaded-user-config, and internal/runner/claude_protocol.go:120-122 " +
 			"emits --strict-mcp-config only when it is true, so such a node's argv carries none",
 		anchors: []string{"if loadedUserConfig {", "if policy.StrictMCPConfig {"},
 	},
@@ -109,7 +109,7 @@ var statedByShippedBehaviour = []stated{
 			regexp.MustCompile(`Either signal alone is noise`),
 			regexp.MustCompile(`scrubHint`),
 		},
-		address: "internal/schedule/scheduler.go:1735-1746 — scrubHint returns the sentence " +
+		address: "internal/schedule/scheduler.go:1747-1758 — scrubHint returns the sentence " +
 			"only for a name that is BOTH in result.ScrubbedFromEnv and contained in the " +
 			"full result.Output, and returns the first such name in childenv's list order",
 		anchors: []string{"func scrubHint(result verify.Result) string {"},

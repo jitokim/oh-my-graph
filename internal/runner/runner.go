@@ -176,8 +176,26 @@ type NodeOutcome struct {
 	// CostUnknown distinguishes a runtime that reports no USD total from a
 	// genuinely free invocation. Codex reports token usage instead.
 	CostUnknown bool
-	Usage       TokenUsage
-	ExitCode    int
+	// CostIncludesResumedSession is true when TotalCostUSD, as the CLI
+	// reported it, counts the spend of the session this invocation resumed:
+	// claude's total_cost_usd is cumulative for the whole session (#398). The
+	// runner sets it, because only the runner knows its runtime — it is false
+	// for every cold start and for every codex invocation — and the scheduler
+	// subtracts the resumed execution's figure only when it is set.
+	CostIncludesResumedSession bool
+	// ReportedCostUSD and ReportedCostUnknown are TotalCostUSD and CostUnknown
+	// exactly as the CLI reported them, before the scheduler's session-cost
+	// correction rewrote those two into this execution's own spend. The
+	// scheduler fills them for every execution it runs (a runner leaves them
+	// zero); a session child's baseline is its parent's ReportedCostUSD.
+	ReportedCostUSD     float64
+	ReportedCostUnknown bool
+	// CostNote, when non-empty, is a one-line note on how the recorded cost
+	// was derived — today only the scheduler's account of a session-cost
+	// correction it could not apply. It is appended to the ledger row's Detail.
+	CostNote string
+	Usage    TokenUsage
+	ExitCode int
 	// FailureCause is a concise single-line explanation of WHY the subprocess
 	// failed, present only when the run actually failed (an error envelope, or
 	// a non-zero exit). CLIRunner fills it from the most informative

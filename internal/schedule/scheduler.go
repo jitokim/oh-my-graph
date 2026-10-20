@@ -453,6 +453,11 @@ type Scheduler struct {
 	// by heartbeatMu: startHeartbeat adds, stopHeartbeat removes and joins.
 	heartbeats  map[string]*heartbeat
 	heartbeatMu sync.Mutex
+	// reportedCosts maps a node id to the raw CLI-reported cost of its last
+	// passed execution in this leg, guarded by reportedCostMu — the baseline a
+	// session child subtracts (sessioncost.go, #398).
+	reportedCosts  map[string]reportedCost
+	reportedCostMu sync.Mutex
 }
 
 // NewScheduler builds a Scheduler bound to a NodeRunner. The runner is the seam:
@@ -522,6 +527,7 @@ func NewScheduler(nodeRunner runner.NodeRunner, opts Options) *Scheduler {
 		newTicker:             newTicker,
 		now:                   now,
 		heartbeats:            map[string]*heartbeat{},
+		reportedCosts:         map[string]reportedCost{},
 	}
 }
 
@@ -942,7 +948,12 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 		spec.SessionStarted = func(sessionID string) {
 			s.emitEvent(runfeed.Event{Type: eventType, NodeID: node.ID, Retries: retryNumber, SessionID: sessionID, Round: s.feedback.roundOf(node.ID), CompoundShellRule: compoundShellRule})
 		}
+		baseline, haveBaseline := s.sessionBaseline(node, spec)
 		outcome, runErr := s.runner.Run(ctx, spec)
+		// Before anything reads the cost — the budget kill below, the post-hoc
+		// budget verdict, every record — so all of them see this execution's
+		// own spend rather than its resumed session's running total (#398).
+		correctSessionCost(&outcome, baseline, haveBaseline)
 		if runErr != nil {
 			// A context kill (the node's own timeout, a halt's cancellation,
 			// Ctrl-C) ends the subprocess before it prints the JSON envelope
@@ -1182,6 +1193,7 @@ func (s *Scheduler) recordPass(led *ledger.RunLedger, h *handoff.Handoff, node g
 		s.settleProgress(node.ID, "✓ %s  %s  $%.4f  %s\n", node.ID, ledger.VerdictPass, outcome.TotalCostUSD, duration.Round(time.Millisecond))
 	}
 	s.dropFailedReply(h, node)
+	s.rememberReportedCost(node.ID, outcome)
 	rec := passRecord(node, outcome, duration, attempt, coldStart)
 	appendRoundNote(&rec, s.feedback.roundNote(node.ID))
 	led.Record(rec)
@@ -2022,10 +2034,12 @@ func passRecord(node graph.Node, outcome runner.NodeOutcome, duration time.Durat
 			InputTokens: outcome.Usage.InputTokens, CachedInputTokens: outcome.Usage.CachedInputTokens,
 			OutputTokens: outcome.Usage.OutputTokens, ReasoningOutputTokens: outcome.Usage.ReasoningOutputTokens,
 		},
-		BudgetUSD:  node.BudgetUSD,
-		Verdict:    ledger.VerdictPass,
-		Duration:   duration,
-		Provenance: passProvenance(node),
+		ReportedCostUSD:     outcome.ReportedCostUSD,
+		ReportedCostUnknown: outcome.ReportedCostUnknown,
+		BudgetUSD:           node.BudgetUSD,
+		Verdict:             ledger.VerdictPass,
+		Duration:            duration,
+		Provenance:          passProvenance(node),
 	}
 
 	var notes []string
@@ -2039,6 +2053,9 @@ func passRecord(node graph.Node, outcome runner.NodeOutcome, duration time.Durat
 	// surfaces reading this Detail would otherwise never show.
 	if (attempt > 0 || coldStart) && node.Handoff == graph.HandoffSession {
 		notes = append(notes, "retry started fresh — parent session not resumed")
+	}
+	if outcome.CostNote != "" {
+		notes = append(notes, outcome.CostNote)
 	}
 	// A passing node is by definition within budget, so the delta is <= 0 here;
 	// reporting the headroom is what makes "ran at 99% of budget" visible in the
@@ -2060,9 +2077,11 @@ func failRecord(node graph.Node, outcome runner.NodeOutcome, duration time.Durat
 			InputTokens: outcome.Usage.InputTokens, CachedInputTokens: outcome.Usage.CachedInputTokens,
 			OutputTokens: outcome.Usage.OutputTokens, ReasoningOutputTokens: outcome.Usage.ReasoningOutputTokens,
 		},
-		BudgetUSD: node.BudgetUSD,
-		Verdict:   ledger.VerdictFail,
-		Duration:  duration,
+		ReportedCostUSD:     outcome.ReportedCostUSD,
+		ReportedCostUnknown: outcome.ReportedCostUnknown,
+		BudgetUSD:           node.BudgetUSD,
+		Verdict:             ledger.VerdictFail,
+		Duration:            duration,
 		// A *NodeBudgetError already spells out budgeted-vs-actual and the
 		// overage, so the failing path needs no separate budget note. This is
 		// the point where a cause becomes a Detail, so the shared bound is
@@ -2081,6 +2100,11 @@ func failRecord(node graph.Node, outcome runner.NodeOutcome, duration time.Durat
 	var checkErr *NodeCheckError
 	if errors.As(cause, &checkErr) {
 		rec.Detail += checkErr.ScrubHint
+	}
+	// After the cap for the same reason: the note explains the row's cost, and
+	// must not be what the cut keeps in place of the cause.
+	if outcome.CostNote != "" {
+		rec.Detail += "; " + outcome.CostNote
 	}
 	return rec
 }
