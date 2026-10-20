@@ -204,6 +204,13 @@ has no open issue behind it.
   booked at its own spend, not its resumed session's running total, only under
   the claude runtime; codex reports no USD figure to correct.
   ([#398](https://github.com/jitokim/oh-my-graph/issues/398))
+- **Sibling session children over-count each other.** When one node has two or
+  more `handoff: session` children, they resume the same claude session, so a
+  later sibling's reported total already includes the earlier sibling's spend.
+  The correction subtracts only the session parent's total, so that later
+  sibling — and the run total — is over-counted by its earlier sibling's spend,
+  and its `budget_usd` can trip early. It is an over-count, never hidden spend.
+  ([#402](https://github.com/jitokim/oh-my-graph/issues/402))
 - **Codex has token accounting, not USD budgeting.** Under `--runtime codex`,
   USD cost is explicitly unknown and token usage is persisted and printed —
   `parseCodexJSONL` starts every outcome at `CostUnknown: true` and never
