@@ -15,10 +15,11 @@ import (
 )
 
 // plannerPromptNoMenu renders the planner prompt with nothing offered, for the
-// tests that pin its other paragraphs.
-func plannerPromptNoMenu(t *testing.T, goal string, verifyCommandSupplied bool) string {
+// tests that pin its other paragraphs. verifyCommand is the --verify-cmd text;
+// empty renders the no-command spelling.
+func plannerPromptNoMenu(t *testing.T, goal string, verifyCommand string) string {
 	t.Helper()
-	prompt, err := plannerPrompt(goal, nil, verifyCommandSupplied, nil)
+	prompt, err := plannerPrompt(goal, nil, verifyCommand, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
