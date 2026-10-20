@@ -151,7 +151,9 @@ when authoring or debugging:
 - **Handoff.** `handoff: artifact` (the default) persists a node's result to
   `~/.oh-my-graph/runs/<run-id>/<node-id>.out` and children interpolate it
   via `{{artifacts.<id>}}`. `handoff: session` resumes the parent's Claude
-  session and is opt-in, valid only with exactly one session-parent.
+  session and is opt-in, valid only with exactly one session-parent, and a
+  parent may have at most one `handoff: session` child (two would share one
+  session).
 - **Worktrees.** `worktree: <name>` on a node runs it in an isolated git
   worktree, so parallel nodes can mutate the same repo without colliding.
 - **Gates.** A gate node pauses the run for human approval; the run exits
