@@ -703,7 +703,7 @@ func TestAssess_LargeSinkLeavesRoomForShortArtifacts(t *testing.T) {
 			t.Errorf("non-sink %s's artifact must render whole", node.ID)
 		}
 	}
-	if got := strings.Count(artifactBlock(captured.Prompt, "check"), "k"); got < maxAssessArtifactMaterial/2 {
+	if got := len(artifactBlock(captured.Prompt, "check")); got < maxAssessArtifactMaterial/2 {
 		t.Errorf("the sink rendered %d bytes, want at least %d", got, maxAssessArtifactMaterial/2)
 	}
 	if strings.Contains(captured.Prompt, "material cap reached") {
@@ -726,7 +726,7 @@ func TestAssess_LargeSinkBesideLargeArtifactsSharesTheBudget(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if got := strings.Count(artifactBlock(captured.Prompt, "check"), "k"); got < maxAssessArtifactMaterial/2 {
+	if got := len(artifactBlock(captured.Prompt, "check")); got < maxAssessArtifactMaterial/2 {
 		t.Errorf("the sink rendered %d bytes, want at least %d", got, maxAssessArtifactMaterial/2)
 	}
 	rendered := 0
@@ -737,6 +737,45 @@ func TestAssess_LargeSinkBesideLargeArtifactsSharesTheBudget(t *testing.T) {
 	}
 	if rendered == 0 {
 		t.Error("no non-sink artifact rendered: the sink took the whole budget")
+	}
+}
+
+// #408: only the sinks' pass-1 priority share is reserved, never their
+// pass-2 extra, so several large sinks after large non-sinks cannot take the
+// whole budget: every sink renders, the evidence of the work still renders
+// beside them, and the total stays in the cap.
+func TestAssess_SeveralLargeSinksLeaveRoomForTheWork(t *testing.T) {
+	fake, captured := newPlannerFake(runner.NodeOutcome{Result: assessMetReply})
+
+	var nodes []NodeEvidence
+	for i := 0; i < 6; i++ {
+		nodes = append(nodes, NodeEvidence{ID: fmt.Sprintf("n%d", i), Verdict: "PASS", Artifact: strings.Repeat("w", 9000)})
+	}
+	for i := 0; i < 3; i++ {
+		nodes = append(nodes, NodeEvidence{ID: fmt.Sprintf("s%d", i), Verdict: "PASS", Artifact: strings.Repeat("k", 9000), Sink: true})
+	}
+	evidence := CycleEvidence{RunID: "r1", Nodes: nodes}
+	material := assessMaterial(evidence, "nonce")
+	if _, err := New(fake).Assess(context.Background(), "goal", evidence); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	rendered := 0
+	for _, node := range nodes[:6] {
+		if strings.Contains(captured.Prompt, "--- artifact of node "+node.ID+" ") {
+			rendered++
+		}
+	}
+	if rendered == 0 {
+		t.Error("no non-sink artifact rendered: the sinks took the whole budget")
+	}
+	for _, node := range nodes[6:] {
+		if !strings.Contains(captured.Prompt, "--- artifact of node "+node.ID+" ") {
+			t.Errorf("sink %s's artifact block was dropped", node.ID)
+		}
+	}
+	if got := artifactFenceBytes(material); got > maxAssessArtifactMaterial {
+		t.Errorf("artifact material totals %d bytes, over the %d cap", got, maxAssessArtifactMaterial)
 	}
 }
 
@@ -814,29 +853,34 @@ func TestAssessMaterial_NoSinksKeepsGraphOrderWaterFilling(t *testing.T) {
 func TestSinkFirstAllowances(t *testing.T) {
 	ten := []int{9000, 9000, 9000, 9000, 9000, 9000, 9000, 9000, 9000, 9000}
 	for _, tc := range []struct {
-		name    string
-		lengths []int
-		sinks   []bool
-		budget  int
-		want    []int
+		name         string
+		lengths      []int
+		sinks        []bool
+		budget       int
+		want         []int
+		wantPriority []int
 	}{
-		{"no sinks is plain water-filling", []int{9000, 4, 9000}, []bool{false, false, false}, 12000, []int{5998, 4, 5998}},
-		{"no sinks and no budget gives nothing", []int{5000}, []bool{false}, 0, []int{0}},
+		{"no sinks is plain water-filling", []int{9000, 4, 9000}, []bool{false, false, false}, 12000, []int{5998, 4, 5998}, []int{0, 0, 0}},
+		{"no sinks and no budget gives nothing", []int{5000}, []bool{false}, 0, []int{0}, []int{0}},
 		{"the last sink gets half first, then shares the rest", ten, []bool{false, false, false, false, false, false, false, false, false, true},
-			12000, []int{2000, 2000, 2000, 2000, 2000, 2000, 2000, 2000, 2000, 8000}},
-		{"sinks share the half evenly, then the rest with the non-sink", []int{9000, 9000, 9000}, []bool{true, false, true}, 12000, []int{5000, 2000, 5000}},
-		{"a short sink leaves the rest to the non-sinks", []int{9000, 100}, []bool{false, true}, 12000, []int{9000, 100}},
+			12000, []int{2000, 2000, 2000, 2000, 2000, 2000, 2000, 2000, 2000, 8000}, []int{0, 0, 0, 0, 0, 0, 0, 0, 0, 6000}},
+		{"sinks share the half evenly, then the rest with the non-sink", []int{9000, 9000, 9000}, []bool{true, false, true}, 12000, []int{5000, 2000, 5000}, []int{3000, 0, 3000}},
+		{"a short sink leaves the rest to the non-sinks", []int{9000, 100}, []bool{false, true}, 12000, []int{9000, 100}, []int{0, 100}},
 		{"sinks past the half are trimmed in order, then share the rest",
 			[]int{6000, 6000, 6000, 6000, 6000, 6000, 6000, 50}, []bool{true, true, true, true, true, true, true, false},
-			12000, []int{4000, 4000, 4000, 2000, 2000, 2000, 2000, 50}},
-		{"sinks over a small budget water-fill half of it", []int{100, 5000, 5000, 300}, []bool{true, true, true, false}, 3000, []int{100, 3400, 2000, 300}},
-		{"one large sink leaves room for a short non-sink", []int{50, 12000}, []bool{false, true}, 12000, []int{50, 11950}},
-		{"one 12 KB sink beside short non-sinks", []int{12000, 1000, 1000, 1000}, []bool{true, false, false, false}, 12000, []int{9000, 1000, 1000, 1000}},
-		{"no artifacts", nil, nil, 12000, []int{}},
+			12000, []int{4000, 4000, 4000, 2000, 2000, 2000, 2000, 50}, []int{2000, 2000, 2000, 0, 0, 0, 0, 0}},
+		{"sinks over a small budget water-fill half of it", []int{100, 5000, 5000, 300}, []bool{true, true, true, false}, 3000, []int{100, 3400, 2000, 300}, []int{100, 1400, 0, 0}},
+		{"one large sink leaves room for a short non-sink", []int{50, 12000}, []bool{false, true}, 12000, []int{50, 11950}, []int{0, 6000}},
+		{"one 12 KB sink beside short non-sinks", []int{12000, 1000, 1000, 1000}, []bool{true, false, false, false}, 12000, []int{9000, 1000, 1000, 1000}, []int{6000, 0, 0, 0}},
+		{"no artifacts", nil, nil, 12000, []int{}, []int{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := sinkFirstAllowances(tc.lengths, tc.sinks, tc.budget); !slices.Equal(got, tc.want) {
-				t.Errorf("sinkFirstAllowances(%v, %v, %d) = %v, want %v", tc.lengths, tc.sinks, tc.budget, got, tc.want)
+			got, priority := sinkFirstAllowances(tc.lengths, tc.sinks, tc.budget)
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("sinkFirstAllowances(%v, %v, %d) allowances = %v, want %v", tc.lengths, tc.sinks, tc.budget, got, tc.want)
+			}
+			if !slices.Equal(priority, tc.wantPriority) {
+				t.Errorf("sinkFirstAllowances(%v, %v, %d) priority = %v, want %v", tc.lengths, tc.sinks, tc.budget, priority, tc.wantPriority)
 			}
 		})
 	}

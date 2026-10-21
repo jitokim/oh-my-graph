@@ -426,37 +426,34 @@ func assessMaterial(evidence CycleEvidence, nonce string) string {
 			sinks = append(sinks, node.Sink)
 		}
 	}
-	allowances := sinkFirstAllowances(lengths, sinks, maxAssessArtifactMaterial-material)
+	allowances, priority := sinkFirstAllowances(lengths, sinks, maxAssessArtifactMaterial-material)
 	reserved := 0
-	for i, allowance := range allowances {
-		if sinks[i] {
-			reserved += allowance
-		}
+	for _, share := range priority {
+		reserved += share
 	}
 	next := 0
 	for _, node := range evidence.Nodes {
 		if node.Artifact == "" {
 			continue
 		}
-		allowance, sink := allowances[next], sinks[next]
+		allowance := allowances[next]
+		reserved -= priority[next]
 		next++
 		// Each allowance was fixed above from every artifact's length in two
 		// passes — the sinks' priority share, at most half the budget, then
 		// the rest across all artifacts (#408) — so a cut does not depend on
 		// where the other artifacts sit in graph order. The floor can promise
 		// more than the budget holds, so the running remainder still bounds
-		// the cut — and a non-sink's cut is also kept out of the budget
-		// reserved for the sinks still to render, so it can never starve a
-		// later sink. An artifact with nothing left is omitted with a line
-		// naming its node, where its block would have been, and rendering
-		// goes on: a later sink can still render, and no dropped node goes
-		// unnamed.
-		bound := maxAssessArtifactMaterial - material
-		if sink {
-			reserved -= allowance
-		} else {
-			bound -= reserved
-		}
+		// the cut, less the pass-1 priority share of the sinks still to
+		// render. Only that pass-1 share is reserved, never a sink's pass-2
+		// extra, so the sinks' reserve stays within half the budget and the
+		// evidence of the work still renders beside them. The reserve bounds
+		// every artifact, sinks included, so neither a non-sink nor an earlier
+		// sink's pass-2 extra can eat a later sink's priority share. An
+		// artifact with nothing left is omitted with a line naming its node,
+		// where its block would have been, and rendering goes on: a later
+		// sink can still render, and no dropped node goes unnamed.
+		bound := maxAssessArtifactMaterial - material - reserved
 		cut := ""
 		if allowance > 0 && bound > 0 {
 			cut = fence.Excerpt(node.Artifact, min(allowance, bound))
@@ -489,8 +486,10 @@ func assessMaterial(evidence CycleEvidence, nonce string) string {
 // one sink, because a DAG always has one; the no-sink path exists only for
 // evidence built without Sink set (older callers, tests), and there pass 1 is
 // empty and this is artifactAllowances over the whole budget. Allowance i
-// belongs to lengths[i], sinks[i], in the caller's order.
-func sinkFirstAllowances(lengths []int, sinks []bool, budget int) []int {
+// and priority i belong to lengths[i], sinks[i], in the caller's order;
+// priority i is sink i's pass-1 share (zero for a non-sink), the part the
+// renderer reserves for a sink until it renders.
+func sinkFirstAllowances(lengths []int, sinks []bool, budget int) (allowances, priority []int) {
 	var sinkLengths []int
 	for i, length := range lengths {
 		if sinks[i] {
@@ -498,7 +497,8 @@ func sinkFirstAllowances(lengths []int, sinks []bool, budget int) []int {
 		}
 	}
 
-	allowances := make([]int, len(lengths))
+	allowances = make([]int, len(lengths))
+	priority = make([]int, len(lengths))
 	if len(sinkLengths) > 0 {
 		share := max(budget*maxSinkPriorityShareNum/maxSinkPriorityShareDen, 0)
 		sinkAllowances := artifactAllowances(sinkLengths, share)
@@ -506,6 +506,7 @@ func sinkFirstAllowances(lengths []int, sinks []bool, budget int) []int {
 		for i := range lengths {
 			if sinks[i] {
 				allowances[i] = min(sinkAllowances[next], share)
+				priority[i] = allowances[i]
 				share -= allowances[i]
 				budget -= allowances[i]
 				next++
@@ -521,7 +522,7 @@ func sinkFirstAllowances(lengths []int, sinks []bool, budget int) []int {
 			allowances[i] += extra
 		}
 	}
-	return allowances
+	return allowances, priority
 }
 
 // artifactAllowances splits the artifact budget across artifacts of the given
