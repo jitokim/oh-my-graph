@@ -30,55 +30,36 @@ list --head <branch> --state open'" (:2203), and only for a goal that "never
 reaches a pull request" to assert the branch ref instead (:2209–2210).
 
 PR #409 (open, unmerged; branch `fix/388-check-node-forbidden-state`) narrows
-that rule. The remote bullet becomes "ONLY when the goal's own nodes push the
-branch and open the pull request, assert what the remote says". The ref bullet
-gains "including any goal that says not to push, not to open or edit a pull
-request, or not to create a remote … Such a check node never asserts remotes,
-pushes or pull-request state." And a scope rule is added: every planned check
-node "asserts only what this run's own nodes produce or change … never asserts
-the ABSENCE of something the goal only forbids creating".
-
-That fixed a real failure: honest runs whose goal said "do not push" failed on
-"not pushed" or "`git remote -v` prints nothing".
+it: "ONLY when the goal's own nodes push the branch and open the pull request,
+assert what the remote says", and for a goal that says not to push, open or
+edit a pull request, or create a remote, "Such a check node never asserts
+remotes, pushes or pull-request state." That fixed honest runs whose goal said
+"do not push" failing on "not pushed" or "`git remote -v` prints nothing".
 
 ### 1.2 What it leaves uncovered
 
-Planned nodes may still hold the tools to change remote state.
+Planned nodes may still hold the tools to change remote state:
 `plannedToolAllowlist` (`internal/coordinator/coordinator.go:71–74`) contains
 both `Bash(git *)` and `Bash(gh pr *)` (:73), enforced by
-`validatePlannedNodeTools` (:1825). A planned node can therefore run
-`git push`, `git remote add`, `gh pr create` or `gh pr edit`, and its grant is
-legal.
-
-Before #409, a check node that asserted "no PR exists" caught such a push, but
-only by accident: it was the same assertion that failed honest runs. After
-#409, nothing does. The run's verdict is silent on a push the goal forbade.
+`validatePlannedNodeTools` (:1825). A planned node can legally run `git push`,
+`git remote add`, `gh pr create` or `gh pr edit`. Before #409 a check node
+asserting "no PR exists" caught that only by accident, with the assertion that
+failed honest runs. After #409 nothing does.
 
 ### 1.3 A check node is the wrong place for this
 
-A check node is model output judging the run of which it is part. Its PASS is
-self-reported (`plannedVerdictPattern`, `coordinator.go:2312`). If a node
-pushed, a check node run by the same planner, under the same allowlist, is the
-weakest available witness. Remote state, by contrast, is something the engine
-can read directly, outside any model, and write down from its own record.
+A check node is model output judging the run it is part of; its PASS is
+self-reported (`plannedVerdictPattern`, `coordinator.go:2312`). The engine can
+read remote state directly, outside any model, as it already does for three
+records:
 
-The engine already keeps three records of that kind:
-
-- **The `--verify-cmd` baseline (#315).** Taken at
-  `cmd/oh-my-graph/main.go:614–630` before anything is spent; a red baseline
-  is `*BaselineRedError` (`cmd/oh-my-graph/baseline.go:90`) and exits 5
-  (`main.go:189–192`). Only a skip is stored, as `runstate.Baseline`
-  (`internal/runstate/runstate.go:521`, field at :750). Documented at
-  `DESIGN.md:3017`.
-- **Verify pins (#363).** `pinVerifyCommand` (`cmd/oh-my-graph/verifypins.go:24`)
-  hashes the script a `--verify-cmd` executes; stored as `runstate.VerifyPin`
-  (`runstate.go:550`, field `verify_pins` at :757). Documented at
-  `DESIGN.md:3053`.
-- **Verification records (#332).** `internal/schedule/verifyrecord.go` builds
-  a `runstate.VerificationRecord` (`runstate.go:396`) for each
-  `success_check.verify` the engine ran; it lands on the node at
-  `runstate.go:348` and reaches the assessor as an `ENGINE-OBSERVED
-  verification of node %s` block (`internal/coordinator/assess.go:434`).
+- **The `--verify-cmd` baseline (#315):** `cmd/oh-my-graph/main.go:614–630`;
+  red is `*BaselineRedError` (`cmd/oh-my-graph/baseline.go:73`), exit 5.
+- **Verify pins (#363):** `runstate.VerifyPin`
+  (`internal/runstate/runstate.go:549`), `verify_pins` at :757.
+- **Verification records (#332):** `runstate.VerificationRecord`
+  (`runstate.go:396`), shown to the assessor as `ENGINE-OBSERVED verification
+  of node %s` (`internal/coordinator/assess.go:434`).
 
 This ADR adds a fourth record of the same kind: what changed on the remote
 while the run ran.
@@ -99,36 +80,42 @@ A snapshot holds three parts:
    and push URLs.
 2. **Remote branch refs.** `git ls-remote --heads <remote>` for each configured
    remote: branch name and sha.
-3. **Open pull requests.** `gh pr list --state open --json
-   number,headRefName,updatedAt`, run in the invocation repository, so the
+3. **Open pull requests.** `gh pr list --state open --limit 1000 --json
+   number,headRefName,headRefOid`, run in the invocation repository, so the
    list is the PRs whose base is this repository's GitHub repo. Only when `gh`
-   is on `PATH` and authenticated.
+   is on `PATH` and authenticated. `gh pr list` returns 30 PRs unless told
+   otherwise, so two snapshots of a busy repository could list different
+   PRs that never changed. The limit is fixed at 1000 (`prListLimit`,
+   *chosen*), and a result holding exactly that many is recorded as
+   `unavailable` with reason `truncated` (*chosen*), never compared.
 
 Each part is recorded with its own status (`observed` or `unavailable`,
 *chosen*), and an `unavailable` part keeps the reason the engine saw (`gh` not
-found, not authenticated, non-zero exit, timeout). An unavailable part is
-**never guessed**: it is not treated as empty, and it is not compared.
+found, not authenticated, non-zero exit, timeout, `truncated`). An
+unavailable part is **never guessed**: it is not treated as empty, and it is not compared.
 
 ### 2.2 The change record
 
 The difference between the two snapshots is the **remote change record**
-(`runstate.RemoteChanges`, *chosen*). Its entries are of these kinds
-(*chosen*):
+(`runstate.RemoteChanges`, *chosen*), with entries of these kinds (*chosen*):
 
 - `remote_added`, `remote_removed`, `remote_url_changed`;
 - `branch_created`, `branch_moved` (old and new sha), `branch_deleted`;
-- `pr_opened`, `pr_updated` (same number, later `updatedAt`), `pr_no_longer_open`.
+- `pr_opened`, `pr_updated` (same number, head sha `headRefOid` moved),
+  `pr_no_longer_open`.
 
-A part compared against an unavailable part on either side yields no entries
-and a `not_compared` line naming the part, so "no change" and "could not see"
-never print the same.
+`pr_updated` is keyed on the head sha, not `updatedAt`: GitHub moves
+`updatedAt` on comments, labels, reviews and bot activity, which §2.4 says
+the snapshot does not see, and a bot comment must not fail a guarded run.
 
-It is stored on the snapshot as `remote_changes` (`Snapshot.RemoteChanges
-*RemoteChanges`, *chosen*), holding the before snapshot, the after snapshot and
-the entries. It is printed in the run summary after the ledger table, beside
-`led.Print(os.Stdout)` (`cmd/oh-my-graph/main.go:1277` for `run`/`auto`,
-`cmd/oh-my-graph/resume.go:816` for `resume`). A run with no changes prints one
-line saying so and which parts were observed.
+A part unavailable on either side yields no entries and a `not_compared` line
+naming it, so "no change" and "could not see" never print the same.
+
+The record is stored as `remote_changes` (`Snapshot.RemoteChanges`, *chosen*)
+with both snapshots and the entries, and printed after the ledger table,
+beside `led.Print(os.Stdout)` (`cmd/oh-my-graph/main.go:1277` for `run`/`auto`,
+`cmd/oh-my-graph/resume.go:816` for `resume`). No changes prints one line
+saying so and which parts were observed.
 
 **Schema.** The record is additive and optional, and Schema stays 3
 (`runstate.go:67`). The rule is `runstate.go:827–831`: "a record moves the
@@ -138,10 +125,9 @@ nothing else, as with `verification` (`runstate.go:344–347`), `verify_pins`
 (:544) and `baseline` (:516–520). The forbid flag of §4 is different; its
 stamp is decided in §5.3.
 
-**Feed.** No new `events.jsonl` event type. The event-type set is closed per
-feed schema version (`docs/RUN-FEED.md:884–902`), and a new type would move
-`internal/runfeed/runfeed.go:46` from 3 to 4. The record lives in `state.json`
-and the summary; a feed consumer reads it from `state.json`.
+**Feed.** No new `events.jsonl` event type: the set is closed per feed schema
+version (`docs/RUN-FEED.md:884–902`), and a new type would move
+`internal/runfeed/runfeed.go:46` from 3 to 4. Feed consumers read `state.json`.
 
 ### 2.3 Which seam runs the commands
 
@@ -162,23 +148,17 @@ seam as "the `git worktree` commands behind a node's `worktree:`"; it becomes
 repository: worktrees, and the remote snapshot". The table row is updated with
 the code.
 
-`git ls-remote` reaches the network under the existing 30s `gitTimeout`
-(`git.go:21`), and nothing sets `GIT_TERMINAL_PROMPT` today, so a credential
-helper could block until that timeout (inferred from the code, not measured).
-The snapshot methods add `GIT_TERMINAL_PROMPT=0` (*chosen*) to the scrubbed
-env. They sit on a narrow interface, `worktree.RemoteObserver` (*chosen*),
-beside the Acquire-only `worktree.Provider` (`internal/worktree/worktree.go:34`).
+`git ls-remote` reaches the network under the 30s `gitTimeout` (`git.go:21`),
+and nothing sets `GIT_TERMINAL_PROMPT`, so a credential helper could block
+until it (inferred, not measured); the snapshot methods add
+`GIT_TERMINAL_PROMPT=0` (*chosen*). They sit on `worktree.RemoteObserver`
+(*chosen*), beside the Acquire-only `worktree.Provider` (`worktree.go:34`).
 
 **gh is a fifth spawner, and this ADR names it.** No seam runs `gh` today.
-The two existing seams that could were rejected:
-
-- `verify.ShellVerifier` (`internal/verify/shell.go:133`) runs a shell string,
-  and its contract (ADR 0002) is the *user's* `success_check.verify` or
-  `--verify-cmd`. An engine-authored command there makes "what ran in the
-  verifier" no longer the user's words, and puts the engine's own argv through
-  shell parsing.
-- `worktree.GitManager` runs `git`, by name, in `gitCmd`. Making it run `gh`
-  changes what the seam *is*, not just which git subcommands it issues.
+`verify.ShellVerifier` (`internal/verify/shell.go:133`) is rejected because
+its contract (ADR 0002) is the *user's* `success_check.verify` or
+`--verify-cmd`, not engine-authored argv; `GitManager` because running `gh`
+would change what the seam *is*, not which git subcommands it issues.
 
 So the `gh` call is a **fifth seam**: `internal/remote.GHRunner` (*chosen*), in
 `internal/remote/gh.go` (*chosen*), with exactly one
@@ -188,17 +168,16 @@ repository, `cmd.Env = childenv.Scrub(…)` plus `GH_PROMPT_DISABLED=1`
 `gitTimeout`). `childenv.Scrub` removes the four model keys
 (`internal/childenv/childenv.go:30–36`) and leaves `GH_TOKEN`, so `gh`
 authenticates as the operator. Its argv is fixed by the engine (`pr list
---state open --json number,headRefName,updatedAt`); no model text reaches it.
+--state open --limit 1000 --json number,headRefName,headRefOid`); no model
+text reaches it.
 
-ADR 0002 (lines 58–64), ADR 0005 and ADR 0006 say a fifth spawner needs its
-own ADR. This is that ADR for `GHRunner`, and nothing wider: it admits one
-fixed, read-only `gh` invocation. The implementation must add the file to
-`allowedExecImporters` and `execSeamCallSites`, update `CONTRIBUTING.md` and the
-`childenv` package doc ("FOUR spawners", `childenv.go:4–21`), and
-`prose_count_test` will then derive 5. If the review of this ADR refuses a
-fifth seam, the PR part is recorded as `unavailable` with the reason
-`no gh seam` (*chosen*) and the git parts ship alone; §2.1 already makes that
-honest.
+ADR 0002 (lines 58–64), 0005 and 0006 say a fifth spawner needs its own ADR;
+this is that ADR for one fixed, read-only `gh` invocation, nothing wider. The
+implementation adds the file to `allowedExecImporters` and `execSeamCallSites`
+and updates `CONTRIBUTING.md` and the `childenv` doc ("FOUR spawners",
+`childenv.go:4–21`); `prose_count_test` then derives 5. If review refuses the
+fifth seam, the PR part is `unavailable` with reason `no gh seam` (*chosen*)
+and the git parts ship alone.
 
 ### 2.4 What it does not see
 
@@ -219,42 +198,34 @@ assessor block.
 
 ## 3. Option A: a forbidden change fails the run; Option B: it is only reported
 
-Both options take the same snapshots and write the same record. They differ
-only in whether a change the operator forbade moves the verdict. (How
-"forbidden" is known is §4; this section assumes it is known.)
+Both options write the same record; they differ only in whether a forbidden
+change (how "forbidden" is known is §4) moves the verdict.
 
 ### 3.1 Option A — fail
 
-**What the operator sees.** The ledger table, then the change record, then a
-failure naming the entries that were forbidden: "remote changes observed
-during the run, and `--forbid-remote-changes` was set: branch_created
-origin/feat/x …". The exit code is non-zero.
+**What the operator sees.** The ledger table, the change record, and a
+failure naming the forbidden entries ("remote changes observed during the run,
+and `--forbid-remote-changes` was set: branch_created origin/feat/x …"), with
+a non-zero exit.
 
-**False positive** (a human pushed during the run, or a remote the operator
-did not mean was listed): an honest run fails. The cost is a re-run or a
-reading of the record, and the record says exactly what changed, so the
-operator can tell their own push from a node's. It is bounded and visible.
+**False positive** (a human pushed during the run): an honest run fails. The
+record says exactly what changed, so the cost is a re-run, bounded and
+visible. **False negative** (a change outside §2.4's coverage, or an
+`unavailable` part): the run passes, as it does today, so A is never worse.
 
-**False negative** (a change outside §2.4's coverage, or an `unavailable`
-part): the run passes while a forbidden change happened. That is today's
-behaviour, so A is never worse than now.
-
-**Resume.** The *before* snapshot is the one taken before the first node of
-the first leg, persisted in `state.json`; a resume leg never takes a new
-*before*. Each leg ends with an *after* snapshot that replaces the previous
-one, and the change record is recomputed against the original *before*. So
-the record covers the whole run, pauses included: a human who pushes while a
-gate is paused (`resumeGateLeg`, `cmd/oh-my-graph/resume.go:196`) is seen.
-That is the "observed during the run" label doing its work. A `--retry-failed`
-leg (`resumeRetryLeg`, `resume.go:241`) is the same run and is covered the same
-way.
+**Resume.** The *before* snapshot is taken once, before the first node of the
+first leg, and persisted in `state.json`; a resume leg never takes a new one.
+Each leg ends with an *after* snapshot that replaces the previous one, diffed
+against the original *before*. So the record covers the whole run, pauses
+included: a human push during a paused gate (`resumeGateLeg`,
+`cmd/oh-my-graph/resume.go:196`) is seen, which is what "observed during the
+run" means. A `--retry-failed` leg (`resumeRetryLeg`, :241) is the same run.
 
 **`--continue-on-fail`** (`cmd/oh-my-graph/flags.go:107`,
-`effectiveContinueOnFail`, `internal/schedule/scheduler.go:1911`) is about
-pruning a failed node's subtree. A forbidden remote change is not a node
-failure and cannot be pruned; it is checked after `scheduler.Run`
-(`scheduler.go:556`) returns, whatever it returned. If the run already failed,
-both failures are reported.
+`effectiveContinueOnFail`, `internal/schedule/scheduler.go:1911`) prunes a
+failed node's subtree. A forbidden change is not a node failure and cannot be
+pruned; it is checked after `scheduler.Run` (`scheduler.go:556`) returns,
+whatever it returned, and both failures are reported.
 
 **The goal assessor.** In a goal loop, a failed run is already fed to the
 assessor as `RunPassed=false` (`cycleEvidence`, `cmd/oh-my-graph/goal.go:239`,
@@ -273,40 +244,33 @@ the default, each would fail on success, so A is acceptable only opt-in.
 **What the operator sees.** The same record after the ledger table, and the
 same exit code as today. A change appears as a report line and nothing more.
 
-**False positive:** a line to read. **False negative:** the same coverage gap
-as A. **The real cost of B** is the case #410 is about: the goal said "do not push",
-a node pushed, and the run exits 0. An operator who reads the summary sees it;
-an operator or agent who scripts on the exit code does not. B makes the
-violation visible, not enforced.
+**False positive:** a line to read. **False negative:** the same gap as A.
+**The real cost of B** is #410's case: the goal said "do not push", a node
+pushed, and the run exits 0. A reader of the summary sees it; a script on the
+exit code does not. B makes the violation visible, not enforced.
 
-**Resume, `--continue-on-fail`, assessor:** as in A, without a verdict change.
-The assessor may still judge the goal unmet on the record; that is its
-judgement of evidence, not the engine's verdict. **Merge-shepherd-like
+**Resume, `--continue-on-fail`, assessor:** as in A, without a verdict change;
+the assessor may still judge the goal unmet on the record. **Merge-shepherd-like
 graphs:** unaffected; their pushes appear in the record, which is correct.
 
 ## 4. How "forbidden" is known
 
-Three mechanisms were compared.
-
 **(i) Parse the goal text** for "do not push", "don't open a PR", "no remote".
-Rejected. It is fragile (negation, quoting, "push back on the design"), it is
+Rejected: fragile (negation, quoting, "push back on the design"),
 language-dependent, and a model-written goal (a cycle-2 continuation, an agent
-calling `auto`) can omit the phrase while meaning it. It would also make the
-engine read intent out of prose, which nothing else in the engine does: the
-verdict is built from records and declared fields.
+calling `auto`) can omit the phrase while meaning it. Nothing else in the
+engine reads intent out of prose.
 
 **(ii) An explicit operator flag on `auto` and `run`:**
-`--forbid-remote-changes` (*chosen*). Machine-readable, nothing guessed, and
-said by the person who owns the remote. It is persisted like
-`continue_on_fail` (`runstate.go:677`) as `forbid_remote_changes`
-(*chosen*), so `resume` carries it and cannot drop it.
+`--forbid-remote-changes` (*chosen*). Machine-readable, nothing guessed, said
+by the person who owns the remote. Persisted like `continue_on_fail`
+(`runstate.go:677`) as `forbid_remote_changes` (*chosen*), so `resume` carries
+it.
 
-**(iii) A graph-level YAML field** (`remote: forbid`, *chosen* name, not
-adopted). It would let a hand-written graph declare itself remote-free. It is
-deferred, not rejected, for two reasons: the graph's author is not always the
-operator running it, and for a planned graph the field would be written by the
-planner, which is (i) again with a model in the middle. `run` takes the flag
-of (ii), so a hand-written graph is covered without it.
+**(iii) A graph-level YAML field** (`remote: forbid`, *chosen*, not adopted).
+Deferred, not rejected: a graph's author is not always its operator, and for a
+planned graph the planner would write the field, which is (i) with a model in
+the middle. `run` takes (ii), so hand-written graphs are covered without it.
 
 **Decision: (ii).** "Forbidden" means the operator passed
 `--forbid-remote-changes`. Any entry in the change record is then a forbidden
@@ -327,7 +291,13 @@ flag and Option B without it:
 - **With `--forbid-remote-changes`:** Option A. Any entry fails the run with
   `RemoteChangeForbiddenError` (*chosen*, in `cmd/oh-my-graph`), exit code 6
   (*chosen*; 1–5 are taken, `exitCodeForError`, `cmd/oh-my-graph/main.go:144`),
-  so a script can tell it apart from a node failure.
+  so a script can tell it apart from a node failure. Unlike exits 3 and 5,
+  which create no run directory (`cmd/oh-my-graph/main.go:163–168, 180–188`),
+  a guarded failure has one, and every node in it may have passed. Its
+  `state.json` is written with status **FAIL**, so `runs list` and `show`
+  read FAIL. This ADR therefore **amends ADR 0023 §2.6's single-run
+  agreement** from "exit 1 ↔ FAIL" to "exit 1 or 6 ↔ FAIL"; exit 0 ↔ PASS and
+  exit 2 ↔ PAUSED are unchanged.
 
 "Explicitly" is made machine-checkable by the flag. **The engine never parses
 the goal text.**
@@ -338,31 +308,28 @@ the flag still learns what changed.
 
 ### 5.2 The planner
 
-With the flag set, the planner prompt gains one sentence (*chosen* wording to
-be settled in the golden): the operator forbade remote changes, the engine
+With the flag set, the planner prompt gains one sentence (*chosen* wording,
+settled in the golden): the operator forbade remote changes, the engine
 observes the remote itself, and no node should push, add a remote or open or
-edit a pull request. This is a hint, not the enforcement; the enforcement is
-the snapshot. It also agrees with #409's rule that check nodes never assert
-remote state: the engine does that now. Without the flag the prompt is
-byte-identical to today's.
+edit a pull request. It is a hint; the snapshot is the enforcement, and it
+agrees with #409's rule that check nodes never assert remote state. Without
+the flag the prompt is byte-identical to today's.
 
-With the flag set and an unavailable part, the run starts anyway and the
-launch line names the part (*chosen*): a repository with no GitHub remote
-legitimately has no PRs to observe, and refusing would make the flag unusable
-there. The verdict is then built only from the parts observed, and the summary
-says which were not.
+With the flag and an unavailable part, the run still starts and the launch
+line names the part (*chosen*): a repository with no GitHub remote has no PRs
+to observe, and refusing would make the flag unusable there. The verdict uses
+only the observed parts, and the summary says which were not.
 
 ### 5.3 Schema stamp of the flag
 
-`forbid_remote_changes` is not like `remote_changes`. An older binary resuming
-a run that dropped it would finish without the check: it "would run the rest
-of the run differently" (`runstate.go:827–831`). So, by the conditional-stamp
-rule of ADR 0041 §6 and ADR 0044, a snapshot with the flag set stamps
-`SchemaWithRemoteGuard = 5` (*chosen*), and Load (`runstate.go:1051`) accepts
-it; a run without the flag stays at 3 (or 4 with conventions). A snapshot with
-both conventions and the flag stamps 5, and a reader of 5 understands 4's
-record. An older binary then refuses to resume a guarded run instead of
-silently dropping the guard.
+`forbid_remote_changes` is not like `remote_changes`: an older binary that
+dropped it on resume would finish without the check, so it "would run the rest
+of the run differently" (`runstate.go:827–831`). By the conditional-stamp rule
+of ADR 0041 §6 and ADR 0044, a guarded snapshot stamps
+`SchemaWithRemoteGuard = 5` (*chosen*), which Load (`runstate.go:1051`)
+accepts; an unguarded one stays at 3 (or 4 with conventions), and a guarded
+one with conventions stamps 5. An older binary refuses to resume a guarded
+run rather than silently drop the guard.
 
 ## 6. Alternatives considered
 
@@ -372,64 +339,51 @@ silently dropping the guard.
 - **Option B only, no flag.** Leaves #410's case at exit 0 (§3.2).
 - **Remove `Bash(git *)` and `Bash(gh pr *)` from `plannedToolAllowlist`.**
   Breaks every goal that legitimately commits or opens a PR, and a narrower
-  grant (say, no `git push *`) is not enforceable against bare `git` argument
-  shapes. The allowlist stays as it is; observation is enforcement-independent.
-- **`ShellVerifier` for the snapshot; git only, skipping PRs; a feed event per
-  change.** Rejected in §2.3 and §2.2; git-only remains the fallback if the
-  fifth seam is refused, but PR creation is half of #410.
+  grant (no `git push *`) is not enforceable against bare `git` argv shapes.
+- **`ShellVerifier` for the snapshot; git only; a feed event per change.**
+  Rejected in §2.3 and §2.2; git-only is the fallback if the fifth seam is
+  refused, but PR creation is half of #410.
 
 ## 7. Consequences and implementation outline
 
-For the operator: every `run`, `auto` and `resume` summary gains a
-remote-change section, the assessor gains an engine-observed remote block,
-and `--forbid-remote-changes` fails a run on any observed change with exit 6.
+For the operator: every `run`, `auto` and `resume` summary and the assessor
+gain the remote record, and `--forbid-remote-changes` fails on any entry (exit 6).
 
 ### 7.1 Cost
 
-Per leg, two snapshots: one `git remote -v`, one `git ls-remote --heads` per
-remote, and one `gh pr list`. For the usual single-remote repository that is
-two to four extra git/gh calls before and after, each bounded by a 30s
-timeout, and the two network calls dominate. A run already spends minutes in
-model calls; the snapshot is not on the per-node path.
+Per run, a *before* snapshot once and an *after* snapshot at the end of each
+leg: one `git remote -v`, one `git ls-remote --heads` per remote, and one
+`gh pr list` each. For a single-remote repository that is two to four extra
+git/gh calls per snapshot, each under a 30s timeout, off the per-node path,
+against a run that spends minutes in model calls.
 
 ### 7.2 What it does not fix
 
-Everything in §2.4. And it does not stop a push, it notices one afterwards;
-preventing it would mean a narrower tool grant, which §6 rejects for now.
+Everything in §2.4. It notices a push afterwards and does not stop it;
+prevention would need a narrower tool grant, which §6 rejects for now.
 
 ### 7.3 Implementation outline
 
-File and function names only; none of these exist at `ac7391c`.
+None of these exist at `ac7391c`; every name is *chosen* and given in §2.3,
+§4 and §5. By file:
 
-- `internal/worktree/git.go`: `(*GitManager).Remotes` and
-  `(*GitManager).LsRemoteHeads` (*chosen*), via `m.git`; `GIT_TERMINAL_PROMPT=0`
-  on their env. `internal/worktree/worktree.go`: the `RemoteObserver`
-  interface (*chosen*) and a fake beside the existing ones.
-- `internal/remote/gh.go` (new, *chosen*): `GHRunner` and `(*GHRunner).OpenPRs`,
-  the fifth seam. `internal/remote/snapshot.go` (new, *chosen*):
-  `Take(ctx, RemoteObserver, PRLister) RemoteSnapshot` and
-  `Diff(before, after) RemoteChanges`, pure apart from the two interfaces.
-- `internal/runstate/runstate.go`: `RemoteSnapshot`, `RemoteChanges`,
-  `Snapshot.RemoteChanges` and `Snapshot.ForbidRemoteChanges` (all *chosen*);
-  `SchemaWithRemoteGuard` and its acceptance in Load.
-- `cmd/oh-my-graph/flags.go`: `--forbid-remote-changes` (*chosen*) on `run`
-  and `auto`.
-- `cmd/oh-my-graph/main.go`: in `executeGraph` (:1118), take *before* ahead of
-  `scheduler.Run` (:1270) and *after* behind it; print after `led.Print`
-  (:1277); `RemoteChangeForbiddenError` and its exit code in
-  `exitCodeForError` (:144).
-- `cmd/oh-my-graph/resume.go`: carry *before* and the flag forward; take
-  *after* at the end of `continueRun` (:371); print after `led.Print` (:816).
-- `cmd/oh-my-graph/goal.go`: `cycleEvidence` (:239) copies the record;
-  `internal/coordinator/assess.go`: `CycleEvidence` gains it and
-  `assessPrompt` (:331) renders an `ENGINE-OBSERVED remote changes` block
-  (*chosen* label).
-- `internal/coordinator/coordinator.go`: the §5.2 sentence, only with the flag.
-- `internal/invariants/exec_seam_test.go`, `CONTRIBUTING.md`,
-  `internal/childenv/childenv.go` doc: the fifth seam and seam 3's wider role.
-- Documentation when it lands: DESIGN.md's auto section (beside the
-  engine-verification block at `DESIGN.md:3933–3934`), `docs/RUN-FEED.md`
-  beside `baseline` and `verify_pins`, and the usage text.
+- `internal/worktree/git.go`, `worktree.go`: the git snapshot methods and
+  `RemoteObserver` with a fake (§2.3).
+- `internal/remote/gh.go`, `snapshot.go` (new): `GHRunner` (the fifth seam),
+  and a pure `Take`/`Diff` over the two interfaces.
+- `internal/runstate/runstate.go`: the §2.2 records, the persisted flag and
+  `SchemaWithRemoteGuard` (§5.3).
+- `cmd/oh-my-graph/flags.go`, `main.go`, `resume.go`: the flag; *before* and
+  *after* around `scheduler.Run` in `executeGraph` (:1118) and at the end of
+  `continueRun` (:371); printing beside `led.Print`; the §5.1 error, FAIL
+  status and exit code in `exitCodeForError` (:144).
+- `cmd/oh-my-graph/goal.go`, `internal/coordinator/assess.go`: `cycleEvidence`
+  (:239) copies the record and `assessPrompt` (:331) renders an
+  `ENGINE-OBSERVED remote changes` block (*chosen* label);
+  `internal/coordinator/coordinator.go`: the §5.2 sentence.
+- `internal/invariants/exec_seam_test.go`, `CONTRIBUTING.md`, the `childenv`
+  doc, then DESIGN.md's auto section (beside `DESIGN.md:3933–3934`) and
+  `docs/RUN-FEED.md`.
 
 ## 8. Tests the implementation owes
 
@@ -440,14 +394,17 @@ Unit tests use a fake `RemoteObserver` and a fake `PRLister` (the
    empty record, one "no remote changes observed" line, exit 0, and a planner
    prompt equal to today's golden.
 2. **Each change kind is detected.** One table case per §2.2 kind, including
-   `branch_moved` carrying both shas and `pr_updated` keyed on `updatedAt`.
-3. **Unavailable is never empty.** A `PRLister` returning "not authenticated"
-   on *after* only yields `not_compared` for PRs and no `pr_no_longer_open`
-   entries.
+   `branch_moved` carrying both shas and `pr_updated` keyed on a moved
+   `headRefOid`; a PR whose `updatedAt` moved but head sha did not yields no
+   entry.
+3. **Unavailable is never empty.** "not authenticated" on *after* only
+   yields `not_compared` for PRs and no `pr_no_longer_open` entries.
 4. **Report only without the flag.** A `branch_created` entry with no flag:
    the run's exit is today's, the record is in `state.json` and the summary.
 5. **Fail with the flag.** The same entry with `--forbid-remote-changes`:
    `RemoteChangeForbiddenError`, exit 6, the entry named in the message.
+   With every node PASS, `state.json`'s status is FAIL and `runs list` and
+   `show` read FAIL (ADR 0023 §2.6 as amended in §5.1).
 6. **The label.** No rendering of the record (summary, assessor block) contains
    "made by"; each entry carries "observed during the run".
 7. **Resume keeps the first *before*.** A two-leg run where the fake changes
@@ -467,29 +424,26 @@ Unit tests use a fake `RemoteObserver` and a fake `PRLister` (the
 12. **Seams.** `TestOnlyTheFourExecSeamsImportOsExec` (renamed for five) and
     `TestExecSeamCallSitesScrubEnv` pass with `internal/remote/gh.go` listed;
     the git snapshot methods add no `exec.Command` to `git.go`.
-13. **No new feed event.** The feed schema constant is still 3 and no event
+13. **A truncated PR list is not compared.** A fake `PRLister` returning
+    exactly `prListLimit` PRs records the part `unavailable`, reason
+    `truncated`, and yields `not_compared`, with or without the flag.
+14. **No new feed event.** The feed schema constant is still 3 and no event
     type is added.
 
 ## 9. Falsification
 
-1. **Guarded runs fail mostly on changes no node made.** If, over the first
-   twenty `--forbid-remote-changes` failures, most are human pushes or
-   unrelated refs, then the invocation-repository scope is too wide. Narrow
-   the guarded set (for example, to new branches and new PRs only) before
-   dropping the flag.
-2. **Forbidden pushes still land unflagged.** If a run with the flag set is
-   later found to have pushed to this repository and the record shows nothing,
-   either a part was `unavailable` or §2.4's reverted-change gap is being hit
-   in practice. The first means the launch warning is too quiet and should
-   become a refusal; the second means a per-node snapshot is owed.
-3. **Operators never pass the flag.** If goals that say "do not push" keep
-   running without it, the explicit-flag choice of §4 is not reaching the
-   people who need it. Then reconsider (iii) for hand-written graphs, or make
-   the flag more visible in the usage text; never reconsider (i).
-4. **The snapshot costs more than a node.** If the two snapshots routinely
-   approach their timeouts on real repositories, the before/after shape is
-   wrong for the network, and the snapshot should drop to remotes and refs
-   only, with PRs observed on demand.
+1. **Guarded runs fail mostly on changes no node made.** If most of the first
+   twenty `--forbid-remote-changes` failures are human pushes or unrelated
+   refs, the scope is too wide: narrow the guarded set (say, new branches and
+   new PRs only) before dropping the flag.
+2. **Forbidden pushes still land unflagged.** If a guarded run is found to have
+   pushed here and the record shows nothing, either a part was `unavailable`
+   (the launch warning should become a refusal) or §2.4's reverted-change gap
+   is hit in practice (a per-node snapshot is owed).
+3. **Operators never pass the flag.** If "do not push" goals keep running
+   without it, reconsider (iii) or make the flag more visible; never (i).
+4. **The snapshot costs more than a node.** If snapshots routinely approach
+   their timeouts, drop to remotes and refs only, with PRs observed on demand.
 5. **The fifth seam is refused.** Then §2.3's fallback stands: git parts only,
-   PRs `unavailable` with reason `no gh seam`, and #410 stays half-answered
-   until a seam is agreed.
+   PRs `unavailable` with reason `no gh seam`, #410 half-answered until a seam
+   is agreed.
