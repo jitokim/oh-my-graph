@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -205,7 +206,7 @@ func TestAssessMaterial_VerifyOutputRespectsTheMaterialCaps(t *testing.T) {
 // #419: six verification tails of 2500 bytes each, kept at 2000 apiece,
 // used to spend the whole 12000-byte material budget before any artifact
 // rendered, so the final check's four-byte PASS was omitted. The tails now
-// spend at most half, cut or omitted out loud past it, every block's
+// spend at most half, split order-free and cut out loud, every block's
 // engine-observed lines still render, and the sink artifact renders.
 func TestAssessMaterial_VerifyTailsLeaveRoomForTheSinkArtifact(t *testing.T) {
 	const blocks = 6
@@ -228,13 +229,10 @@ func TestAssessMaterial_VerifyTailsLeaveRoomForTheSinkArtifact(t *testing.T) {
 	if total := tails + len("PASS"); total > maxAssessArtifactMaterial {
 		t.Errorf("tails plus artifacts are %d bytes, want at most %d", total, maxAssessArtifactMaterial)
 	}
-	// Every tail is cut to 2000 (2500 bytes are more than one tail may
-	// keep); past the half the cut tail and the omitted ones say so.
-	if got := strings.Count(material, "output: the last 2000 of 2500 bytes; the earlier 500 bytes were dropped for the material cap"); got != 3 {
-		t.Errorf("%d tails kept at 2000 bytes with the cut announced, want 3:\n%s", got, material)
-	}
-	if got := strings.Count(material, "output: omitted (verification output cap reached"); got != blocks-3 {
-		t.Errorf("%d tails omitted out loud, want %d:\n%s", got, blocks-3, material)
+	// The six equal tails split the 6000-byte share evenly, 1000 bytes each
+	// wherever they sit in graph order, and every cut is said out loud.
+	if got := strings.Count(material, "output: the last 1000 of 2500 bytes; the earlier 1500 bytes were dropped for the material cap"); got != blocks {
+		t.Errorf("%d tails kept at 1000 bytes with the cut announced, want %d:\n%s", got, blocks, material)
 	}
 	for i := 0; i < blocks; i++ {
 		_, block, _ := strings.Cut(material, fmt.Sprintf("ENGINE-OBSERVED verification of node v%d ", i))
@@ -243,6 +241,92 @@ func TestAssessMaterial_VerifyTailsLeaveRoomForTheSinkArtifact(t *testing.T) {
 				t.Errorf("block v%d is missing its engine-observed line %q", i, line)
 			}
 		}
+	}
+}
+
+// tailSizes renders material for nodes and returns how many bytes of output
+// each verification tail kept, by node ID, 0 for an omitted one.
+func tailSizes(t *testing.T, nodes []NodeEvidence) map[string]int {
+	t.Helper()
+	material := assessMaterial(CycleEvidence{RunID: "run-419", RunPassed: true, Nodes: nodes}, verifyNonce)
+	sizes := map[string]int{}
+	for _, node := range nodes {
+		if node.Verification == nil {
+			continue
+		}
+		if strings.Contains(material, "--- engine verification of node "+node.ID+" "+verifyNonce+" ") {
+			sizes[node.ID] = len(verifyFenceBody(t, material, node.ID, verifyNonce))
+		} else {
+			sizes[node.ID] = 0
+		}
+	}
+	return sizes
+}
+
+// #419: each tail's share is fixed before any block renders, so the same
+// six 2500-byte tails in two graph orders keep the same bytes per node,
+// where a running remainder kept the first three whole and omitted the rest.
+func TestAssessMaterial_VerifyTailSharesDoNotDependOnGraphOrder(t *testing.T) {
+	var nodes []NodeEvidence
+	for i := 0; i < 6; i++ {
+		nodes = append(nodes, NodeEvidence{ID: fmt.Sprintf("v%d", i), Verdict: "PASS",
+			Verification: &NodeVerification{Command: "make test", ExitCode: exitCode(0), Status: "passed", OutputTail: strings.Repeat("y", 2500)}})
+	}
+	final := NodeEvidence{ID: "final", Verdict: "PASS", Artifact: "PASS", Sink: true}
+	reversed := slices.Clone(nodes)
+	slices.Reverse(reversed)
+
+	forward := tailSizes(t, append(slices.Clone(nodes), final))
+	backward := tailSizes(t, append(reversed, final))
+	total := 0
+	for id, size := range forward {
+		if backward[id] != size {
+			t.Errorf("node %s kept %d bytes in graph order and %d reversed", id, size, backward[id])
+		}
+		if size == 0 {
+			t.Errorf("node %s was omitted although equal tails split the share evenly", id)
+		}
+		total += size
+	}
+	if tailCap := maxAssessArtifactMaterial * maxVerifyTailShareNum / maxVerifyTailShareDen; total > tailCap {
+		t.Errorf("%d bytes of verify output rendered, want at most %d", total, tailCap)
+	}
+}
+
+// #419: a failing check's output is the evidence the assessor most needs,
+// so its tail takes its share before the passing ones, even placed last in
+// graph order behind five passing tails that do not all fit.
+func TestAssessMaterial_FailingVerifyTailIsKeptBeforePassingOnes(t *testing.T) {
+	var nodes []NodeEvidence
+	for i := 0; i < 5; i++ {
+		nodes = append(nodes, NodeEvidence{ID: fmt.Sprintf("v%d", i), Verdict: "PASS",
+			Verification: &NodeVerification{Command: "make test", ExitCode: exitCode(0), Status: "passed", OutputTail: strings.Repeat("y", 2500)}})
+	}
+	nodes = append(nodes,
+		NodeEvidence{ID: "z-broken", Verdict: "FAIL",
+			Verification: &NodeVerification{Command: "make test", ExitCode: exitCode(1), Status: "failed", OutputTail: strings.Repeat("f", 2500)}},
+		NodeEvidence{ID: "final", Verdict: "PASS", Artifact: "PASS", Sink: true})
+	material := assessMaterial(CycleEvidence{RunID: "run-419", RunPassed: true, Nodes: nodes}, verifyNonce)
+
+	if body := verifyFenceBody(t, material, "z-broken", verifyNonce); len(body) < maxAssessArtifactExcerpt {
+		t.Errorf("the failing tail kept %d bytes, want at least its %d-byte floor:\n%s", len(body), maxAssessArtifactExcerpt, material)
+	}
+	shortened := 0
+	for i := 0; i < 5; i++ {
+		id := fmt.Sprintf("v%d", i)
+		if !strings.Contains(material, "--- engine verification of node "+id+" "+verifyNonce+" ") ||
+			len(verifyFenceBody(t, material, id, verifyNonce)) < maxAssessArtifactExcerpt {
+			shortened++
+		}
+	}
+	if shortened == 0 {
+		t.Errorf("every passing tail kept its floor, so the share was never contested:\n%s", material)
+	}
+	if !strings.Contains(material, "output: omitted (verification output cap reached: this tail got no part of the verification tails' share of the material cap)") {
+		t.Errorf("an omitted passing tail must say so out loud:\n%s", material)
+	}
+	if strings.Contains(material, "(artifact of node final omitted") {
+		t.Errorf("the sink artifact was pushed out:\n%s", material)
 	}
 }
 

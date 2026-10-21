@@ -3966,8 +3966,21 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   bytes, 2000 bytes otherwise, the reservation capped at the sinks' half
   priority share below. The tails get the smaller of the half and what the
   reservation leaves (`verifyTailBudget`); with both shares at half, the
-  half binds, and the artifacts always keep at least the other half. The
-  artifacts then split what the tails did not use in two passes, sink nodes' artifacts
+  half binds, and the artifacts always keep at least the other half. That
+  share is split across the tails before any block renders
+  (`tailAllowances`), never as a running remainder in graph order, which
+  kept the first tails whole and omitted the later ones by position alone.
+  Each tail asks for at most its 2000-byte cap, and the split is the
+  artifacts' pass 2 below (`restAllowances`) over those asks, with failing
+  checks in place of the non-sinks: a tail is failing when its status is
+  not `passed` or it holds an exit code other than the expected one, and
+  the failing tails take their floors before any passing one, because a
+  failing check's output is the evidence the verdict most needs. The
+  half-floor rule for equal groups and node ID as the last tie-break apply
+  as there, so six equal 2500-byte tails each keep 1000 bytes wherever they
+  sit, and one failing tail behind five passing ones keeps its 2000 bytes
+  while passing ones are omitted. The allowances sum to at most the share.
+  The artifacts then split what the tails did not use in two passes, sink nodes' artifacts
   first (`sinkFirstAllowances`, #408), and every artifact's allowance is
   fixed before any of them renders. The allowances never sum to more than
   the artifact budget, and the split depends only on the artifacts' lengths,
@@ -4032,9 +4045,10 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   flag, not the tail's marker, which the command could forge and the material
   cap could trim away. A further cut for the material cap adds `output: the
   last N of M bytes; the earlier K bytes were dropped for the material cap
-  (…)`, naming the 2000-byte per-tail cap and the tails' half. Once the
-  tails' half is spent the line reads `output: omitted (verification output
-  cap reached: …)`. Every block's engine-observed lines (command, status,
+  (…)`, naming the 2000-byte per-tail cap and the verification tails'
+  share of the material cap. A tail whose allowance is zero reads
+  `output: omitted (verification output cap reached: …)`. Neither line
+  says "half", because a tail's share can be smaller. Every block's engine-observed lines (command, status,
   exit code, expected exit code) always render: a cap may drop
   output, never the record that a check failed. The assessor prompt gains one
   sentence: an engine verification block is the engine's own observation of a
