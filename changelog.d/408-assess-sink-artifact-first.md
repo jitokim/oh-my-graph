@@ -1,6 +1,6 @@
 ### Fixed
 
-- **The final check node's artifact now reaches the assessor.** With six or
+- **The final check node's artifact now reaches the assessor.** With seven or
   more large artifacts, the goal assessor's 12000-byte artifact budget ran out
   in graph order before the last node, so the final check node's artifact
   could be dropped. Every artifact's allowance is now fixed before any
@@ -24,6 +24,6 @@
   artifact left with nothing is omitted loudly with its own
   `(artifact of node <id> omitted: material cap reached)` line, where its
   artifact would have been, instead of one line for all of them. One visible
-  difference: ten equal 9 KB artifacts now each get about 1333 bytes, where
+  difference: ten equal 9 KB artifacts now each get about 1200 bytes, where
   before the first six got 2000 bytes and the last four were omitted.
   ([#408](https://github.com/jitokim/oh-my-graph/issues/408))
