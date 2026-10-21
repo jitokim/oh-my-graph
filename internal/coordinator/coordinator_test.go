@@ -613,14 +613,18 @@ func TestPlan_ToleratesFenceAndProseAroundJSON(t *testing.T) {
 	}
 }
 
-func TestPlan_BracesInProseFailLoudly(t *testing.T) {
-	// extractJSON spans first '{' to last '}', so braces in surrounding prose
-	// corrupt the extracted spec. Pin that this fails loudly, never silently.
+func TestPlan_ToleratesBracesInProseBeforeJSON(t *testing.T) {
+	// extractJSON skips a '{' from which no JSON object decodes, so braces in
+	// prose before the plan no longer corrupt the extracted spec (#387).
 	reply := "Note {an aside} first.\n" + validSpec
 	fake, _ := newPlannerFake(runner.NodeOutcome{Result: reply})
 
-	if _, err := New(fake).Plan(context.Background(), "lint the repo", nil); err == nil {
-		t.Fatal("expected an error for a reply with braces in prose")
+	plan, err := New(fake).Plan(context.Background(), "lint the repo", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(plan.Graph.Nodes) != 2 {
+		t.Errorf("got %d nodes, want 2", len(plan.Graph.Nodes))
 	}
 }
 

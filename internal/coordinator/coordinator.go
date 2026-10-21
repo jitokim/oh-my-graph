@@ -23,6 +23,7 @@ package coordinator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -1964,9 +1965,46 @@ func reuseBindsList(entry ReuseEntry) string {
 
 // extractJSON isolates the JSON object from a coordinator call's reply (the
 // planner's or the router's), tolerating a markdown code fence or stray prose
-// around it: everything outside the first '{' and the last '}' is discarded.
-// Returns "" when no object is present.
+// around it. In order:
+//   - the content of the first ```json fenced block that decodes as a JSON
+//     object, trimmed of surrounding whitespace;
+//   - else the first '{' from which exactly one JSON object decodes, as the
+//     bytes of that object alone — so braces in prose before the plan (a
+//     quoted {{ artifacts.x }} placeholder, an aside) are skipped, and prose
+//     after it is dropped even when it holds braces;
+//   - else everything from the first '{' to the last '}', so a genuinely
+//     broken reply still reaches the parser (and its error) as before.
+//
+// Returns "" when no '{' is present.
 func extractJSON(result string) string {
+	const fenceOpen = "```json"
+	for rest := result; ; {
+		i := strings.Index(rest, fenceOpen)
+		if i == -1 {
+			break
+		}
+		rest = rest[i+len(fenceOpen):]
+		end := strings.Index(rest, "```")
+		if end == -1 {
+			break
+		}
+		content := strings.TrimSpace(rest[:end])
+		if strings.HasPrefix(content, "{") && json.Valid([]byte(content)) {
+			return content
+		}
+		rest = rest[end+len("```"):]
+	}
+
+	for i := 0; i < len(result); i++ {
+		if result[i] != '{' {
+			continue
+		}
+		var obj json.RawMessage
+		if err := json.NewDecoder(strings.NewReader(result[i:])).Decode(&obj); err == nil {
+			return string(obj)
+		}
+	}
+
 	start := strings.Index(result, "{")
 	end := strings.LastIndex(result, "}")
 	if start == -1 || end < start {
