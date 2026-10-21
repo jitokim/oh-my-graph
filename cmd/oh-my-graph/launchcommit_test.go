@@ -229,3 +229,47 @@ func TestRunChatWith_EveryPlanOfTheSessionScopesFromTheLaunchCommit(t *testing.T
 		t.Fatalf("%d planner call(s), want 2", planned)
 	}
 }
+
+// #414: `auto --interview` reads HEAD before the interview starts, so a commit
+// made while the operator is being interviewed does not become the scope base.
+func TestAutoInterview_PlansFromTheCommitBeforeTheInterview(t *testing.T) {
+	conventionsHome(t)
+	dir, launch := launchRepo(t)
+	t.Chdir(dir)
+	fake := newInterviewFake(map[string]runner.NodeOutcome{
+		"ask-1":  {Result: interviewQuestion},
+		"ask-2":  {Result: "ENOUGH"},
+		"plan-1": {Result: cycleSpec},
+	})
+	key := fake.KeyFn
+	var moved string
+	var moveErr error
+	fake.KeyFn = func(spec runner.NodeInvocation) string {
+		k := key(spec)
+		if k == "ask-1" {
+			moveErr = commitFile(dir, "during-interview.txt")
+			moved = launchCommit(dir)
+		}
+		return k
+	}
+
+	if out, err := runInterviewAuto(t, fake, terminalStdin(interviewAnswer+"\n", true), "tidy the docs", "--plan-only", "--interview"); err != nil {
+		t.Fatalf("auto --plan-only --interview: %v\n%s", err, out)
+	}
+	if moveErr != nil {
+		t.Fatalf("fixture: %v", moveErr)
+	}
+	if moved == "" || moved == launch {
+		t.Fatalf("fixture: the interview did not move HEAD (launch %s, after %s)", launch, moved)
+	}
+	calls := plannerCalls(fake)
+	if len(calls) != 1 {
+		t.Fatalf("%d planner call(s), want 1", len(calls))
+	}
+	if !strings.Contains(calls[0].Prompt, launch+"..HEAD") {
+		t.Errorf("the planner prompt does not measure from the pre-interview commit %s", launch)
+	}
+	if strings.Contains(calls[0].Prompt, moved) {
+		t.Errorf("the planner prompt names the HEAD the interview moved to (%s)", moved)
+	}
+}
