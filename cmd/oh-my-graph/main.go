@@ -628,6 +628,12 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 	} else if err := runBaseline(ctx, os.Stdout, flags.verifyPins.guard(verifier), verifyCommand, flags.goal); err != nil {
 		return err
 	}
+	// Read once, here — before the interview, which a person may take minutes
+	// over while HEAD moves — and handed to the coordinator below: every cycle
+	// of the goal loop measures scope from the commit the run launched on,
+	// never from a HEAD that moved since (#414). "" outside a repository adds
+	// nothing.
+	startCommit := launchCommitOfWorkingDir()
 	// Once per goal, before cycle 1, and never again: every later cycle's
 	// planner prompt gets the same prefix from memory through the coordinator
 	// option below (ADR 0044 §2.4). The interviewer is a coordinator-owned
@@ -678,6 +684,9 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 	// On both runtimes, and on the coordinator for the goal loop's reason:
 	// every cycle renders the planner prompt afresh, menu included (ADR 0038).
 	options = append(options, reuseOptions(flags.noReuse)...)
+	// The commit read above, before the interview; held by the coordinator so
+	// every cycle of the goal loop measures scope from it (#414).
+	options = append(options, coordinator.WithStartCommit(startCommit))
 	coord := coordinator.New(nodeRunner, options...)
 	return planAndExecute(ctx, os.Stdout, coord, nodeRunner, flags.commonRunFlags, flags.goal,
 		goalCycleOptions{maxCycles: flags.maxCycles, maxGoalBudgetUSD: flags.maxGoalBudgetUSD}, flags.planOnly, nil,

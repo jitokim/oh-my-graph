@@ -323,6 +323,10 @@ type Coordinator struct {
 	// WithoutReuse: no scan, no menu in the planner prompt, and reuse:
 	// refused by its disposition case exactly as when nothing is admitted.
 	reuseOff bool
+	// startCommit is the commit the goal started from, set via
+	// WithStartCommit. Empty means unknown, and the planner prompt is then
+	// byte-identical to one built without the option.
+	startCommit string
 }
 
 // Option configures a Coordinator at construction.
@@ -392,6 +396,17 @@ func WithoutSkillActivation() Option {
 // other opt-outs here it only removes: no option turns a menu on.
 func WithoutReuse() Option {
 	return func(c *Coordinator) { c.reuseOff = true }
+}
+
+// WithStartCommit records the commit the goal started from (#414). A run that
+// starts on a branch with earlier commits otherwise leaves a planned scope
+// check guessing its base — main, typically — so it flags accepted work as out
+// of scope and reverts it. Set, every planning call's prompt (each cycle's,
+// and each repair's, since both are built from the same base) names the commit
+// and measures scope from it. Empty means unknown and changes nothing: the
+// planner prompt is byte-identical to one built without this option.
+func WithStartCommit(sha string) Option {
+	return func(c *Coordinator) { c.startCommit = sha }
 }
 
 // WithLoadedUserConfig states that this run's planned nodes load the
@@ -600,9 +615,10 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 // that re-planned against another would be answering a different question
 // than the one that was refused. offered travels for the same
 // reason: it is the menu this base shows, and every attempt built from the
-// base is judged against it.
-func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyCommand string, offered []ReuseEntry) (string, error) {
-	prompt, err := plannerPrompt(goal, inputKeys, verifyCommand, offered)
+// base is judged against it. startCommit travels the same way, so every cycle
+// and every repair measures scope from the same commit (WithStartCommit).
+func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyCommand string, offered []ReuseEntry, startCommit string) (string, error) {
+	prompt, err := plannerPrompt(goal, inputKeys, verifyCommand, offered, startCommit)
 	if err != nil {
 		return "", err
 	}
@@ -2135,7 +2151,10 @@ var plannerRetryCauses = graph.RetryCauses()
 // directly after the reply shape that describes a node's fields and before the
 // rules (§9.5), and omitted entirely when it is empty. The error is the menu's
 // fence failing to mint a nonce.
-func plannerPrompt(goal string, inputKeys []string, verifyCommand string, offered []ReuseEntry) (string, error) {
+//
+// startCommit, when not empty, appends plannerStartCommitTemplate after the
+// rules (#414); empty renders exactly the prompt built without it.
+func plannerPrompt(goal string, inputKeys []string, verifyCommand string, offered []ReuseEntry, startCommit string) (string, error) {
 	keys := "none"
 	if len(inputKeys) > 0 {
 		sorted := append([]string(nil), inputKeys...)
@@ -2158,14 +2177,18 @@ func plannerPrompt(goal string, inputKeys []string, verifyCommand string, offere
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf(plannerPromptTemplate,
+	prompt := fmt.Sprintf(plannerPromptTemplate,
 		goal,
 		keys,
 		strings.Join(plannedToolAllowlist, ", "),
 		finalCheck,
 		strings.Join(plannerRetryCauses, ", "),
 		menu,
-	), nil
+	)
+	if startCommit != "" {
+		prompt += fmt.Sprintf(plannerStartCommitTemplate, startCommit)
+	}
+	return prompt, nil
 }
 
 // finalCheckWithoutVerifyCommand / finalCheckWithVerifyCommand are the two
@@ -2600,6 +2623,24 @@ prose before or after:
   untracked files that are not part of the task, and sweeping them into
   the commit is a bug.
 %[4]s`
+
+// plannerStartCommitTemplate is appended to the planner prompt when the commit
+// the goal started from is known (WithStartCommit, #414); %[1]s is that sha.
+// Without it a planned scope check guesses its base, flags commits accepted
+// before the run as out of scope, and reverts them.
+const plannerStartCommitTemplate = `
+
+This run started from commit %[1]s. Any scope, "only these files" or
+changed-files check a planned node writes is measured from that commit, with
+'git diff --name-only %[1]s..HEAD' or 'git log %[1]s..HEAD', and never from
+main or any other base. No planned node reverts, restores or checks out a file
+the goal did not ask it to change. A file changed by commits before %[1]s is
+left as it is: a finding about such a file is reported, and is never a reason
+to FAIL or to rework. Main, or the default branch, moves all the time in a
+shared repository: no planned node asserts that it has not moved since %[1]s,
+and none uses %[1]s to prove that nothing landed on it. To show that the run's
+work is not on main, a check asserts that
+'git merge-base --is-ancestor <a commit this run made> main' exits non-zero.`
 
 // plannerContinuationTemplate is appended to the planner prompt on cycle
 // k ≥ 2 of a goal loop (ADR 0011 §2): the statement that a previous attempt

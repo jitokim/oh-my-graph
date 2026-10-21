@@ -21,8 +21,9 @@ var updatePlannerGoldens = flag.Bool("update-planner-goldens", false, "regenerat
 
 // The fixed inputs every planner-prompt golden is rendered from.
 const (
-	goldenGoal      = "add a --json flag to the status command"
-	goldenRemaining = "the status command still prints text when --json is passed"
+	goldenGoal        = "add a --json flag to the status command"
+	goldenRemaining   = "the status command still prints text when --json is passed"
+	goldenStartCommit = "0123456789abcdef0123456789abcdef01234567"
 )
 
 var goldenInputKeys = []string{"repo", "branch"}
@@ -129,4 +130,11 @@ func TestPlannerPromptGoldens_MenuOn(t *testing.T) {
 	checkPlannerGolden(t, "first-menu", first.Prompt)
 	checkPlannerGolden(t, "repair-menu", repair.Prompt)
 	checkPlannerGolden(t, "continuation-menu", continuation.Prompt)
+}
+
+// #414: the first-cycle prompt with the start commit known, so the paragraph
+// that measures scope from it is a reviewed golden diff.
+func TestPlannerPromptGoldens_StartCommit(t *testing.T) {
+	first, _, _ := plannerPrompts(t, WithStartCommit(goldenStartCommit))
+	checkPlannerGolden(t, "first-start-commit", first.Prompt)
 }
