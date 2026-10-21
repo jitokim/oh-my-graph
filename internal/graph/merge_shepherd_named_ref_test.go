@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -27,7 +28,9 @@ const shepherdGraphPath = "../../graphs/merge-shepherd.yaml"
 // shepherdNode names one of the two checked nodes and where it builds its
 // worktree. The paths stay fixed under /tmp because the shipped verify command
 // hard-codes them, so t.TempDir() cannot stand in. Every test uses PR numbers no
-// real run would use, and leftovers from an aborted earlier run are cleared:
+// real run would use, and the numbers are per process — derived from the
+// process ID by shepherdPR — so two overlapping test runs on one machine never
+// share a path or ref. Leftovers from an aborted earlier run are cleared:
 // addWorktree and clearShepherdDir both RemoveAll the path first and register a
 // cleanup that removes it again.
 type shepherdNode struct {
@@ -38,6 +41,14 @@ type shepherdNode struct {
 var shepherdNodes = []shepherdNode{
 	{id: "verify", dir: "/tmp/shepherd-%s"},
 	{id: "triage", dir: "/tmp/shepherd-triage-%s"},
+}
+
+// shepherdPR returns a fake PR number unique to this test process: the fixed
+// /tmp paths and refs would otherwise collide when two `go test` processes
+// overlap on one machine (#412). offset is 0..99, distinct per call site, so
+// the result is always 9 digits, above any real PR.
+func shepherdPR(offset int) string {
+	return strconv.Itoa(100000000 + (os.Getpid()%8000000)*100 + offset)
 }
 
 func loadShepherdNode(t *testing.T, id string) graph.Node {
@@ -279,7 +290,7 @@ func TestMergeShepherd360CheckPassesWhenWorktreeAtPRHead(t *testing.T) {
 	for _, sn := range shepherdNodes {
 		t.Run(sn.id, func(t *testing.T) {
 			fx := newShepherdFixture(t)
-			pr := "936101"
+			pr := shepherdPR(1)
 			sha := fx.openPR(t, pr)
 			fx.prescribedRun(t, pr, sha, fmt.Sprintf(sn.dir, pr))
 			if out, ok := fx.runCheck(t, loadShepherdNode(t, sn.id), pr); !ok {
@@ -294,7 +305,7 @@ func TestMergeShepherd360CheckFailsWhenHeadMovedAfterFetch(t *testing.T) {
 	for _, sn := range shepherdNodes {
 		t.Run(sn.id, func(t *testing.T) {
 			fx := newShepherdFixture(t)
-			pr := "936102"
+			pr := shepherdPR(2)
 			sha := fx.openPR(t, pr)
 			fx.prescribedRun(t, pr, sha, fmt.Sprintf(sn.dir, pr))
 			fx.setGHHead(t, pr, strings.Repeat("a", 40))
@@ -314,7 +325,7 @@ func TestMergeShepherd360CheckFailsWithoutWorktreeOrHead(t *testing.T) {
 	for _, sn := range shepherdNodes {
 		t.Run(sn.id+"/worktree missing", func(t *testing.T) {
 			fx := newShepherdFixture(t)
-			pr := "936103"
+			pr := shepherdPR(3)
 			clearShepherdDir(t, fmt.Sprintf(sn.dir, pr))
 			fx.openPR(t, pr)
 			out, ok := fx.runCheck(t, loadShepherdNode(t, sn.id), pr)
@@ -328,7 +339,7 @@ func TestMergeShepherd360CheckFailsWithoutWorktreeOrHead(t *testing.T) {
 		for name, content := range map[string]string{"gh fails": "", "gh prints nothing": "\n"} {
 			t.Run(sn.id+"/"+name, func(t *testing.T) {
 				fx := newShepherdFixture(t)
-				pr := "936104"
+				pr := shepherdPR(4)
 				sha := fx.openPR(t, pr)
 				fx.prescribedRun(t, pr, sha, fmt.Sprintf(sn.dir, pr))
 				if err := os.WriteFile(filepath.Join(fx.ghDir, "head-"+pr), []byte(content), 0o644); err != nil {
@@ -352,7 +363,7 @@ func TestMergeShepherd360CheckCleansOwnWorktreeAndRefOnly(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				fx := newShepherdFixture(t)
-				pr, otherPR := "936105", "936106"
+				pr, otherPR := shepherdPR(5), shepherdPR(6)
 				sha := fx.openPR(t, pr)
 				otherSHA := fx.openPR(t, otherPR)
 				dir := fmt.Sprintf(sn.dir, pr)
@@ -412,10 +423,10 @@ func TestMergeShepherd360InterleavedRunsKeepTheirOwnHead(t *testing.T) {
 		first  int // which run goes first at each step: 0 = A then B, 1 = B then A
 		verify string
 	}{
-		{"A then B", "936201", "936202", 0, "verify"},
-		{"B then A", "936203", "936204", 1, "verify"},
-		{"A then B triage", "936205", "936206", 0, "triage"},
-		{"B then A triage", "936207", "936208", 1, "triage"},
+		{"A then B", shepherdPR(11), shepherdPR(12), 0, "verify"},
+		{"B then A", shepherdPR(13), shepherdPR(14), 1, "verify"},
+		{"A then B triage", shepherdPR(15), shepherdPR(16), 0, "triage"},
+		{"B then A triage", shepherdPR(17), shepherdPR(18), 1, "triage"},
 	}
 	for _, o := range orders {
 		t.Run(o.name, func(t *testing.T) {
@@ -456,7 +467,7 @@ func TestMergeShepherd360InterleavedRunsKeepTheirOwnHead(t *testing.T) {
 // branch; the PR head is then the new commit, and the check must pass.
 func TestMergeShepherd360LegitimateTriagePushPassesCheck(t *testing.T) {
 	fx := newShepherdFixture(t)
-	pr := "936301"
+	pr := shepherdPR(21)
 	sha := fx.openPR(t, pr)
 	var triage shepherdNode
 	for _, c := range shepherdNodes {
@@ -576,7 +587,7 @@ func bashGrantPermits(grant []string, command string) bool {
 func TestMergeShepherd360GrantCoversAgentCleanup(t *testing.T) {
 	for _, sn := range shepherdNodes {
 		t.Run(sn.id, func(t *testing.T) {
-			pr := "936401"
+			pr := shepherdPR(31)
 			grant := loadShepherdNode(t, sn.id).AllowedTools
 			for _, cmd := range []string{
 				"git worktree remove --force " + fmt.Sprintf(sn.dir, pr),
@@ -647,7 +658,7 @@ func TestMergeShepherd360TriageRefusesForkPRPush(t *testing.T) {
 		t.Errorf("result_matches %q no longer passes TRIAGED 0", re)
 	}
 
-	cmd := "gh pr view 936401 --json isCrossRepository --jq .isCrossRepository"
+	cmd := "gh pr view " + shepherdPR(32) + " --json isCrossRepository --jq .isCrossRepository"
 	if !bashGrantPermits(triage.AllowedTools, cmd) {
 		t.Errorf("allowed_tools %v does not permit %q", triage.AllowedTools, cmd)
 	}
