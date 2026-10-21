@@ -194,3 +194,34 @@ func TestGoalAssessment_HugeSinkVerifyOutputReachesTheAssessorTailOnly(t *testin
 		t.Errorf("the engine record is missing beside the tail:\n%s", outside)
 	}
 }
+
+// #408: the assessor budgets sink artifacts first, so cycleEvidence has to
+// mark them — a node is a sink when no node's depends_on names it.
+func TestCycleEvidence_MarksSinkNodes(t *testing.T) {
+	t.Setenv("OMG_HOME", t.TempDir())
+	const runID = "run-sink-mark"
+	if err := runstate.Write(filepath.Join(runDirFor(runID), stateFileName), runstate.Snapshot{
+		RunID: runID,
+		Nodes: map[string]runstate.NodeRecord{
+			"a": {Verdict: runstate.VerdictPass},
+			"b": {Verdict: runstate.VerdictPass},
+		},
+	}); err != nil {
+		t.Fatalf("write fixture snapshot: %v", err)
+	}
+	plan := coordinator.Plan{Graph: &graph.Graph{Nodes: []graph.Node{{ID: "a"}, {ID: "b", DependsOn: []string{"a"}}}}}
+
+	evidence, err := cycleEvidence(runID, plan, true)
+	if err != nil {
+		t.Fatalf("cycleEvidence: %v", err)
+	}
+	if len(evidence.Nodes) != 2 {
+		t.Fatalf("got %d nodes, want 2: %+v", len(evidence.Nodes), evidence.Nodes)
+	}
+	if a := evidence.Nodes[0]; a.ID != "a" || a.Sink {
+		t.Errorf("node a = %+v, want ID a and not a sink", a)
+	}
+	if b := evidence.Nodes[1]; b.ID != "b" || !b.Sink {
+		t.Errorf("node b = %+v, want ID b marked as a sink", b)
+	}
+}
