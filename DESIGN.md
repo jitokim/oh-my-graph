@@ -1558,7 +1558,10 @@ So a verdict pattern is written in two halves, and both are load-bearing:
   (`branchEvidenceRule`, `internal/coordinator/coordinator.go`). The threshold
   is stated with it, so the rule does not convert every remark into a halted
   run: an observation a reader would not act on is not a reason to withhold
-  `PASS`. The pattern itself is unchanged — the caveat found a home in the
+  `PASS`. Nor is an action the goal forbids the run to take — pushing,
+  opening or editing a pull request, creating a remote: that is the
+  operator's next step, not a qualification a reader would act on, so it is
+  never a reason to reply `FAIL` (#388). The pattern itself is unchanged — the caveat found a home in the
   prompt, not in a relaxed anchor (#264). Every `success_check` that prompt
   hands out with a `result_matches` — this whole-reply pin, the prefix
   verdict a report node may take instead, and the alternative it names to a
