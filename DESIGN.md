@@ -3932,9 +3932,16 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   the command. The output tail is the command's own text,
   so it goes INSIDE a nonce-fenced `engine verification` block as DATA, like
   an artifact. The blocks render after the node results and before every
-  artifact, and their tails share the artifacts' caps (2000 bytes each, 12000
-  in total), so a node's own artifact cannot spend the room the engine's
-  observation of it needs. A tail is cut from its head, and every cut is said
+  artifact, and their tails share the artifacts' 12000-byte total cap, each
+  tail cut to 2000 bytes (`maxAssessArtifactExcerpt`), so a node's own
+  artifact cannot spend the room the engine's observation of it needs. The
+  artifacts then share what remains fairly: each gets the remaining budget
+  divided by the artifacts still to render, never less than 2000 bytes and
+  never more than what remains. A short artifact spends only its own length,
+  leaving the rest to the ones after it, so one long artifact beside short
+  ones renders whole. Once the 12000-byte budget is spent, later artifacts
+  are dropped with one loud `(further artifacts omitted: total material cap
+  reached)` line. A tail is cut from its head, and every cut is said
   above the fence. When the record's `output_truncated` is set, the engine's
   own line says so (`output: the command printed more than the engine
   retains, so the engine kept only the last N bytes of its output; everything
