@@ -2001,10 +2001,12 @@ func extractJSON(result string) string {
 //     An unmatched '{' whose first non-whitespace successor is '"' looks like
 //     a cut-off object, so its span runs to the end of the reply and nothing
 //     after it is tried — a cut-off plan never yields one of its inner node
-//     objects. Any other unmatched '{' (prose like "use the {name field", a
-//     cut-off placeholder) skips only itself. A candidate whose span decodes
-//     as one JSON object is a hit: exactly one hit is returned, more than one
-//     is an error.
+//     objects. With an earlier hit, a cut-off candidate is an error: the
+//     reply may be truncated, so that hit is never taken as the plan. Any
+//     other unmatched '{' (prose like "use the {name field", a cut-off
+//     placeholder) skips only itself. A candidate whose span decodes as one
+//     JSON object is a hit: exactly one hit is returned, more than one is an
+//     error.
 //   - No hit falls back to extractJSON's first '{' to last '}' cut, so a
 //     broken or cut-off reply still reaches the parser and its real syntax
 //     error. "" with a nil error when the reply has no '{'.
@@ -2020,6 +2022,7 @@ func extractPlanJSON(reply string) (string, error) {
 	}
 
 	var hits []string
+	cutOff := false
 	for i := 0; i < len(reply); i++ {
 		if reply[i] != '{' {
 			continue
@@ -2029,6 +2032,7 @@ func extractPlanJSON(reply string) (string, error) {
 			if strings.HasPrefix(strings.TrimLeft(reply[i+1:], " \t\r\n"), `"`) {
 				// A cut-off object: its span is the rest of the reply, which
 				// cannot decode with a '{' left open.
+				cutOff = true
 				break
 			}
 			continue
@@ -2037,6 +2041,9 @@ func extractPlanJSON(reply string) (string, error) {
 			hits = append(hits, span)
 		}
 		i = end
+	}
+	if cutOff && len(hits) > 0 {
+		return "", errors.New("reply holds a JSON object followed by an unterminated one (it may be cut off)")
 	}
 	switch len(hits) {
 	case 1:

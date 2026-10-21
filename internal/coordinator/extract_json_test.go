@@ -198,3 +198,61 @@ func TestExtractPlanJSON_PlannerReply387Fixture(t *testing.T) {
 		t.Fatalf("ParsePlannerReply on extracted fixture reply: %v", err)
 	}
 }
+
+// TestExtractPlanJSON_ObjectThenCutOffIsRefused pins the #387 review
+// follow-up: a valid object followed by a cut-off one is what a reply
+// truncated mid-way looks like, so the earlier object is never taken as the
+// plan.
+func TestExtractPlanJSON_ObjectThenCutOffIsRefused(t *testing.T) {
+	cases := []struct {
+		name  string
+		reply string
+	}{
+		{
+			name:  "compact cut-off object after the plan",
+			reply: validSpec + "\nAnd the revised plan:\n" + cutOffSpec,
+		},
+		{
+			name:  "pretty cut-off object after the plan",
+			reply: validSpec + "\nAnd the revised plan:\n{\n  \"name\": \"x\",\n  \"nodes\": [",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := extractPlanJSON(tc.reply)
+			if err == nil || !strings.Contains(err.Error(), "unterminated") || !strings.Contains(err.Error(), "cut off") {
+				t.Fatalf("extractPlanJSON(%q) = %q, %v; want an unterminated/cut-off object error", tc.reply, got, err)
+			}
+		})
+	}
+}
+
+// TestExtractPlanJSON_BrokenBracesBeforePlanStillParse pins, for the same
+// follow-up, that only a cut-off candidate AFTER a hit is refused: a broken
+// brace in prose before the plan still lets the plan parse.
+func TestExtractPlanJSON_BrokenBracesBeforePlanStillParse(t *testing.T) {
+	cases := []struct {
+		name  string
+		reply string
+	}{
+		{
+			name:  "unmatched brace not followed by a quote",
+			reply: "I will use the {name field.\n" + validSpec,
+		},
+		{
+			name:  "closed but invalid brace span",
+			reply: "First {not json} then:\n" + validSpec,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractPlanJSONOrFatal(t, tc.reply)
+			if got != validSpec {
+				t.Fatalf("extractPlanJSON(%q)\n got: %q\nwant: %q", tc.reply, got, validSpec)
+			}
+			if _, err := graph.ParsePlannerReply([]byte(got)); err != nil {
+				t.Fatalf("ParsePlannerReply on extracted reply: %v", err)
+			}
+		})
+	}
+}

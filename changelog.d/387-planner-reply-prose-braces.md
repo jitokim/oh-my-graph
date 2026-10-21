@@ -12,8 +12,9 @@
   ambiguous rather than guessed at; the planner is not retried, and the
   router falls back to converse. A cut-off plan still reaches the parser and
   reports its real JSON syntax error, never a plan built from one of its
-  inner nodes. The goal assessor keeps the strict first-`{`-to-last-`}` cut,
-  since its reply quotes untrusted artifacts by design, so a quoted JSON
-  object in its reply still fails loudly instead of being taken as the
-  verdict.
+  inner nodes, and a valid object followed by a cut-off one is now refused,
+  since the reply may be truncated, rather than taken as the plan. The goal
+  assessor keeps the strict first-`{`-to-last-`}` cut, since its reply
+  quotes untrusted artifacts by design, so a quoted JSON object in its reply
+  still fails loudly instead of being taken as the verdict.
   ([#387](https://github.com/jitokim/oh-my-graph/issues/387))
