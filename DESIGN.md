@@ -3992,49 +3992,49 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   members as the budget left holds get the floor, chosen in node-ID order,
   and join the artifacts taking part; the rest of the group gets nothing and
   is omitted with its own omission line, because slices that small are
-  useless as evidence. When not even one member fits a floor, the artifacts
-  taking part water-fill what is left, and only what they cannot use,
-  because they are already whole, goes to the first member by node ID. Every later group gets nothing in pass 2 (a sink
-  keeps its pass-1 share). The artifacts taking part share the rest of the
-  pass-2 budget by the same water-filling, with no floor, so the budget a
-  floor left over, less than one floor on the node-ID path, is shared
-  fairly and the allowances sum to at or near the budget, never above it.
+  useless as evidence. Every later group gets nothing in pass 2 (a sink
+  keeps its pass-1 share). The artifacts taking part share the whole pass-2
+  budget by the same water-filling, with no floor, so the budget a floor
+  left over, less than one floor on the node-ID path, is shared fairly and
+  the allowances sum to at or near the budget, never above it. When not
+  even one member fits a floor, only what the artifacts taking part cannot
+  use, because they are already whole, goes to the first member by node ID.
   A sink's allowance is its pass-1 share plus its pass-2 share, so one
   12 KB sink beside three 1 KB non-sinks gets 9000 bytes and each non-sink
-  renders whole. The no-sink path exists only for evidence built without `Sink` set
-  (older callers, tests): there pass 1 is empty and the whole budget splits
-  as in pass 2. Artifacts still render in graph order, each cut to its fixed
-  allowance. An artifact whose allowance is zero is omitted with its own
-  loud line, `(artifact of node <id> omitted: material cap reached)`,
-  outside the fences where its block would have been, and rendering carries
-  on past it: every dropped node is named, and a sink later in graph order
-  still renders. A tail is cut from its head,
-  and every cut is said above the fence. When the record's `output_truncated`
-  is set, the engine's own line says so (`output: the command printed more
-  than the engine retains, so the engine kept only the last N bytes of its
-  output; everything earlier was dropped when the check was recorded`). It
-  is written from the record's flag, not the tail's marker, which the command
-  could forge and the material cap could trim away. A further cut for the
-  material cap adds
-  `output: the last N of M bytes; the earlier K bytes were dropped for the
-  material cap`. Once the total cap is spent the line reads
-  `output: omitted (total material cap reached)`. The engine-observed lines
-  always render: a cap may drop output, never the record that a check
-  failed. The assessor prompt gains one sentence: an engine verification
-  block is the engine's own observation of a command it ran itself, and it
-  outranks a node's reply about the same check. That is a ranking of
-  evidence, **not a claim that exit 0 means the goal is met** — a passing
-  check is still only as wide as the command, and the assessor judges the
-  goal on all the material. The next cycle's planner prompt fences the `remaining` it
-  quotes the same way. The verdict is a hard JSON
-  contract; garbage is an `*AssessError` that stops the loop. Each verdict
-  is printed the moment it returns (`GoalOptions.OnCycleAssessed`) and
-  persisted as `assess.json` in that cycle's run directory (`goal_met`,
+  renders whole. The no-sink path exists only for evidence built without
+  `Sink` set (older callers, tests): there pass 1 is empty and the whole
+  budget splits as in pass 2. Artifacts still render in graph order, each
+  cut to its fixed allowance. An artifact whose allowance is zero is
+  omitted with its own loud line,
+  `(artifact of node <id> omitted: material cap reached)`, outside the
+  fences where its block would have been, and rendering carries on past
+  it: every dropped node is named, and a sink later in graph order still
+  renders. A tail is cut from its head, and every cut is said above the
+  fence. When the record's `output_truncated` is set, the engine's own line
+  says so (`output: the command printed more than the engine retains, so the
+  engine kept only the last N bytes of its output; everything earlier was
+  dropped when the check was recorded`). It is written from the record's
+  flag, not the tail's marker, which the command could forge and the material
+  cap could trim away. A further cut for the material cap adds `output: the
+  last N of M bytes; the earlier K bytes were dropped for the material cap`.
+  Once the total cap is spent the line reads `output: omitted (total material
+  cap reached)`. The engine-observed lines always render: a cap may drop
+  output, never the record that a check failed. The assessor prompt gains one
+  sentence: an engine verification block is the engine's own observation of a
+  command it ran itself, and it outranks a node's reply about the same check.
+  That is a ranking of evidence, **not a claim that exit 0 means the goal is
+  met** — a passing check is still only as wide as the command, and the
+  assessor judges the goal on all the material. The next cycle's planner
+  prompt fences the `remaining` it quotes the same way. The verdict is a hard
+  JSON contract; garbage is an `*AssessError` that stops the loop. Each
+  verdict is printed the moment it returns (`GoalOptions.OnCycleAssessed`)
+  and persisted as `assess.json` in that cycle's run directory (`goal_met`,
   `remaining`, `evidence`, `assess_cost_usd` — the assessment cost the
   cycle's ledger cannot include, since the ledger prints before assessment).
   The printed `remaining:` and `evidence:` lines, the final `remaining` an
-  unmet-goal exit error quotes, and the assessor reply an `*AssessError` quotes (cleaned before its `maxOutputInError` cut), are
-  sanitised for the terminal by `fence.SanitizeTerminalLine`; `assess.json`,
+  unmet-goal exit error quotes, and the assessor reply an `*AssessError`
+  quotes (cleaned before its `maxOutputInError` cut), are sanitised for the
+  terminal by `fence.SanitizeTerminalLine`; `assess.json`,
   `AssessError.Output` and the next cycle's planner prompt keep the raw text,
   and the goal is still judged on the raw run output (#349).
 
