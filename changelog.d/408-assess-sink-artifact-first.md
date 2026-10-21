@@ -16,8 +16,9 @@
   when each share is at least 1000 bytes, half the floor; node ID then only
   hands out the few leftover bytes that do not split evenly. Below that, as
   many members as fit get the floor in node-ID order and the rest of the
-  group is omitted, and the budget left below one floor is shared among the
-  artifacts that render, so the allowances end at or near the budget. Each
+  group is omitted (when not even one fits a floor, the first by node ID
+  takes what is left), and the budget left below one floor is shared among
+  the artifacts that render, so the allowances end at or near the budget. Each
   artifact left with nothing is omitted loudly with its own
   `(artifact of node <id> omitted: material cap reached)` line, where its
   artifact would have been, instead of one line for all of them.

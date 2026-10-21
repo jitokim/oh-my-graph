@@ -555,9 +555,11 @@ func sinkFirstAllowances(ids []string, lengths []int, sinks []bool, budget int) 
 // shares, and node ID only hands out the few bytes that do not split evenly.
 // Below that half-floor, as many members as the budget left holds get the
 // floor, chosen in node-ID order, and join the artifacts taking part; the
-// rest of the group gets nothing. Every later group gets nothing either, so
-// the renderer names each member left out in an omission line (a sink keeps
-// its pass-1 share). The artifacts taking part then water-fill the rest of
+// rest of the group gets nothing. When not even one member fits a floor, the
+// first by node ID takes what is left on its own and the artifacts taking
+// part keep their floors. Every later group gets nothing either, so the
+// renderer names each member left out in an omission line (a sink keeps its
+// pass-1 share). The artifacts taking part then water-fill the rest of
 // the budget among themselves with no floor: an artifact no longer than the
 // fair level gets its whole remaining length, and the budget the short ones
 // leave is split evenly among the longer ones, so the budget a floor left
@@ -592,6 +594,11 @@ func restAllowances(ids []string, remaining []int, sinks []bool, budget int) []i
 		}
 		byID := slices.Clone(group)
 		slices.SortFunc(byID, func(a, b int) int { return cmp.Compare(ids[a], ids[b]) })
+		if left/floor == 0 {
+			allowances[byID[0]] = left
+			budget -= left
+			break
+		}
 		taking = append(taking, byID[:left/floor]...)
 		break
 	}
