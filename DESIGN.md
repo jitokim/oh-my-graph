@@ -3126,6 +3126,27 @@ done-list `make local`, so the suite runs twice. That is the safe direction and
 must not be "fixed" into a skip — the planner cannot see inside the wrapper, and
 a looser match that guessed wrong would skip a suite nothing then runs.
 
+**The planner is told the commit the run started from (#414).** `auto`,
+`design` and `chat` read the invocation repository's HEAD once, at launch
+(`launchCommit`, `cmd/oh-my-graph/launchcommit.go`). `auto --interview` and
+`design` read it before the interview starts, so it is the commit the run
+launched on even when the interview takes minutes; `chat` reads it once when it
+starts, and every plan of the session uses that one commit. The helper asks git
+through `worktree.GitManager.HeadCommit` (`git rev-parse --verify HEAD`), the
+third exec seam (ADR 0005), so the CLI itself spawns nothing and no fifth
+spawner is added. It is empty when the directory is not a repository.
+They pass it with `coordinator.WithStartCommit`, and since one coordinator
+serves the whole goal loop, every cycle of a goal gets the same launch commit. The planner prompt
+then tells planned nodes to measure any scope or changed-files check from
+`<sha>..HEAD`, never from main, and never to revert, restore or check out a
+file the goal did not ask them to change. A file changed before the start
+commit is left alone: a finding about it is reported, never a reason to FAIL or
+to rework. No planned check asserts that main has not moved since the start
+commit, since main moves in a shared repository: to show that the run's work is
+not on main, a check asserts that `git merge-base --is-ancestor <a commit this
+run made> main` exits non-zero. With no start commit the prompt is unchanged,
+byte for byte.
+
 **The planner may cite a shape the operator already keeps (ADR 0038, #338).**
 Reuse is ON by default, on `auto` and on `chat`'s planning path, and
 `--no-reuse` (both surfaces, mapped onto `coordinator.WithoutReuse`) turns it
