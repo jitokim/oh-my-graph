@@ -1,6 +1,7 @@
 package coordinator
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -61,5 +62,18 @@ func TestExtractJSON_TemplateQuoteReplyParses(t *testing.T) {
 	reply := templateQuote + "\n" + validSpec
 	if _, err := graph.ParsePlannerReply([]byte(extractJSON(reply))); err != nil {
 		t.Fatalf("ParsePlannerReply on extracted reply: %v", err)
+	}
+}
+
+// TestExtractJSON_PlannerReply387Fixture replays the real rejected planner
+// reply from #386 behind a prose line quoting a template placeholder: the
+// plan must come out parseable.
+func TestExtractJSON_PlannerReply387Fixture(t *testing.T) {
+	reply, err := os.ReadFile("testdata/planner-reply-387.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := graph.ParsePlannerReply([]byte(extractJSON(string(reply)))); err != nil {
+		t.Fatalf("ParsePlannerReply on extracted fixture reply: %v", err)
 	}
 }
