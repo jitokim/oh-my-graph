@@ -439,6 +439,50 @@ func TestPlan_PromptRequiresCommittableSliceDecomposition(t *testing.T) {
 	}
 }
 
+// TestPlan_PromptDoesNotSplitPerFile pins the sizing rule #393 added: a
+// medium goal split into one node per file or per numbered change pays for a
+// fresh session that re-reads the same code at every node. So the rendered
+// prompt — every variant the golden tests render — forbids that split, keeps
+// a change's tests and docs with the change, and limits "prefer more, smaller
+// nodes" to substantial implementation in the very sentence that gives the
+// advice, not merely somewhere else in the prompt.
+func TestPlan_PromptDoesNotSplitPerFile(t *testing.T) {
+	first, repair, continuation := plannerPrompts(t)
+	for name, inv := range map[string]runner.NodeInvocation{
+		"first": first, "repair": repair, "continuation": continuation,
+	} {
+		// The template wraps at 76 columns, so join it into one line first.
+		prompt := strings.Join(strings.Fields(inv.Prompt), " ")
+		for _, want := range []string{
+			"Do not split a goal into one node per file or one node per numbered change.",
+			"Keep a change's tests and docs in the node that makes the change.",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("%s planner prompt lost the no-split guidance: missing %q", name, want)
+			}
+		}
+
+		const advice = "prefer more, smaller nodes (within the node cap)"
+		i := strings.Index(prompt, advice)
+		if i < 0 {
+			t.Errorf("%s planner prompt lost the advice %q", name, advice)
+			continue
+		}
+		// The sentence runs from the previous sentence end or rule bullet to
+		// the next sentence end.
+		start := max(strings.LastIndex(prompt[:i], ". "), strings.LastIndex(prompt[:i], " - ")) + 1
+		end := len(prompt)
+		if j := strings.Index(prompt[i:], ". "); j >= 0 {
+			end = i + j + 1
+		}
+		sentence := prompt[start:end]
+		if !strings.Contains(sentence, "Only if the goal involves substantial implementation") {
+			t.Errorf("%s planner prompt does not limit %q to substantial implementation in the same sentence: %q",
+				name, advice, sentence)
+		}
+	}
+}
+
 // TestPlan_PromptGuidesFeedbackLoops pins the review-loop guidance ADR 0010
 // adds: an iterative implement→review shape is declared as one feedback arc,
 // never hand-unrolled into repeated review/apply pairs, with a small max
