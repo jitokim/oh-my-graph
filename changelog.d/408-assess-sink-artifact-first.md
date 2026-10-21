@@ -22,5 +22,7 @@
   the artifacts that render, so the allowances end at or near the budget. Each
   artifact left with nothing is omitted loudly with its own
   `(artifact of node <id> omitted: material cap reached)` line, where its
-  artifact would have been, instead of one line for all of them.
+  artifact would have been, instead of one line for all of them. One visible
+  difference: ten equal 9 KB artifacts now each get about 1333 bytes, where
+  before the first six got 2000 bytes and the last four were omitted.
   ([#408](https://github.com/jitokim/oh-my-graph/issues/408))
