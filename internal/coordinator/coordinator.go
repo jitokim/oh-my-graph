@@ -2079,7 +2079,10 @@ func finalCheckWithoutVerifyCommand() string {
   so a planned node's run is the only run that command gets — nothing
   else runs it.` + doneListCommandRule() + `- Beyond that, a check node's prompt must only assert things it can
   actually observe with the tools it declared, and must never be written
-  as though its PASS meant the code works.
+  as though its PASS meant the code works: even when that PASS requires a
+  covered done-list command to exit 0, it still reports what this run's
+  node observed, not an engine verdict, so its provenance stays
+  self-reported.
 `
 }
 

@@ -673,6 +673,7 @@ func TestPlannerPromptWithoutVerifyCommandRunsACoveredDoneListCommand(t *testing
 		`("make test", "go test ./...",`,
 		"If one of them covers it, the FINAL check node runs that command once,\n  declares that pattern in its allowed_tools",
 		"its PASS requires that\n  command to exit 0",
+		"it still reports what this run's\n  node observed, not an engine verdict, so its provenance stays\n  self-reported.",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("with no --verify-cmd and a done-list \"make test\", the planner prompt lacks %q", want)

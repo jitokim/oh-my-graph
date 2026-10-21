@@ -243,7 +243,10 @@ Rules:
   PASS over a done item nothing ran.
 - Beyond that, a check node's prompt must only assert things it can
   actually observe with the tools it declared, and must never be written
-  as though its PASS meant the code works.
+  as though its PASS meant the code works: even when that PASS requires a
+  covered done-list command to exit 0, it still reports what this run's
+  node observed, not an engine verdict, so its provenance stays
+  self-reported.
 
 
 Your previous reply was REJECTED. The graph it described could not be loaded,
