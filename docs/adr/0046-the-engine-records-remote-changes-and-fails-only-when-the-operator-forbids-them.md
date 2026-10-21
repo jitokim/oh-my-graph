@@ -169,7 +169,8 @@ repository, `cmd.Env = childenv.Scrub(…)` plus `GH_PROMPT_DISABLED=1`
 (`internal/childenv/childenv.go:30–36`) and leaves `GH_TOKEN`, so `gh`
 authenticates as the operator. Its argv is fixed by the engine (`pr list
 --state open --limit 1000 --json number,headRefName,headRefOid`); no model
-text reaches it.
+text reaches it. `GHRunner` satisfies `remote.PRLister` (*chosen*), the
+interface the snapshot code takes, so tests use a fake.
 
 ADR 0002 (lines 58–64), 0005 and 0006 say a fifth spawner needs its own ADR;
 this is that ADR for one fixed, read-only `gh` invocation, nothing wider. The
@@ -370,7 +371,7 @@ None of these exist at `ac7391c`; every name is *chosen* and given in §2.3,
 - `internal/worktree/git.go`, `worktree.go`: the git snapshot methods and
   `RemoteObserver` with a fake (§2.3).
 - `internal/remote/gh.go`, `snapshot.go` (new): `GHRunner` (the fifth seam),
-  and a pure `Take`/`Diff` over the two interfaces.
+  and a pure `Take`/`Diff` over `RemoteObserver` and `PRLister`.
 - `internal/runstate/runstate.go`: the §2.2 records, the persisted flag and
   `SchemaWithRemoteGuard` (§5.3).
 - `cmd/oh-my-graph/flags.go`, `main.go`, `resume.go`: the flag; *before* and
