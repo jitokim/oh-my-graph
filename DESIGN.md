@@ -3123,6 +3123,19 @@ done-list `make local`, so the suite runs twice. That is the safe direction and
 must not be "fixed" into a skip — the planner cannot see inside the wrapper, and
 a looser match that guessed wrong would skip a suite nothing then runs.
 
+**The planner is told the commit the run started from (#414).** `auto` and
+`design` read the invocation repository's HEAD once, at launch
+(`launchCommit`, `cmd/oh-my-graph/launchcommit.go`). The helper reads the git
+dir in-process (`HEAD`, loose refs, `packed-refs`), so it adds no fifth
+spawner. It is empty when the directory is not a repository. They pass it with
+`coordinator.WithStartCommit`, and since one coordinator serves the whole goal
+loop, every cycle of a goal gets the same launch commit. The planner prompt
+then tells planned nodes to measure any scope or changed-files check from
+`<sha>..HEAD`, never from main, and never to revert, restore or check out a
+file the goal did not ask them to change. A file changed before the start
+commit is left alone: a finding about it is reported, never a reason to FAIL or
+to rework. With no start commit the prompt is unchanged, byte for byte.
+
 **The planner may cite a shape the operator already keeps (ADR 0038, #338).**
 Reuse is ON by default, on `auto` and on `chat`'s planning path, and
 `--no-reuse` (both surfaces, mapped onto `coordinator.WithoutReuse`) turns it
