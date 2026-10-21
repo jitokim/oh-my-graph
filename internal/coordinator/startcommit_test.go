@@ -22,6 +22,12 @@ func TestPlan_StartCommitScopesThePlannerPrompt(t *testing.T) {
 		if strings.Count(prompt, "This run started from commit") != 1 {
 			t.Errorf("%s: the start-commit paragraph is not rendered exactly once", name)
 		}
+		if !strings.Contains(prompt, "no planned node asserts that it has not moved since "+sha) {
+			t.Errorf("%s: the prompt does not forbid asserting main has not moved since the start commit", name)
+		}
+		if !strings.Contains(prompt, "'git merge-base --is-ancestor <a commit this run made> main' exits non-zero") {
+			t.Errorf("%s: the prompt does not show the run's work is off main with merge-base --is-ancestor", name)
+		}
 	}
 
 	plainFirst, plainRepair, plainCont := plannerPrompts(t)

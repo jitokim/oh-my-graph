@@ -2465,7 +2465,11 @@ changed-files check a planned node writes is measured from that commit, with
 main or any other base. No planned node reverts, restores or checks out a file
 the goal did not ask it to change. A file changed by commits before %[1]s is
 left as it is: a finding about such a file is reported, and is never a reason
-to FAIL or to rework.`
+to FAIL or to rework. Main, or the default branch, moves all the time in a
+shared repository: no planned node asserts that it has not moved since %[1]s,
+and none uses %[1]s to prove that nothing landed on it. To show that the run's
+work is not on main, a check asserts that
+'git merge-base --is-ancestor <a commit this run made> main' exits non-zero.`
 
 // plannerContinuationTemplate is appended to the planner prompt on cycle
 // k ≥ 2 of a goal loop (ADR 0011 §2): the statement that a previous attempt

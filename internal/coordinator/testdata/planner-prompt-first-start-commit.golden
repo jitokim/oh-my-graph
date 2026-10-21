@@ -224,4 +224,8 @@ changed-files check a planned node writes is measured from that commit, with
 main or any other base. No planned node reverts, restores or checks out a file
 the goal did not ask it to change. A file changed by commits before 0123456789abcdef0123456789abcdef01234567 is
 left as it is: a finding about such a file is reported, and is never a reason
-to FAIL or to rework.
+to FAIL or to rework. Main, or the default branch, moves all the time in a
+shared repository: no planned node asserts that it has not moved since 0123456789abcdef0123456789abcdef01234567,
+and none uses 0123456789abcdef0123456789abcdef01234567 to prove that nothing landed on it. To show that the run's
+work is not on main, a check asserts that
+'git merge-base --is-ancestor <a commit this run made> main' exits non-zero.
