@@ -3104,6 +3104,25 @@ of a pinned file — the check can refuse a changed file, never run the original
 in its place — and `pin.go` imports no `os/exec`. What it does not cover is in
 LIMITATIONS.md.
 
+**The planner is told what the engine's verify run covers, so no node repeats
+it (#392, #399).** With `--verify-cmd`, the planner's final-check paragraph
+(`finalCheckWithVerifyCommand`) quotes the command's exact text, `strconv.Quote`'d
+onto a line of its own, and says no planned node runs it: the engine runs it
+once, after the final node. A node that changes code runs only the tests for
+what it changed (for Go, the changed packages), never the whole suite. A
+whole-suite command the goal's done list names that is not the verify command,
+character for character, belongs to the final check node: if one of the Bash
+patterns a planned node can declare (`plannedBashPatterns`) covers it, that node
+runs it once and its PASS requires it to exit 0; if none does (`npm test`,
+`pytest`), it replies FAIL naming the command — never a PASS over a done item
+nothing ran. That half is one string, `doneListCommandRule`, shared verbatim with
+the without-command paragraph (`finalCheckWithoutVerifyCommand`, #399), where
+there is no engine run to defer to. The match is exact text on purpose: a
+wrapper such as `sh v.sh` whose script runs `make local` does not match a
+done-list `make local`, so the suite runs twice. That is the safe direction and
+must not be "fixed" into a skip — the planner cannot see inside the wrapper, and
+a looser match that guessed wrong would skip a suite nothing then runs.
+
 **The planner may cite a shape the operator already keeps (ADR 0038, #338).**
 Reuse is ON by default, on `auto` and on `chat`'s planning path, and
 `--no-reuse` (both surfaces, mapped onto `coordinator.WithoutReuse`) turns it
