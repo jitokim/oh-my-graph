@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -449,6 +450,86 @@ func TestAssess_LongArtifactBesideShortOneRendersWhole(t *testing.T) {
 	}
 	if strings.Contains(captured.Prompt, fence.ExcerptMarker) {
 		t.Error("an artifact that fits the remaining budget was excerpted")
+	}
+}
+
+// #405: the split is fixed before any artifact renders, so order does not
+// matter. A long artifact placed BEFORE a short one still gets the budget the
+// short one leaves unused and renders whole.
+func TestAssess_LongArtifactBeforeShortOneRendersWhole(t *testing.T) {
+	fake, captured := newPlannerFake(runner.NodeOutcome{Result: assessMetReply})
+
+	big := "HEAD-MARKER " + strings.Repeat("a", 4500) + " MIDDLE-MARKER " + strings.Repeat("b", 4500) + " TAIL-MARKER"
+	evidence := CycleEvidence{RunID: "r1", Nodes: []NodeEvidence{
+		{ID: "big", Verdict: "PASS", Artifact: big},
+		{ID: "small", Verdict: "PASS", Artifact: "done"},
+	}}
+	if _, err := New(fake).Assess(context.Background(), "goal", evidence); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(captured.Prompt, big) {
+		t.Error("a long artifact placed before a short one must render whole")
+	}
+	if strings.Contains(captured.Prompt, fence.ExcerptMarker) {
+		t.Error("an artifact that fits the budget the short one leaves was excerpted")
+	}
+	if !strings.Contains(captured.Prompt, "\ndone\n") {
+		t.Error("the short artifact after the long one did not render")
+	}
+}
+
+// Two long artifacts around a short one split what the short one leaves:
+// both are cut, the short one renders whole, and the total stays in the cap.
+func TestAssess_TwoLongArtifactsAroundShortOneShareTheBudget(t *testing.T) {
+	fake, captured := newPlannerFake(runner.NodeOutcome{Result: assessMetReply})
+
+	long := strings.Repeat("w", 9000)
+	evidence := CycleEvidence{RunID: "r1", Nodes: []NodeEvidence{
+		{ID: "first", Verdict: "PASS", Artifact: long},
+		{ID: "small", Verdict: "PASS", Artifact: "SHORT-ARTIFACT"},
+		{ID: "second", Verdict: "PASS", Artifact: long},
+	}}
+	material := assessMaterial(evidence, "nonce")
+	if _, err := New(fake).Assess(context.Background(), "goal", evidence); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := strings.Count(captured.Prompt, fence.ExcerptMarker); got != 2 {
+		t.Errorf("%d artifacts were excerpted, want both long ones cut", got)
+	}
+	if !strings.Contains(captured.Prompt, "SHORT-ARTIFACT") {
+		t.Error("the short artifact between the long ones did not render whole")
+	}
+	if strings.Contains(captured.Prompt, "total material cap reached") {
+		t.Error("no artifact should be omitted: the budget holds an excerpt of each")
+	}
+	artifactBytes := strings.Count(material, "w") + len("SHORT-ARTIFACT") + 2*len(fence.ExcerptMarker)
+	if artifactBytes > maxAssessArtifactMaterial {
+		t.Errorf("artifact material totals %d bytes, over the %d cap", artifactBytes, maxAssessArtifactMaterial)
+	}
+}
+
+func TestArtifactAllowances(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		lengths []int
+		budget  int
+		want    []int
+	}{
+		{"everything fits", []int{9000, 4}, 12000, []int{9000, 4}},
+		{"order does not matter", []int{4, 9000}, 12000, []int{4, 9000}},
+		{"long ones split what the short one leaves", []int{9000, 4, 9000}, 12000, []int{5998, 4, 5998}},
+		{"the level never drops below the floor", []int{6000, 6000, 6000, 6000, 6000, 6000, 6000}, 12000, []int{2000, 2000, 2000, 2000, 2000, 2000, 2000}},
+		{"short ones under the floor stay whole", []int{6000, 100, 6000, 6000, 6000, 6000, 6000, 6000}, 12000, []int{2000, 100, 2000, 2000, 2000, 2000, 2000, 2000}},
+		{"no budget left still yields the floor", []int{5000}, 0, []int{2000}},
+		{"no artifacts", nil, 12000, []int{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := artifactAllowances(tc.lengths, tc.budget); !slices.Equal(got, tc.want) {
+				t.Errorf("artifactAllowances(%v, %d) = %v, want %v", tc.lengths, tc.budget, got, tc.want)
+			}
+		})
 	}
 }
 
