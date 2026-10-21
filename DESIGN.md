@@ -3968,7 +3968,12 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   its whole length, and the budget the short ones leave is split evenly
   among the longer ones, each still at least 2000 bytes when the half allows
   it. Where that floor would push the sinks past the half, they are trimmed
-  shortest first, ties broken by node ID, so their total never exceeds it.
+  shortest first, each group of equal-length sinks as one: a group keeps its
+  water-filled share only if every member's fits, otherwise its members split
+  what is left of the half equally and the longer sinks get nothing in pass
+  1. The few bytes that do not split evenly go back to pass 2's budget rather
+  than to one member, so equal sinks stay equal, and their total never
+  exceeds the half.
   Half, because the verdict needs both the final check and the evidence of
   the work: a single large sink can never push every other artifact out.
   Pass 2, the rest (`restAllowances`): whatever pass 1 left is shared across
@@ -3976,9 +3981,15 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   cut, which can get more. Each artifact that still needs something asks for
   a 2000-byte floor (or its remaining length, if shorter). When the budget
   cannot hold every floor, the floor goes to non-sinks before sinks, then
-  shorter remaining length first, ties broken by node ID, each taking its
-  floor while it still fits; those whose floor no longer fits get nothing in
-  pass 2. The ones that got the floor share the whole pass-2 budget by the
+  shorter remaining length first, never by graph position or node ID.
+  Artifacts of the same kind (sink or non-sink) and the same remaining
+  length form one group, and either every member of a group gets the floor
+  or none does: groups take their floors in that order while the budget left
+  holds the whole group's. The first group it cannot hold splits what is
+  left equally among its members by water-filling, so equal artifacts always
+  get equal shares; node ID only hands out the few bytes that do not split
+  evenly. Every later group gets nothing in pass 2 (a sink keeps its pass-1
+  share). The groups that got the floor share the whole pass-2 budget by the
   same water-filling, with no floor, so none of it is wasted. A sink's
   allowance is its pass-1 share plus its pass-2 share, so one 12 KB sink
   beside three 1 KB non-sinks gets 9000 bytes and each non-sink renders

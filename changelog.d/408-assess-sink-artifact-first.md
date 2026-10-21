@@ -10,7 +10,11 @@
   budget, and what is left is shared across every artifact's remaining
   length, so a single large sink can no longer push the other artifacts out.
   When the budget cannot give every artifact a 2000-byte floor, non-sinks get
-  it before sinks, then shorter artifacts first, ties broken by node ID. Each
+  it before sinks, then shorter artifacts first. Artifacts of the same kind
+  and the same length are one group: all of them get the floor or none does,
+  and a group that cannot all get it shares what is left equally, so equal
+  artifacts always get equal shares. Node ID only hands out the few leftover
+  bytes that do not split evenly, never who gets the floor. Each
   artifact left with nothing is omitted loudly with its own
   `(artifact of node <id> omitted: material cap reached)` line, where its
   artifact would have been, instead of one line for all of them.
