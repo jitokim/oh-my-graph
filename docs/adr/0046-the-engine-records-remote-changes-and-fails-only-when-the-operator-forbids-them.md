@@ -127,7 +127,8 @@ exactly when its head sha is. The field takes two values (*chosen*):
   `branch_deleted`, `pr_no_longer_open`) and every between-legs entry (§3.1).
   It is labelled **"observed, not attributable"** (*chosen*).
 
-Attribution is a property of the sha, recorded for every entry that has one.
+Attribution is a property of the sha, recorded for every within-leg entry
+that has one (between-legs entries are always `not_attributable`, §3.1).
 Whether an entry can fail a guarded run is a separate question, decided by its
 kind (§5.1): only `branch_created` and `pr_opened` with `run_commit`, and
 `remote_added`, can. `branch_moved` and `pr_updated` carry the label and are
@@ -357,7 +358,7 @@ change record (§5.1): a `branch_created` or `pr_opened` that is attributable,
 or a `remote_added`. Every other entry is reported and never forbidden. The
 flag does not take a list of kinds (*chosen*): one switch; `branch_moved` and
 `pr_updated` are always reported only, as are the other §2.2 kinds (§3.1 false
-negative, §9 items 2 and 3).
+negative, §9 item 3).
 
 ## 5. Recommendation
 
@@ -410,7 +411,8 @@ commands in the invocation repository, in this order:
    repository's object store, which the run's worktrees share. A sha that
    someone else pushed and that no node fetched fails here, and the check
    stops.
-2. `git merge-base --is-ancestor S B` **fails**, and
+2. `git merge-base --is-ancestor S B` **fails** (it succeeds for S = B, so B
+   itself is excluded), and
    `git merge-base --is-ancestor S R` succeeds for some ref R listed by
    `git for-each-ref --format='%(refname)' refs/heads/omg/<<runID>>/`.
    Those refs are the run's own branches, named by `branchPrefix`
@@ -526,7 +528,7 @@ run has none. Each such entry costs one `git cat-file -e` and at most one
 `git merge-base --is-ancestor` against the run's base commit B plus one per
 run branch, plus one `git for-each-ref` per leg. Reading B costs one
 `git rev-parse HEAD`, once per run. All of these are local, use no network and
-take milliseconds. The check runs for every entry with a new sha, `branch_moved`
+take milliseconds. The check runs for every within-leg entry with a new sha, `branch_moved`
 and `pr_updated` included, and whether or not the flag is set, because the
 label is part of the record; only the verdict looks at the kind. Deciding
 whether a `remote_added` is forbidden costs nothing beyond the diff.
