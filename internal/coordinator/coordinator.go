@@ -664,7 +664,7 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string, offe
 		}}
 	}
 
-	spec := extractJSON(outcome.Result)
+	spec, _ := extractPlanJSON(outcome.Result)
 	if spec == "" {
 		return Plan{}, accounting, &planRefusal{err: &PlanError{
 			Reason: "planner reply contained no JSON object",
@@ -1194,7 +1194,8 @@ func plannedNodeKeys(reply string) [][]string {
 	var raw struct {
 		Nodes []yaml.Node `yaml:"nodes"`
 	}
-	if err := yaml.Unmarshal([]byte(extractJSON(reply)), &raw); err != nil {
+	spec, _ := extractPlanJSON(reply)
+	if err := yaml.Unmarshal([]byte(spec), &raw); err != nil {
 		return nil
 	}
 	declared := make([][]string, len(raw.Nodes))
@@ -1965,20 +1966,34 @@ func reuseBindsList(entry ReuseEntry) string {
 
 // extractJSON isolates the JSON object from a coordinator call's reply (the
 // planner's or the router's), tolerating a markdown code fence or stray prose
-// around it. In order:
+// around it: everything outside the first '{' and the last '}' is discarded.
+// Returns "" when no object is present.
+func extractJSON(result string) string {
+	start := strings.Index(result, "{")
+	end := strings.LastIndex(result, "}")
+	if start == -1 || end < start {
+		return ""
+	}
+	return result[start : end+1]
+}
+
+// extractPlanJSON isolates the JSON object from a planner or router reply,
+// whose prose may quote template syntax before the plan (#387). In order:
 //   - the content of the first ```json fenced block that decodes as a JSON
 //     object, trimmed of surrounding whitespace;
 //   - else the first '{' from which exactly one JSON object decodes, as the
 //     bytes of that object alone — so braces in prose before the plan (a
-//     quoted {{ artifacts.x }} placeholder, an aside) are skipped, and prose
-//     after it is dropped even when it holds braces;
-//   - else everything from the first '{' to the last '}', so a genuinely
-//     broken reply still reaches the parser (and its error) as before.
+//     quoted artifacts placeholder, an aside) are skipped, and prose after
+//     it is dropped even when it holds braces;
+//   - else extractJSON's first '{' to last '}' cut, so a genuinely broken
+//     reply still reaches the parser (and its error) as before.
 //
-// Returns "" when no '{' is present.
-func extractJSON(result string) string {
+// Returns "" when no '{' is present. The error is always nil for now. The
+// goal assessor does NOT use this: its reply quotes untrusted artifacts by
+// design, so it keeps extractJSON's strict cut and fails loudly on two objects.
+func extractPlanJSON(reply string) (string, error) {
 	const fenceOpen = "```json"
-	for rest := result; ; {
+	for rest := reply; ; {
 		i := strings.Index(rest, fenceOpen)
 		if i == -1 {
 			break
@@ -1990,27 +2005,22 @@ func extractJSON(result string) string {
 		}
 		content := strings.TrimSpace(rest[:end])
 		if strings.HasPrefix(content, "{") && json.Valid([]byte(content)) {
-			return content
+			return content, nil
 		}
 		rest = rest[end+len("```"):]
 	}
 
-	for i := 0; i < len(result); i++ {
-		if result[i] != '{' {
+	for i := 0; i < len(reply); i++ {
+		if reply[i] != '{' {
 			continue
 		}
 		var obj json.RawMessage
-		if err := json.NewDecoder(strings.NewReader(result[i:])).Decode(&obj); err == nil {
-			return string(obj)
+		if err := json.NewDecoder(strings.NewReader(reply[i:])).Decode(&obj); err == nil {
+			return string(obj), nil
 		}
 	}
 
-	start := strings.Index(result, "{")
-	end := strings.LastIndex(result, "}")
-	if start == -1 || end < start {
-		return ""
-	}
-	return result[start : end+1]
+	return extractJSON(reply), nil
 }
 
 // plannerRetryCauses is the closed retry.on cause set, rendered into the

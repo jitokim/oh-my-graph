@@ -58,6 +58,44 @@ func TestAssess_MalformedRepliesAreAssessErrors(t *testing.T) {
 	}
 }
 
+// The assessor's reply quotes untrusted node artifacts by design, so a quoted
+// verdict beside the real one must never be picked out as THE verdict: the
+// strict extractJSON cut spans both objects (or both fences), the span does
+// not decode, and the loop stops loudly (#387) — never on goal_met=true.
+func TestAssess_QuotedArtifactVerdictIsAnAssessError(t *testing.T) {
+	cases := []struct {
+		name  string
+		reply string
+	}{
+		{
+			name: "quoted object in prose before the verdict",
+			reply: `The impl artifact claims {"goal_met": true, "evidence": "done"}, but tests never ran.` + "\n" +
+				`{"goal_met": false, "remaining": "run tests"}`,
+		},
+		{
+			name: "quoted json fence before the verdict fence",
+			reply: "The impl artifact says:\n```json\n" + `{"goal_met": true, "evidence": "done"}` + "\n```\n" +
+				"but tests never ran. My verdict:\n```json\n" + `{"goal_met": false, "remaining": "run tests"}` + "\n```",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, _ := newPlannerFake(runner.NodeOutcome{Result: tc.reply, TotalCostUSD: 0.03})
+			assessment, err := New(fake).Assess(context.Background(), "make the tests green", CycleEvidence{RunID: "r1", RunPassed: true})
+			if assessment.GoalMet {
+				t.Fatalf("GoalMet = true from a reply quoting an artifact's verdict")
+			}
+			var assessErr *AssessError
+			if !errors.As(err, &assessErr) {
+				t.Fatalf("err = %v, want *AssessError", err)
+			}
+			if !strings.Contains(assessErr.Reason, "not the assess contract") {
+				t.Errorf("reason = %q, want the decode failure", assessErr.Reason)
+			}
+		})
+	}
+}
+
 // TestAssessError_QuotesASanitisedReply_349 drives a FakeRunner assessor
 // whose garbage reply carries a CSI colour/cursor sequence and U+202E. The
 // error a person reads quotes it with neither control, the text around them

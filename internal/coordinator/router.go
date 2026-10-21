@@ -64,7 +64,7 @@ func (c *Coordinator) Route(ctx context.Context, message string) (Route, error) 
 // still text a user can read, and a chat loop that dies on one bad
 // classification is worse than one that answers oddly.
 func parseRoute(result string) Route {
-	spec := extractJSON(result)
+	spec, _ := extractPlanJSON(result)
 	if spec == "" {
 		return converseFallback(result)
 	}

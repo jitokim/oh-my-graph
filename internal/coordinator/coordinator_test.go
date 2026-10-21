@@ -614,7 +614,7 @@ func TestPlan_ToleratesFenceAndProseAroundJSON(t *testing.T) {
 }
 
 func TestPlan_ToleratesBracesInProseBeforeJSON(t *testing.T) {
-	// extractJSON skips a '{' from which no JSON object decodes, so braces in
+	// extractPlanJSON skips a '{' from which no JSON object decodes, so braces in
 	// prose before the plan no longer corrupt the extracted spec (#387).
 	reply := "Note {an aside} first.\n" + validSpec
 	fake, _ := newPlannerFake(runner.NodeOutcome{Result: reply})

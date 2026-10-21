@@ -123,9 +123,9 @@ var statedByShippedBehaviour = []stated{
 			regexp.MustCompile(`branchEvidenceRule`),
 			regexp.MustCompile(`The pattern itself is unchanged`),
 		},
-		address: "internal/coordinator/coordinator.go:2272-2279 — branchEvidenceRule reserves PASS " +
+		address: "internal/coordinator/coordinator.go:2282-2289 — branchEvidenceRule reserves PASS " +
 			"for the assertion holding and nothing a reader would act on differently, and sends " +
-			"anything else into the FAIL branch; internal/coordinator/coordinator.go:2350 — the " +
+			"anything else into the FAIL branch; internal/coordinator/coordinator.go:2360 — the " +
 			"pattern the same paragraph hands out is unchanged, anchored at both ends",
 		anchors: []string{
 			"markdown. Anything the node does need to report goes in the FAIL branch,",

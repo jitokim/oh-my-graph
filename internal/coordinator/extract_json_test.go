@@ -12,7 +12,57 @@ import (
 // placeholder in doubled curly braces, the shape that broke issue #387.
 var templateQuote = "I will wire the review node to read " + strings.Repeat("{", 2) + " artifacts.impl " + strings.Repeat("}", 2) + "."
 
+// TestExtractJSON pins main's strict cut: everything from the first '{' to
+// the last '}', with no attempt to pick one object out of several. The goal
+// assessor relies on that — a reply quoting an artifact's JSON beside its own
+// verdict must fail to decode, never yield the quoted verdict.
 func TestExtractJSON(t *testing.T) {
+	cases := []struct {
+		name  string
+		reply string
+		want  string
+	}{
+		{
+			name:  "no object",
+			reply: "I cannot help with that.",
+			want:  "",
+		},
+		{
+			name:  "bare object returned unchanged",
+			reply: validSpec,
+			want:  validSpec,
+		},
+		{
+			name:  "fence and prose around one object are discarded",
+			reply: "Here is the plan:\n```json\n" + validSpec + "\n```\nDone.",
+			want:  validSpec,
+		},
+		{
+			name:  "two objects are cut as one span",
+			reply: `quoted {"goal_met": true}, then {"goal_met": false}`,
+			want:  `{"goal_met": true}, then {"goal_met": false}`,
+		},
+		{
+			name:  "braces in prose before the object widen the cut",
+			reply: "Note {an aside} first.\n" + validSpec,
+			want:  "{an aside} first.\n" + validSpec,
+		},
+		{
+			name:  "closing brace before the opening one",
+			reply: "} then {",
+			want:  "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := extractJSON(tc.reply); got != tc.want {
+				t.Errorf("extractJSON(%q)\n got: %q\nwant: %q", tc.reply, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestExtractPlanJSON(t *testing.T) {
 	cases := []struct {
 		name  string
 		reply string
@@ -30,7 +80,7 @@ func TestExtractJSON(t *testing.T) {
 		},
 		{
 			name:  "trailing prose with braces is dropped",
-			reply: validSpec + "\nNote: review reads {{ artifacts.scan }} {ok}.",
+			reply: validSpec + "\nNote: review reads " + templateQuote + " {ok}.",
 			want:  validSpec,
 		},
 		{
@@ -51,29 +101,43 @@ func TestExtractJSON(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := extractJSON(tc.reply); got != tc.want {
-				t.Errorf("extractJSON(%q)\n got: %q\nwant: %q", tc.reply, got, tc.want)
+			got, err := extractPlanJSON(tc.reply)
+			if err != nil {
+				t.Fatalf("extractPlanJSON(%q): %v", tc.reply, err)
+			}
+			if got != tc.want {
+				t.Errorf("extractPlanJSON(%q)\n got: %q\nwant: %q", tc.reply, got, tc.want)
 			}
 		})
 	}
 }
 
-func TestExtractJSON_TemplateQuoteReplyParses(t *testing.T) {
+// extractPlanJSONOrFatal is extractPlanJSON for a test that expects no error.
+func extractPlanJSONOrFatal(t *testing.T, reply string) string {
+	t.Helper()
+	spec, err := extractPlanJSON(reply)
+	if err != nil {
+		t.Fatalf("extractPlanJSON: %v", err)
+	}
+	return spec
+}
+
+func TestExtractPlanJSON_TemplateQuoteReplyParses(t *testing.T) {
 	reply := templateQuote + "\n" + validSpec
-	if _, err := graph.ParsePlannerReply([]byte(extractJSON(reply))); err != nil {
+	if _, err := graph.ParsePlannerReply([]byte(extractPlanJSONOrFatal(t, reply))); err != nil {
 		t.Fatalf("ParsePlannerReply on extracted reply: %v", err)
 	}
 }
 
-// TestExtractJSON_PlannerReply387Fixture replays the real rejected planner
+// TestExtractPlanJSON_PlannerReply387Fixture replays the real rejected planner
 // reply from #386 behind a prose line quoting a template placeholder: the
 // plan must come out parseable.
-func TestExtractJSON_PlannerReply387Fixture(t *testing.T) {
+func TestExtractPlanJSON_PlannerReply387Fixture(t *testing.T) {
 	reply, err := os.ReadFile("testdata/planner-reply-387.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := graph.ParsePlannerReply([]byte(extractJSON(string(reply)))); err != nil {
+	if _, err := graph.ParsePlannerReply([]byte(extractPlanJSONOrFatal(t, string(reply)))); err != nil {
 		t.Fatalf("ParsePlannerReply on extracted fixture reply: %v", err)
 	}
 }
