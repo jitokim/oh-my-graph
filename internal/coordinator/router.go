@@ -59,13 +59,13 @@ func (c *Coordinator) Route(ctx context.Context, message string) (Route, error) 
 }
 
 // parseRoute turns the router's raw reply into a Route. Every malformed shape
-// — no JSON object, invalid JSON, an unknown mode, a graph decision with no
-// goal — resolves to the converse fallback rather than an error: the reply is
-// still text a user can read, and a chat loop that dies on one bad
-// classification is worse than one that answers oddly.
+// — no JSON object, more than one, invalid JSON, an unknown mode, a graph
+// decision with no goal — resolves to the converse fallback rather than an
+// error: the reply is still text a user can read, and a chat loop that dies
+// on one bad classification is worse than one that answers oddly.
 func parseRoute(result string) Route {
-	spec := extractJSON(result)
-	if spec == "" {
+	spec, err := extractPlanJSON(result)
+	if err != nil || spec == "" {
 		return converseFallback(result)
 	}
 	var decision routerDecision

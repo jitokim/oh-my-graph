@@ -50,10 +50,11 @@ func TestRoute_ToleratesFenceAndProse(t *testing.T) {
 }
 
 // TestRoute_MalformedFallsBackToConverse covers every malformed shape the
-// router can emit: no JSON at all, invalid JSON, an unknown mode, and a graph
-// decision missing its goal. All of them must degrade to a converse turn
-// echoing the raw reply — never an error, never a panic — because one bad
-// classification must not kill the chat loop.
+// router can emit: no JSON at all, invalid JSON, an unknown mode, a graph
+// decision missing its goal, and an ambiguous reply holding two objects. All
+// of them must degrade to a converse turn echoing the raw reply — never an
+// error, never a panic — because one bad classification must not kill the
+// chat loop.
 func TestRoute_MalformedFallsBackToConverse(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -63,6 +64,7 @@ func TestRoute_MalformedFallsBackToConverse(t *testing.T) {
 		{"invalid JSON", "{mode: converse, oops}"},
 		{"unknown mode", `{"mode":"panic","reply":"???"}`},
 		{"graph without goal", `{"mode":"graph","goal":"  "}`},
+		{"ambiguous: more than one JSON object", `{"mode":"converse","reply":"hi"} or {"mode":"graph","goal":"build it"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
