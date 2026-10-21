@@ -678,6 +678,10 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 	// On both runtimes, and on the coordinator for the goal loop's reason:
 	// every cycle renders the planner prompt afresh, menu included (ADR 0038).
 	options = append(options, reuseOptions(flags.noReuse)...)
+	// Read once, here, and held by the coordinator: every cycle of the goal
+	// loop measures scope from the commit the run launched on, never from a
+	// HEAD an earlier cycle moved (#414). "" outside a repository adds nothing.
+	options = append(options, coordinator.WithStartCommit(launchCommitOfWorkingDir()))
 	coord := coordinator.New(nodeRunner, options...)
 	return planAndExecute(ctx, os.Stdout, coord, nodeRunner, flags.commonRunFlags, flags.goal,
 		goalCycleOptions{maxCycles: flags.maxCycles, maxGoalBudgetUSD: flags.maxGoalBudgetUSD}, flags.planOnly, nil,

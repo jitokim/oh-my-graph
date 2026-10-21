@@ -144,7 +144,9 @@ func runDesignWithRuntime(runtime runner.Runtime, args []string, nodeRunner runn
 	ivCost, ivUnknown, ivUsage := interviewAccounting(result)
 	fmt.Fprintf(out, "\nInterview ended (%s): %d asked, %d answered, %d skipped; cost %s.\n",
 		result.Ending, result.Asked, result.Answered, result.Skipped, formatCost(ivCost, ivUnknown))
-	var options []coordinator.Option
+	// The commit the design launched on, so the planner's scope checks are
+	// measured from it exactly as `auto`'s are (#414).
+	options := []coordinator.Option{coordinator.WithStartCommit(launchCommitOfWorkingDir())}
 	if prefix == "" {
 		fmt.Fprint(out, "No answer was given, so the planner's prompt is exactly what `auto` would send.\n\n")
 	} else {
