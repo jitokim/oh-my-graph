@@ -3993,7 +3993,8 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   and join the artifacts taking part; the rest of the group gets nothing and
   is omitted with its own omission line, because slices that small are
   useless as evidence. When not even one member fits a floor, the first by
-  node ID takes what is left. Every later group gets nothing in pass 2 (a sink
+  node ID takes what is left on its own and the artifacts taking part keep
+  their floors. Every later group gets nothing in pass 2 (a sink
   keeps its pass-1 share). The artifacts taking part share the rest of the
   pass-2 budget by the same water-filling, with no floor, so the budget a
   floor left over, less than one floor on the node-ID path, is shared
