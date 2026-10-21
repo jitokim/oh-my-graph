@@ -564,7 +564,10 @@ func sinkFirstAllowances(ids []string, lengths []int, sinks []bool, budget int) 
 // less than one floor on the node-ID path, is shared fairly and none is
 // wasted. When not even one member fits a floor, only what the artifacts
 // taking part cannot use, because they are already whole, goes to the first
-// member by node ID, so the allowances still sum to at most budget.
+// member by node ID, and only when that leftover is at least
+// minAssessEqualShare; below it the first is omitted like the rest of its
+// group, so no artifact renders too thin to be evidence. Either way the
+// allowances still sum to at most budget.
 // Allowance i belongs to ids[i], remaining[i], sinks[i], in the caller's
 // order.
 func restAllowances(ids []string, remaining []int, sinks []bool, budget int) []int {
@@ -612,7 +615,7 @@ func restAllowances(ids []string, remaining []int, sinks []bool, budget int) []i
 		allowances[i] = min(remaining[i], level)
 		budget -= allowances[i]
 	}
-	if first >= 0 && budget > 0 {
+	if first >= 0 && min(remaining[first], budget) >= minAssessEqualShare {
 		allowances[first] = min(remaining[first], budget)
 	}
 	return allowances

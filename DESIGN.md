@@ -3998,7 +3998,9 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   left over, less than one floor on the node-ID path, is shared fairly and
   the allowances sum to at or near the budget, never above it. When not
   even one member fits a floor, only what the artifacts taking part cannot
-  use, because they are already whole, goes to the first member by node ID.
+  use, because they are already whole, goes to the first member by node ID,
+  and only when it is at least 1000 bytes; otherwise the first is omitted
+  too.
   A sink's allowance is its pass-1 share plus its pass-2 share, so one
   12 KB sink beside three 1 KB non-sinks gets 9000 bytes and each non-sink
   renders whole. The no-sink path exists only for evidence built without

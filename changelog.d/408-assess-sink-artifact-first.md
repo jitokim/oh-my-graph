@@ -18,7 +18,8 @@
   many members as fit get the floor in node-ID order and the rest of the
   group is omitted (when not even one fits a floor, the artifacts that
   render water-fill what is left, and only what they cannot use goes to the
-  first by node ID), and the budget left below one floor is shared among
+  first by node ID, when it is at least 1000 bytes; otherwise the first is
+  omitted too), and the budget left below one floor is shared among
   the artifacts that render, so the allowances end at or near the budget. Each
   artifact left with nothing is omitted loudly with its own
   `(artifact of node <id> omitted: material cap reached)` line, where its

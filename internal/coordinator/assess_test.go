@@ -999,6 +999,56 @@ func TestAssessMaterial_TenLargeArtifactsOmitNonSinksByName(t *testing.T) {
 	}
 }
 
+// #408: when not even one member of a group fits a floor, the first by node
+// ID gets the leftover only when it is at least minAssessEqualShare. Ten
+// 1000-byte non-sinks and one short one render whole; two equal 5 KB
+// non-sinks then face what is left, below half the floor each. At exactly
+// 1000 bytes left the first by node ID renders it; at 999 it is omitted by
+// name with the other, because a 999-byte slice is too thin to be evidence.
+func TestAssessMaterial_ZeroFitLeftoverStopsAtHalfTheFloor(t *testing.T) {
+	evidence := func(short int) CycleEvidence {
+		nodes := []NodeEvidence{
+			{ID: "big2", Verdict: "PASS", Artifact: strings.Repeat("b", 5000)},
+			{ID: "big1", Verdict: "PASS", Artifact: strings.Repeat("b", 5000)},
+			{ID: "short", Verdict: "PASS", Artifact: strings.Repeat("w", short)},
+		}
+		for i := 0; i < 10; i++ {
+			nodes = append(nodes, NodeEvidence{ID: fmt.Sprintf("n%d", i), Verdict: "PASS", Artifact: strings.Repeat("w", 1000)})
+		}
+		return CycleEvidence{RunID: "r1", Nodes: nodes}
+	}
+	omitted := func(material, id string) bool {
+		return strings.Contains(material, fmt.Sprintf("(artifact of node %s omitted: material cap reached)\n", id))
+	}
+
+	t.Run("1000 left renders the first by node ID", func(t *testing.T) {
+		material := assessMaterial(evidence(1000), "nonce")
+		sizes, _ := renderedArtifactSizes(t, evidence(1000))
+		if omitted(material, "big1") || sizes["big1"] == 0 {
+			t.Errorf("big1 rendered %d bytes, want the 1000-byte leftover rendered", sizes["big1"])
+		}
+		if !omitted(material, "big2") {
+			t.Errorf("big2 rendered %d bytes, want it omitted by name", sizes["big2"])
+		}
+	})
+
+	t.Run("999 left omits the first by node ID too", func(t *testing.T) {
+		material := assessMaterial(evidence(1001), "nonce")
+		sizes, _ := renderedArtifactSizes(t, evidence(1001))
+		for _, id := range []string{"big1", "big2"} {
+			if !omitted(material, id) {
+				t.Errorf("node %s rendered %d bytes, want it omitted by name", id, sizes[id])
+			}
+		}
+		if strings.Contains(material, "bbb") {
+			t.Error("the omitted 5 KB artifacts rendered some of their content")
+		}
+		if sizes["short"] != 1001 {
+			t.Errorf("the short artifact rendered %d bytes, want it whole", sizes["short"])
+		}
+	})
+}
+
 // sumSizes totals the rendered artifact sizes, excerpt markers included.
 func sumSizes(sizes map[string]int) int {
 	total := 0
