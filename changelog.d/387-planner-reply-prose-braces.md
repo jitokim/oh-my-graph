@@ -1,10 +1,19 @@
 ### Fixed
 
-- **A planner reply whose leading prose quotes template braces is no longer
-  refused as not-loadable YAML.** The plan object used to be cut from the
-  reply's first `{` to its last `}`, so a prose line quoting a placeholder
-  such as `<<name>>` in braces before the plan pulled that prose into the cut.
-  The plan is now found by decoding: the first `json` fenced block that holds
-  a JSON object, else the first `{` that decodes as one complete JSON object,
-  with any text after it ignored.
+- **A planner reply whose prose quotes template braces before the plan is no
+  longer refused as not-loadable YAML.** The plan object used to be cut from
+  the reply's first `{` to its last `}`, so a prose line quoting a template
+  placeholder such as `<<name>>` in braces before the plan pulled that prose
+  into the cut. The planner, the planned-node check and the router now pick
+  out the one JSON object in the reply: the one `json` fenced block that
+  holds a valid object, else the one `{`…`}` span that decodes as a complete
+  object, with stray braces in prose skipped. A reply that holds more than
+  one JSON object, as two objects or two valid `json` fences, is refused as
+  ambiguous rather than guessed at; the planner is not retried, and the
+  router falls back to converse. A cut-off plan still reaches the parser and
+  reports its real JSON syntax error, never a plan built from one of its
+  inner nodes. The goal assessor keeps the strict first-`{`-to-last-`}` cut,
+  since its reply quotes untrusted artifacts by design, so a quoted JSON
+  object in its reply still fails loudly instead of being taken as the
+  verdict.
   ([#387](https://github.com/jitokim/oh-my-graph/issues/387))
