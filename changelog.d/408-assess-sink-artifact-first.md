@@ -11,8 +11,9 @@
   sink can no longer push the other artifacts out. Every plan has at least one
   sink, because a DAG always has one; the no-sink path exists only for
   evidence built without `Sink` set (older callers, tests), which splits the
-  whole budget as before. Artifacts still render in graph order, and each one
-  that does not fit is omitted loudly with its own
+  whole budget as before. Artifacts still render in graph order, each cut
+  leaving room for the pass-1 share of every sink still to render, and each
+  one that does not fit is omitted loudly with its own
   `(artifact of node <id> omitted: material cap reached)` line, where its
   artifact would have been, instead of one line for all of them.
   ([#408](https://github.com/jitokim/oh-my-graph/issues/408))

@@ -3979,8 +3979,11 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   whole. The no-sink path exists only for evidence built without `Sink` set
   (older callers, tests): there pass 1 is empty and the whole budget splits
   as in pass 2, as before #408. Artifacts still render in graph order, each
-  cut never longer than the budget left, and a non-sink's cut never reaches
-  into the budget reserved for sinks still to render. An artifact left with
+  cut never longer than the budget left less the pass-1 shares of the sinks
+  still to render. Only those pass-1 shares are held back, never a sink's
+  pass-2 extra, so the reserve stays within half the budget; it bounds every
+  artifact, sinks included, so neither a non-sink nor an earlier sink's
+  pass-2 extra can eat a later sink's pass-1 share. An artifact left with
   nothing is omitted with its own loud line, `(artifact of node <id>
   omitted: material cap reached)`, outside the fences where its block would
   have been, and rendering carries on past it: every dropped node is named,
