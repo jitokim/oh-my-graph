@@ -25,16 +25,25 @@ const (
 	// excerpt gets in the assessor prompt while artifact budget remains, not
 	// its maximum: the artifact budget is split across ALL artifacts before
 	// any renders (see sinkFirstAllowances and artifactAllowances), sink
-	// nodes' artifacts first (#408), then short ones whole and the rest
-	// evenly among the long ones, so a long artifact beside short ones
-	// renders whole wherever it sits in graph order instead of being cut
-	// while the budget sits unused. Excerpts keep head and tail (see
-	// fence.Excerpt). A verification block's output tail is still capped at
-	// this size each.
+	// nodes' artifacts first up to half the budget (#408), then short ones
+	// whole and the rest evenly among the long ones, so a long artifact
+	// beside short ones renders whole wherever it sits in graph order
+	// instead of being cut while the budget sits unused. Excerpts keep head
+	// and tail (see fence.Excerpt). A verification block's output tail is
+	// still capped at this size each.
 	maxAssessArtifactExcerpt = 2000
 	// maxAssessArtifactMaterial caps the TOTAL artifact material across all
-	// nodes; artifacts past the cap are omitted loudly, never silently.
+	// nodes; artifacts past the cap are omitted loudly, each dropped node
+	// named in its own omission line, never silently.
 	maxAssessArtifactMaterial = 12000
+	// maxSinkPriorityShareNum/maxSinkPriorityShareDen is the most of the
+	// artifact budget the sink artifacts get first (#408): half, because the
+	// verdict needs both the final check AND the evidence of the work, so a
+	// single large sink can never push every other artifact out. The sinks
+	// can still get more from the rest of the budget, shared with the others
+	// (see sinkFirstAllowances).
+	maxSinkPriorityShareNum = 1
+	maxSinkPriorityShareDen = 2
 	// maxAssessDetailMaterial caps the TOTAL node-result detail across all
 	// nodes: a node's Detail is run-originated text (a stderr tail can be
 	// arbitrarily long), so like the artifacts it is bounded with the cut
@@ -425,19 +434,23 @@ func assessMaterial(evidence CycleEvidence, nonce string) string {
 		}
 	}
 	next := 0
-	omitted := false
 	for _, node := range evidence.Nodes {
 		if node.Artifact == "" {
 			continue
 		}
 		allowance, sink := allowances[next], sinks[next]
 		next++
-		// Each allowance was fixed above from every artifact's length, sinks
-		// first (#408), so a cut does not depend on where the other artifacts
-		// sit in graph order. The floor can promise more than the budget
-		// holds, so the running remainder still bounds the cut — and a
-		// non-sink's cut is also kept out of the budget reserved for the
-		// sinks still to render, so it can never starve a later sink.
+		// Each allowance was fixed above from every artifact's length in two
+		// passes — the sinks' priority share, at most half the budget, then
+		// the rest across all artifacts (#408) — so a cut does not depend on
+		// where the other artifacts sit in graph order. The floor can promise
+		// more than the budget holds, so the running remainder still bounds
+		// the cut — and a non-sink's cut is also kept out of the budget
+		// reserved for the sinks still to render, so it can never starve a
+		// later sink. An artifact with nothing left is omitted with a line
+		// naming its node, where its block would have been, and rendering
+		// goes on: a later sink can still render, and no dropped node goes
+		// unnamed.
 		bound := maxAssessArtifactMaterial - material
 		if sink {
 			reserved -= allowance
@@ -449,10 +462,7 @@ func assessMaterial(evidence CycleEvidence, nonce string) string {
 			cut = fence.Excerpt(node.Artifact, min(allowance, bound))
 		}
 		if cut == "" {
-			if !omitted {
-				b.WriteString("(further artifacts omitted: total material cap reached)\n")
-				omitted = true
-			}
+			fmt.Fprintf(&b, "(artifact of node %s omitted: material cap reached)\n", node.ID)
 			continue
 		}
 		material += len(cut)
@@ -466,51 +476,49 @@ func assessMaterial(evidence CycleEvidence, nonce string) string {
 	return b.String()
 }
 
-// sinkFirstAllowances splits the artifact budget sinks first (#408): each sink
-// artifact gets min(its length, max(budget / sinks, maxAssessArtifactExcerpt)).
-// If those allowances together overrun the budget, the sinks water-fill it
-// among themselves (artifactAllowances) and every non-sink gets 0. Otherwise
-// the non-sinks water-fill what the sinks leave, and get 0 when nothing is
-// left. With no sinks at all this is artifactAllowances over the whole budget.
-// Allowance i belongs to lengths[i], sinks[i], in the caller's order.
+// sinkFirstAllowances splits the artifact budget in two passes, sinks first
+// (#408). Pass 1, the priority share: the sinks together get at most
+// maxSinkPriorityShareNum/maxSinkPriorityShareDen of the budget, water-filled
+// among them (artifactAllowances), so a short sink takes only its length and
+// the rest goes to the longer sinks. Where the floor would push the sinks past
+// that share, the sinks are trimmed in the caller's order so their pass-1
+// total never exceeds it. Pass 2, the rest: whatever the budget has left after
+// pass 1 is water-filled across EVERY artifact's remaining length — the
+// non-sinks, and the sinks pass 1 cut, which can receive more. A sink's
+// allowance is its pass-1 share plus its pass-2 share. Every plan has at least
+// one sink, because a DAG always has one; the no-sink path exists only for
+// evidence built without Sink set (older callers, tests), and there pass 1 is
+// empty and this is artifactAllowances over the whole budget. Allowance i
+// belongs to lengths[i], sinks[i], in the caller's order.
 func sinkFirstAllowances(lengths []int, sinks []bool, budget int) []int {
-	var sinkLengths, otherLengths []int
+	var sinkLengths []int
 	for i, length := range lengths {
 		if sinks[i] {
 			sinkLengths = append(sinkLengths, length)
-		} else {
-			otherLengths = append(otherLengths, length)
 		}
-	}
-
-	sinkAllowances := make([]int, len(sinkLengths))
-	otherAllowances := make([]int, len(otherLengths))
-	if len(sinkLengths) > 0 {
-		share := max(budget/len(sinkLengths), maxAssessArtifactExcerpt)
-		spent := 0
-		for i, length := range sinkLengths {
-			sinkAllowances[i] = min(length, share)
-			spent += sinkAllowances[i]
-		}
-		if spent > budget {
-			sinkAllowances = artifactAllowances(sinkLengths, budget)
-			spent = budget
-		}
-		budget -= spent
-	}
-	if budget > 0 {
-		otherAllowances = artifactAllowances(otherLengths, budget)
 	}
 
 	allowances := make([]int, len(lengths))
-	nextSink, nextOther := 0, 0
-	for i := range lengths {
-		if sinks[i] {
-			allowances[i] = sinkAllowances[nextSink]
-			nextSink++
-		} else {
-			allowances[i] = otherAllowances[nextOther]
-			nextOther++
+	if len(sinkLengths) > 0 {
+		share := max(budget*maxSinkPriorityShareNum/maxSinkPriorityShareDen, 0)
+		sinkAllowances := artifactAllowances(sinkLengths, share)
+		next := 0
+		for i := range lengths {
+			if sinks[i] {
+				allowances[i] = min(sinkAllowances[next], share)
+				share -= allowances[i]
+				budget -= allowances[i]
+				next++
+			}
+		}
+	}
+	if budget > 0 {
+		remaining := make([]int, len(lengths))
+		for i, length := range lengths {
+			remaining[i] = length - allowances[i]
+		}
+		for i, extra := range artifactAllowances(remaining, budget) {
+			allowances[i] += extra
 		}
 	}
 	return allowances
@@ -523,8 +531,9 @@ func sinkFirstAllowances(lengths []int, sinks []bool, budget int) []int {
 // so many long artifacts each still get a usable excerpt and the ones the
 // budget cannot hold are omitted. Allowance i is min(lengths[i], level), in
 // the caller's order — the split itself never depends on that order.
-// sinkFirstAllowances calls it twice, for the sinks' share and then for the
-// non-sinks' remainder (#408).
+// sinkFirstAllowances calls it twice: in pass 1 over the sinks' lengths and
+// their priority share, in pass 2 over every artifact's remaining length and
+// the rest of the budget (#408).
 func artifactAllowances(lengths []int, budget int) []int {
 	sorted := slices.Clone(lengths)
 	slices.Sort(sorted)
