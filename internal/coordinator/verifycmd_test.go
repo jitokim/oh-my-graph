@@ -725,6 +725,58 @@ func TestPlannerPromptGivesTheFailBranchAPlaceForTheCaveat(t *testing.T) {
 	}
 }
 
+// TestPlannerPromptKeepsCheckNodesOffStateTheGoalForbids pins #388, in BOTH
+// spellings of the final-check paragraph. A goal that said not to push, not to
+// open a PR and not to create a remote got a final check node asserting an
+// open pull request — state the run was forbidden to change — and the cycle
+// FAILed over work that had landed. The pull-request assertion is scoped to a
+// goal whose own nodes push and open it, every check node asserts only what
+// this run produces, and a forbidden action is never a reason to reply FAIL.
+func TestPlannerPromptKeepsCheckNodesOffStateTheGoalForbids(t *testing.T) {
+	for _, verifyCmd := range []string{"make test", ""} {
+		prompt := plannerPromptNoMenu(t, "fix it on a branch; do not push, open a PR or create a remote", verifyCmd)
+		for _, want := range []string{
+			// 1: the PR assertion only for a goal that pushes and opens it itself
+			"ONLY when the goal's own nodes push the branch and open the pull\n    request",
+			"including any goal that says not to push or not to open or edit\n    a pull request — assert the branch REF instead",
+			"never asserts remotes, pushes or pull-request state.",
+			// 2: one scope rule for every planned check node
+			"- Every planned check node, final or not, asserts only what this run's own\n  nodes produce or change",
+			"It never asserts state the goal forbids\n  the run to change",
+			"it never asserts the ABSENCE of something the goal\n  only forbids creating",
+			"a remote that already existed is not a violation\n  of \"do not create a remote\"",
+			// 3: a forbidden action is the operator's next step, never a FAIL
+			"is the operator's\n  next step, not a qualification a reader would act on, so it is never a\n  reason to reply FAIL.",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("verify-cmd %q: prompt lost the #388 rule: missing %q", verifyCmd, want)
+			}
+		}
+	}
+}
+
+// TestPlannerPromptKeepsPRAssertionWhenOnlyANewRemoteIsForbidden pins the
+// other edge of #388. A goal that pushes to the existing origin and opens a PR
+// but says not to add a remote still pushes and opens the PR itself, so its
+// final check node keeps the open-PR assertion — sending it to the branch-ref
+// case would lose the catch for work committed but never pushed.
+func TestPlannerPromptKeepsPRAssertionWhenOnlyANewRemoteIsForbidden(t *testing.T) {
+	for _, verifyCmd := range []string{"make test", ""} {
+		prompt := plannerPromptNoMenu(t, "push to origin and open a PR; do not add a remote", verifyCmd)
+		for _, want := range []string{
+			"including any goal that says not to push or not to open or edit\n    a pull request — assert the branch REF instead",
+			"Forbidding only a\n    NEW remote does not change this: a goal whose own nodes push to an\n    existing remote and open the pull request takes the first bullet.",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("verify-cmd %q: prompt lost the #388 remote rule: missing %q", verifyCmd, want)
+			}
+		}
+		if strings.Contains(prompt, "or not to create a remote — assert the branch REF") {
+			t.Errorf("verify-cmd %q: a goal forbidding only a new remote is still sent to the branch-ref case", verifyCmd)
+		}
+	}
+}
+
 // --- §3: detection informs, it never grants ---------------------------------
 
 // TestDetectBuildSignals_ReadsMarkersNotContent — a marker file is detected by

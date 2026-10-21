@@ -2154,9 +2154,10 @@ func plannedBashPatterns() []string {
 	return patterns
 }
 
-// branchEvidenceRule is the branch half of the final-check paragraph, shared
-// by both spellings because it is one prompt and the rule does not depend on
-// who gathers build evidence. It carries two verbs, in order: the %s the
+// branchEvidenceRule is the branch half of the final-check paragraph, with the
+// scope rule for every planned check node beside it, shared by both spellings
+// because it is one prompt and the rule does not depend on who gathers build
+// evidence. It carries two verbs, in order: the %s the
 // verdict pattern renders into, and the %s reportingShapePointer fills — so it
 // must appear exactly once per rendered paragraph.
 //
@@ -2175,6 +2176,19 @@ func plannedBashPatterns() []string {
 // It still closes the bug the branch assertion was added for (a node that
 // commits on the default branch and PASSes anyway), and closes it wider: work
 // committed on the right branch but never pushed has no pull request either.
+//
+// The pull-request assertion is for a goal whose own nodes push and open the
+// pull request, and for no other (#388). A goal that forbids pushing or
+// opening a pull request leaves those to the operator, so a check node
+// asserting them asserts state the run was told not to change and FAILs a
+// cycle whose work landed. Such a goal gets the branch-ref bullet. A goal that
+// forbids only a new remote, and whose own nodes push to an existing remote
+// and open the pull request, keeps the open-PR assertion: it would otherwise
+// lose the catch for work committed but never pushed. The paragraph also
+// carries the scope rule every planned check node shares — it asserts only
+// what this run's own nodes produce, never the absence of what the goal only
+// forbids creating — and the verdict clause says a forbidden action is the
+// operator's next step, never a reason to reply FAIL.
 //
 // Its closing rule names WHICH node may carry the whole-reply pin, which every
 // earlier spelling assumed and never said. The paragraph speaks of "the final
@@ -2200,16 +2214,22 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
   branch and not on the repository's default branch (e.g. main or master).
   Assert that against state belonging to the REPOSITORY, never against what
   some working directory currently has checked out:
-  - Prefer what the remote says: 'gh pr list --head <branch> --state open'
+  - ONLY when the goal's own nodes push the branch and open the pull
+    request, assert what the remote says: 'gh pr list --head <branch> --state open'
     (declare "Bash(gh pr *)"), asserting an open pull request exists for the
     feature branch. For a branch in a repository other than the one
     oh-my-graph was invoked from, read that repository's slug first
     ('git -C <path> remote get-url origin', declare "Bash(git *)") and name
     it: 'gh pr list --repo <slug> --head <branch> --state open'.
-  - If the goal never reaches a pull request, assert the branch REF instead:
+  - Otherwise — the goal does not push the branch and open the pull request
+    itself, including any goal that says not to push or not to open or edit
+    a pull request — assert the branch REF instead:
     'git rev-parse --verify <branch>' or 'git log --oneline -1 <branch>'
     (declare "Bash(git *)"). Every worktree of a repository shares its refs;
-    a checked-out HEAD belongs to one directory only.
+    a checked-out HEAD belongs to one directory only. Such a check node
+    never asserts remotes, pushes or pull-request state. Forbidding only a
+    NEW remote does not change this: a goal whose own nodes push to an
+    existing remote and open the pull request takes the first bullet.
   - NEVER assert on 'git rev-parse --abbrev-ref HEAD', with or without
     '-C <path>'. A node is free to do its work in a git worktree it made
     itself, which leaves every other checkout's HEAD untouched, and
@@ -2238,7 +2258,16 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
   held, what did not, and what the reader should do about it. An
   observation a reader would not act on is not a reason to withhold PASS:
   the threshold is whether it changes what they do, not whether it is
-  worth mentioning.
+  worth mentioning. An action the goal forbids the run to take (pushing,
+  opening or editing a pull request, creating a remote) is the operator's
+  next step, not a qualification a reader would act on, so it is never a
+  reason to reply FAIL.
+- Every planned check node, final or not, asserts only what this run's own
+  nodes produce or change: files in the working tree, commits on the
+  branch, test results, artifacts. It never asserts state the goal forbids
+  the run to change, and it never asserts the ABSENCE of something the goal
+  only forbids creating — a remote that already existed is not a violation
+  of "do not create a remote".
 - That whole-reply pin belongs ONLY on a node whose entire job is to
   ASSERT: it observes, it judges, and its reply IS the verdict, because
   nothing else it produced is needed afterwards. Being the LAST node of the
