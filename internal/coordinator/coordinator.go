@@ -2178,14 +2178,17 @@ func plannedBashPatterns() []string {
 // committed on the right branch but never pushed has no pull request either.
 //
 // The pull-request assertion is for a goal whose own nodes push and open the
-// pull request, and for no other (#388). A goal that forbids pushing, opening
-// a pull request or creating a remote leaves those to the operator, so a check
-// node asserting them asserts state the run was told not to change and FAILs a
-// cycle whose work landed. Such a goal gets the branch-ref bullet, and the
-// paragraph also carries the scope rule every planned check node shares — it
-// asserts only what this run's own nodes produce, never the absence of what
-// the goal only forbids creating — and the verdict clause says a forbidden
-// action is the operator's next step, never a reason to reply FAIL.
+// pull request, and for no other (#388). A goal that forbids pushing or
+// opening a pull request leaves those to the operator, so a check node
+// asserting them asserts state the run was told not to change and FAILs a
+// cycle whose work landed. Such a goal gets the branch-ref bullet. A goal that
+// forbids only a new remote, and whose own nodes push to an existing remote
+// and open the pull request, keeps the open-PR assertion: it would otherwise
+// lose the catch for work committed but never pushed. The paragraph also
+// carries the scope rule every planned check node shares — it asserts only
+// what this run's own nodes produce, never the absence of what the goal only
+// forbids creating — and the verdict clause says a forbidden action is the
+// operator's next step, never a reason to reply FAIL.
 //
 // Its closing rule names WHICH node may carry the whole-reply pin, which every
 // earlier spelling assumed and never said. The paragraph speaks of "the final
@@ -2219,12 +2222,14 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
     ('git -C <path> remote get-url origin', declare "Bash(git *)") and name
     it: 'gh pr list --repo <slug> --head <branch> --state open'.
   - Otherwise — the goal does not push the branch and open the pull request
-    itself, including any goal that says not to push, not to open or edit a
-    pull request, or not to create a remote — assert the branch REF instead:
+    itself, including any goal that says not to push or not to open or edit
+    a pull request — assert the branch REF instead:
     'git rev-parse --verify <branch>' or 'git log --oneline -1 <branch>'
     (declare "Bash(git *)"). Every worktree of a repository shares its refs;
     a checked-out HEAD belongs to one directory only. Such a check node
-    never asserts remotes, pushes or pull-request state.
+    never asserts remotes, pushes or pull-request state. Forbidding only a
+    NEW remote does not change this: a goal whose own nodes push to an
+    existing remote and open the pull request takes the first bullet.
   - NEVER assert on 'git rev-parse --abbrev-ref HEAD', with or without
     '-C <path>'. A node is free to do its work in a git worktree it made
     itself, which leaves every other checkout's HEAD untouched, and

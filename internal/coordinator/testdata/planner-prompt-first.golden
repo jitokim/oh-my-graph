@@ -128,12 +128,14 @@ Rules:
     ('git -C <path> remote get-url origin', declare "Bash(git *)") and name
     it: 'gh pr list --repo <slug> --head <branch> --state open'.
   - Otherwise — the goal does not push the branch and open the pull request
-    itself, including any goal that says not to push, not to open or edit a
-    pull request, or not to create a remote — assert the branch REF instead:
+    itself, including any goal that says not to push or not to open or edit
+    a pull request — assert the branch REF instead:
     'git rev-parse --verify <branch>' or 'git log --oneline -1 <branch>'
     (declare "Bash(git *)"). Every worktree of a repository shares its refs;
     a checked-out HEAD belongs to one directory only. Such a check node
-    never asserts remotes, pushes or pull-request state.
+    never asserts remotes, pushes or pull-request state. Forbidding only a
+    NEW remote does not change this: a goal whose own nodes push to an
+    existing remote and open the pull request takes the first bullet.
   - NEVER assert on 'git rev-parse --abbrev-ref HEAD', with or without
     '-C <path>'. A node is free to do its work in a git worktree it made
     itself, which leaves every other checkout's HEAD untouched, and

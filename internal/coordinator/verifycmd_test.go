@@ -738,7 +738,7 @@ func TestPlannerPromptKeepsCheckNodesOffStateTheGoalForbids(t *testing.T) {
 		for _, want := range []string{
 			// 1: the PR assertion only for a goal that pushes and opens it itself
 			"ONLY when the goal's own nodes push the branch and open the pull\n    request",
-			"including any goal that says not to push, not to open or edit a\n    pull request, or not to create a remote — assert the branch REF instead",
+			"including any goal that says not to push or not to open or edit\n    a pull request — assert the branch REF instead",
 			"never asserts remotes, pushes or pull-request state.",
 			// 2: one scope rule for every planned check node
 			"- Every planned check node, final or not, asserts only what this run's own\n  nodes produce or change",
@@ -751,6 +751,28 @@ func TestPlannerPromptKeepsCheckNodesOffStateTheGoalForbids(t *testing.T) {
 			if !strings.Contains(prompt, want) {
 				t.Errorf("verify-cmd %q: prompt lost the #388 rule: missing %q", verifyCmd, want)
 			}
+		}
+	}
+}
+
+// TestPlannerPromptKeepsPRAssertionWhenOnlyANewRemoteIsForbidden pins the
+// other edge of #388. A goal that pushes to the existing origin and opens a PR
+// but says not to add a remote still pushes and opens the PR itself, so its
+// final check node keeps the open-PR assertion — sending it to the branch-ref
+// case would lose the catch for work committed but never pushed.
+func TestPlannerPromptKeepsPRAssertionWhenOnlyANewRemoteIsForbidden(t *testing.T) {
+	for _, verifyCmd := range []string{"make test", ""} {
+		prompt := plannerPromptNoMenu(t, "push to origin and open a PR; do not add a remote", verifyCmd)
+		for _, want := range []string{
+			"including any goal that says not to push or not to open or edit\n    a pull request — assert the branch REF instead",
+			"Forbidding only a\n    NEW remote does not change this: a goal whose own nodes push to an\n    existing remote and open the pull request takes the first bullet.",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("verify-cmd %q: prompt lost the #388 remote rule: missing %q", verifyCmd, want)
+			}
+		}
+		if strings.Contains(prompt, "or not to create a remote — assert the branch REF") {
+			t.Errorf("verify-cmd %q: a goal forbidding only a new remote is still sent to the branch-ref case", verifyCmd)
 		}
 	}
 }
