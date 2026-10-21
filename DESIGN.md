@@ -3954,40 +3954,42 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   artifact, and their tails share the artifacts' 12000-byte total cap, each
   tail cut to 2000 bytes (`maxAssessArtifactExcerpt`), so a node's own
   artifact cannot spend the room the engine's observation of it needs. The
-  artifacts then split what remains before any of them renders, in two
-  passes, sink nodes' artifacts first (`sinkFirstAllowances`, #408). A sink
-  is a node no other node depends on — the final check node is one, and it
-  comes last in graph order, so with enough large artifacts it used to be the
-  one dropped. Every plan has at least one sink, because a DAG always has
-  one. Both passes split with the same water-filling (`artifactAllowances`):
-  every artifact no longer than a fair level gets its whole length, and the
-  budget the short ones leave is split evenly among the longer ones, each cut
-  to that level. The level never drops below 2000 bytes, and the split
-  depends only on the artifacts' lengths, not on their graph order. Pass 1,
+  artifacts then split what remains in two passes, sink nodes' artifacts
+  first (`sinkFirstAllowances`, #408), and every artifact's allowance is
+  fixed before any of them renders. The allowances never sum to more than
+  the artifact budget, and the split depends only on the artifacts' lengths,
+  sink flags and node IDs, never on their graph order. A sink is a node no
+  other node depends on — the final check node is one, and it comes last in
+  graph order, so with enough large artifacts it used to be the one dropped.
+  Every plan has at least one sink, because a DAG always has one. Pass 1,
   the priority share: the sinks together get at most half of the artifact
   budget (`maxSinkPriorityShareNum`/`maxSinkPriorityShareDen`), water-filled
-  among them, so a short sink takes only its length and the longer sinks get
-  the rest, each still at least 2000 bytes when the half allows it. Where
-  that floor would push the sinks past the half, they are trimmed in graph
-  order so their total never exceeds it. Half, because the verdict needs both
-  the final check and the evidence of the work: a single large sink can
-  never push every other artifact out. Pass 2, the rest: whatever pass 1
-  left is water-filled across every artifact's remaining length — the
-  non-sinks, and the sinks pass 1 cut, which can get more. A sink's
+  among them (`artifactAllowances`): a sink no longer than a fair level gets
+  its whole length, and the budget the short ones leave is split evenly
+  among the longer ones, each still at least 2000 bytes when the half allows
+  it. Where that floor would push the sinks past the half, they are trimmed
+  shortest first, ties broken by node ID, so their total never exceeds it.
+  Half, because the verdict needs both the final check and the evidence of
+  the work: a single large sink can never push every other artifact out.
+  Pass 2, the rest (`restAllowances`): whatever pass 1 left is shared across
+  every artifact's remaining length — the non-sinks, and the sinks pass 1
+  cut, which can get more. Each artifact that still needs something asks for
+  a 2000-byte floor (or its remaining length, if shorter). When the budget
+  cannot hold every floor, the floor goes to non-sinks before sinks, then
+  shorter remaining length first, ties broken by node ID, each taking its
+  floor while it still fits; those whose floor no longer fits get nothing in
+  pass 2. The ones that got the floor share the whole pass-2 budget by the
+  same water-filling, with no floor, so none of it is wasted. A sink's
   allowance is its pass-1 share plus its pass-2 share, so one 12 KB sink
   beside three 1 KB non-sinks gets 9000 bytes and each non-sink renders
   whole. The no-sink path exists only for evidence built without `Sink` set
   (older callers, tests): there pass 1 is empty and the whole budget splits
-  as in pass 2, as before #408. Artifacts still render in graph order, each
-  cut never longer than the budget left less the pass-1 shares of the sinks
-  still to render. Only those pass-1 shares are held back, never a sink's
-  pass-2 extra, so the reserve stays within half the budget; it bounds every
-  artifact, sinks included, so neither a non-sink nor an earlier sink's
-  pass-2 extra can eat a later sink's pass-1 share. An artifact left with
-  nothing is omitted with its own loud line, `(artifact of node <id>
-  omitted: material cap reached)`, outside the fences where its block would
-  have been, and rendering carries on past it: every dropped node is named,
-  and a sink later in graph order still renders. A tail is cut from its head,
+  as in pass 2. Artifacts still render in graph order, each cut to its fixed
+  allowance. An artifact whose allowance is zero is omitted with its own
+  loud line, `(artifact of node <id> omitted: material cap reached)`,
+  outside the fences where its block would have been, and rendering carries
+  on past it: every dropped node is named, and a sink later in graph order
+  still renders. A tail is cut from its head,
   and every cut is said above the fence. When the record's `output_truncated`
   is set, the engine's own line says so (`output: the command printed more
   than the engine retains, so the engine kept only the last N bytes of its
