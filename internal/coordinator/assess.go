@@ -474,9 +474,14 @@ func assessMaterial(evidence CycleEvidence, nonce string) string {
 // maxSinkPriorityShareNum/maxSinkPriorityShareDen of the budget, water-filled
 // among them (artifactAllowances), so a short sink takes only its length and
 // the rest goes to the longer sinks. Where the floor would push the sinks past
-// that share, the sinks are trimmed shortest first, ties broken by node ID,
-// so their pass-1 total never exceeds it and the trim never depends on graph
-// position. Pass 2, the rest: whatever the budget has left after pass 1 is
+// that share, the sinks are trimmed shortest first, each group of equal-length
+// sinks as one: a group keeps its water-filled share only if every member's
+// fits, otherwise its members split what is left of the share equally and
+// the longer sinks get nothing in pass 1. The few bytes that do not split
+// evenly go back to pass 2's budget rather than to one member, so equal sinks
+// stay equal, one group, into pass 2. So the sinks' pass-1 total never
+// exceeds the share, and the trim depends on neither graph position nor node
+// ID. Pass 2, the rest: whatever the budget has left after pass 1 is
 // split across EVERY artifact's remaining length by restAllowances — the
 // non-sinks, and the sinks pass 1 cut, which can receive more. A sink's
 // allowance is its pass-1 share plus its pass-2 share. Every plan has at least
@@ -502,12 +507,19 @@ func sinkFirstAllowances(ids []string, lengths []int, sinks []bool, budget int) 
 			allowances[at] = sinkAllowances[i]
 		}
 		slices.SortFunc(sinkAt, func(a, b int) int {
-			return cmp.Or(cmp.Compare(lengths[a], lengths[b]), cmp.Compare(ids[a], ids[b]))
+			return cmp.Compare(lengths[a], lengths[b])
 		})
-		for _, at := range sinkAt {
-			allowances[at] = min(allowances[at], share)
-			share -= allowances[at]
-			budget -= allowances[at]
+		for _, group := range equalRuns(sinkAt, func(a, b int) bool { return lengths[a] == lengths[b] }) {
+			if need := allowances[group[0]] * len(group); need <= share {
+				share -= need
+				budget -= need
+				continue
+			}
+			for _, at := range group {
+				allowances[at] = share / len(group)
+				budget -= allowances[at]
+			}
+			share = 0
 		}
 	}
 	remaining := make([]int, len(lengths))
@@ -526,15 +538,20 @@ func sinkFirstAllowances(ids []string, lengths []int, sinks []bool, budget int) 
 // that still needs something asks for its floor, min(its remaining length,
 // maxAssessArtifactExcerpt). When the budget holds every floor, every artifact
 // takes part. When it cannot, who gets the floor is decided without graph
-// position: non-sinks before sinks (the sinks already got their priority
-// share in pass 1), then shorter remaining length first, ties broken by node
-// ID, each taking its floor while the budget left still holds it; the ones
-// whose floor no longer fits get nothing, so the renderer names them in an
-// omission line (a sink keeps its pass-1 share). The artifacts that take part
-// then water-fill the whole budget among themselves with no floor: an
-// artifact no longer than the fair level gets its whole remaining length,
-// and the budget the short ones leave is split evenly among the longer ones,
-// so the budget a floor left over is shared fairly and none is wasted.
+// position or node ID: non-sinks before sinks (the sinks already got their
+// priority share in pass 1), then shorter remaining length first. Artifacts
+// of the same kind and the same remaining length form one group, and either
+// every member of a group gets the floor or none does: groups take their
+// floors in that order while the budget left holds the whole group's. The
+// first group it cannot hold splits what is left equally among its members
+// (shareEqually), so equal artifacts always get equal shares; node ID only
+// hands out the few bytes that do not split evenly. Every later group gets
+// nothing, so the renderer names its members in omission lines (a sink keeps
+// its pass-1 share). The groups that took their floor then water-fill the
+// rest of the budget among themselves with no floor: an artifact no longer
+// than the fair level gets its whole remaining length, and the budget the
+// short ones leave is split evenly among the longer ones, so the budget a
+// floor left over is shared fairly and none is wasted.
 // Allowance i belongs to ids[i], remaining[i], sinks[i], in the caller's
 // order.
 func restAllowances(ids []string, remaining []int, sinks []bool, budget int) []int {
@@ -545,15 +562,20 @@ func restAllowances(ids []string, remaining []int, sinks []bool, budget int) []i
 		}
 	}
 	slices.SortFunc(order, func(a, b int) int {
-		return cmp.Or(compareBool(sinks[a], sinks[b]), cmp.Compare(remaining[a], remaining[b]), cmp.Compare(ids[a], ids[b]))
+		return cmp.Or(compareBool(sinks[a], sinks[b]), cmp.Compare(remaining[a], remaining[b]))
 	})
+	allowances := make([]int, len(remaining))
 	var taking []int
 	left := budget
-	for _, i := range order {
-		if floor := min(remaining[i], maxAssessArtifactExcerpt); floor <= left {
-			taking = append(taking, i)
-			left -= floor
+	for _, group := range equalRuns(order, func(a, b int) bool { return sinks[a] == sinks[b] && remaining[a] == remaining[b] }) {
+		if floor := min(remaining[group[0]], maxAssessArtifactExcerpt); floor*len(group) <= left {
+			taking = append(taking, group...)
+			left -= floor * len(group)
+			continue
 		}
+		shareEqually(allowances, ids, group, left)
+		budget -= left
+		break
 	}
 
 	lengths := make([]int, len(taking))
@@ -561,11 +583,40 @@ func restAllowances(ids []string, remaining []int, sinks []bool, budget int) []i
 		lengths[k] = remaining[i]
 	}
 	level := waterLevel(lengths, budget)
-	allowances := make([]int, len(remaining))
 	for _, i := range taking {
 		allowances[i] = min(remaining[i], level)
 	}
 	return allowances
+}
+
+// equalRuns cuts sorted into runs of consecutive indexes that same holds
+// for, each run a group the allowance split treats as one (#408).
+func equalRuns(sorted []int, same func(a, b int) bool) [][]int {
+	var runs [][]int
+	for start := 0; start < len(sorted); {
+		end := start + 1
+		for end < len(sorted) && same(sorted[start], sorted[end]) {
+			end++
+		}
+		runs = append(runs, sorted[start:end])
+		start = end
+	}
+	return runs
+}
+
+// shareEqually sets the allowance of every member of group, artifacts of the
+// same kind and remaining length, to an equal share of budget (#408). The few
+// bytes left when budget does not split evenly go one each to the members
+// first by node ID — the only thing node ID ever decides.
+func shareEqually(allowances []int, ids []string, group []int, budget int) {
+	byID := slices.Clone(group)
+	slices.SortFunc(byID, func(a, b int) int { return cmp.Compare(ids[a], ids[b]) })
+	for k, i := range byID {
+		allowances[i] = budget / len(group)
+		if k < budget%len(group) {
+			allowances[i]++
+		}
+	}
 }
 
 // compareBool orders false before true.
