@@ -182,8 +182,10 @@ func TestAssessMaterial_VerifyOutputRespectsTheMaterialCaps(t *testing.T) {
 	if !strings.Contains(material, "output: omitted (total material cap reached)") {
 		t.Error("verify output past the total cap must be omitted LOUDLY")
 	}
-	if !strings.Contains(material, "(further artifacts omitted: total material cap reached)") {
-		t.Error("verify output must count toward the cap the artifacts share")
+	for i := 0; i < count; i++ {
+		if line := fmt.Sprintf("(artifact of node n%d omitted: material cap reached)\n", i); !strings.Contains(material, line) {
+			t.Errorf("verify output must count toward the cap the artifacts share: missing %q", line)
+		}
 	}
 	if got := strings.Count(material, "ENGINE-OBSERVED verification of node"); got != count {
 		t.Errorf("%d engine records rendered, want all %d: the cap dropped a record", got, count)

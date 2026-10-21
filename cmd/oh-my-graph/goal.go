@@ -248,6 +248,13 @@ func cycleEvidence(runID string, plan coordinator.Plan, runPassed bool) (coordin
 		RunCostUnknown: plan.CostUnknown,
 		Usage:          plan.Usage,
 	}
+	// A sink is a node no other node depends on; the assessor budgets those first (#408).
+	dependedOn := make(map[string]bool)
+	for _, node := range plan.Graph.Nodes {
+		for _, parent := range node.DependsOn {
+			dependedOn[parent] = true
+		}
+	}
 	// Graph order, not map order, so the assessor's material is
 	// deterministic for a given run.
 	for _, node := range plan.Graph.Nodes {
@@ -267,6 +274,7 @@ func cycleEvidence(runID string, plan coordinator.Plan, runPassed bool) (coordin
 			Detail:      rec.Detail,
 			CostUSD:     rec.CostUSD,
 			CostUnknown: rec.CostUnknown,
+			Sink:        !dependedOn[node.ID],
 			Usage: runner.TokenUsage{
 				InputTokens: rec.Usage.InputTokens, CachedInputTokens: rec.Usage.CachedInputTokens,
 				OutputTokens: rec.Usage.OutputTokens, ReasoningOutputTokens: rec.Usage.ReasoningOutputTokens,

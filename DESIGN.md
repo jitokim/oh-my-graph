@@ -3957,41 +3957,89 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   artifact, and their tails share the artifacts' 12000-byte total cap, each
   tail cut to 2000 bytes (`maxAssessArtifactExcerpt`), so a node's own
   artifact cannot spend the room the engine's observation of it needs. The
-  artifacts then split what remains before any of them renders
-  (`artifactAllowances`): every artifact no longer than a fair level renders
-  whole, and the budget the short ones leave is split evenly among the longer
-  ones, each cut to that level. The level never drops below 2000 bytes, and
-  the split depends only on the artifacts' lengths, not on their graph order,
-  so one long artifact beside short ones renders whole wherever it sits.
-  Artifacts still render in graph order, each cut never longer than the
-  budget left; once the 12000-byte budget is spent, later artifacts are
-  dropped with one loud `(further artifacts omitted: total material cap
-  reached)` line. A tail is cut from its head, and every cut is said
-  above the fence. When the record's `output_truncated` is set, the engine's
-  own line says so (`output: the command printed more than the engine
-  retains, so the engine kept only the last N bytes of its output; everything
-  earlier was dropped when the check was recorded`). It is written from the
-  record's flag, not the tail's marker, which the command could forge and the
-  material cap could trim away. A further cut for the material cap adds
-  `output: the last N of M bytes; the earlier K bytes were dropped for the
-  material cap`. Once the total cap is spent the line reads
-  `output: omitted (total material cap reached)`. The engine-observed lines
-  always render: a cap may drop output, never the record that a check
-  failed. The assessor prompt gains one sentence: an engine verification
-  block is the engine's own observation of a command it ran itself, and it
-  outranks a node's reply about the same check. That is a ranking of
-  evidence, **not a claim that exit 0 means the goal is met** — a passing
-  check is still only as wide as the command, and the assessor judges the
-  goal on all the material. The next cycle's planner prompt fences the `remaining` it
-  quotes the same way. The verdict is a hard JSON
-  contract; garbage is an `*AssessError` that stops the loop. Each verdict
-  is printed the moment it returns (`GoalOptions.OnCycleAssessed`) and
-  persisted as `assess.json` in that cycle's run directory (`goal_met`,
+  artifacts then split what remains in two passes, sink nodes' artifacts
+  first (`sinkFirstAllowances`, #408), and every artifact's allowance is
+  fixed before any of them renders. The allowances never sum to more than
+  the artifact budget, and the split depends only on the artifacts' lengths,
+  sink flags and node IDs, never on their graph order. A sink is a node no
+  other node depends on — the final check node is one, and it comes last in
+  graph order, so with enough large artifacts it used to be the one dropped.
+  Every plan has at least one sink, because a DAG always has one. Pass 1,
+  the priority share: the sinks together get at most half of the artifact
+  budget (`maxSinkPriorityShareNum`/`maxSinkPriorityShareDen`), water-filled
+  among them (`artifactAllowances`): a sink no longer than a fair level gets
+  its whole length, and the budget the short ones leave is split evenly
+  among the longer ones, each still at least 2000 bytes when the half allows
+  it. Where that floor would push the sinks past the half, they are trimmed
+  shortest first, each group of equal-length sinks as one: a group keeps its
+  water-filled share only if every member's fits, otherwise its members split
+  what is left of the half equally and the longer sinks get nothing in pass
+  1. The few bytes that do not split evenly go back to pass 2's budget rather
+  than to one member, so equal sinks stay equal, and their total never
+  exceeds the half.
+  Half, because the verdict needs both the final check and the evidence of
+  the work: a single large sink can never push every other artifact out.
+  Pass 2, the rest (`restAllowances`): whatever pass 1 left is shared across
+  every artifact's remaining length — the non-sinks, and the sinks pass 1
+  cut, which can get more. Each artifact that still needs something asks for
+  a 2000-byte floor (or its remaining length, if shorter). When the budget
+  cannot hold every floor, the floor goes to non-sinks before sinks, then
+  shorter remaining length first, never by graph position or node ID.
+  Artifacts of the same kind (sink or non-sink) and the same remaining
+  length form one group: groups take their floors in that order while the
+  budget left holds the whole group's. The first group it cannot hold is
+  split evenly only when each member's share of what is left is at least
+  1000 bytes (`minAssessEqualShare`, half the floor): then its members split
+  it equally, so equal artifacts get equal shares, and node ID only hands
+  out the few bytes that do not split evenly. Below that half-floor, as many
+  members as the budget left holds get the floor, chosen in node-ID order,
+  and join the artifacts taking part; the rest of the group gets nothing and
+  is omitted with its own omission line, because slices that small are
+  useless as evidence. Every later group gets nothing in pass 2 (a sink
+  keeps its pass-1 share). The artifacts taking part share the whole pass-2
+  budget by the same water-filling, with no floor, so the budget a floor
+  left over, less than one floor on the node-ID path, is shared fairly and
+  the allowances sum to at or near the budget, never above it. When not
+  even one member fits a floor, only what the artifacts taking part cannot
+  use, because they are already whole, goes to the first member by node ID,
+  and only when it is at least 1000 bytes; otherwise the first is omitted
+  too.
+  A sink's allowance is its pass-1 share plus its pass-2 share, so one
+  12 KB sink beside three 1 KB non-sinks gets 9000 bytes and each non-sink
+  renders whole. The no-sink path exists only for evidence built without
+  `Sink` set (older callers, tests): there pass 1 is empty and the whole
+  budget splits as in pass 2. Artifacts still render in graph order, each
+  cut to its fixed allowance. An artifact whose allowance is zero is
+  omitted with its own loud line,
+  `(artifact of node <id> omitted: material cap reached)`, outside the
+  fences where its block would have been, and rendering carries on past
+  it: every dropped node is named, and a sink later in graph order still
+  renders. A tail is cut from its head, and every cut is said above the
+  fence. When the record's `output_truncated` is set, the engine's own line
+  says so (`output: the command printed more than the engine retains, so the
+  engine kept only the last N bytes of its output; everything earlier was
+  dropped when the check was recorded`). It is written from the record's
+  flag, not the tail's marker, which the command could forge and the material
+  cap could trim away. A further cut for the material cap adds `output: the
+  last N of M bytes; the earlier K bytes were dropped for the material cap`.
+  Once the total cap is spent the line reads `output: omitted (total material
+  cap reached)`. The engine-observed lines always render: a cap may drop
+  output, never the record that a check failed. The assessor prompt gains one
+  sentence: an engine verification block is the engine's own observation of a
+  command it ran itself, and it outranks a node's reply about the same check.
+  That is a ranking of evidence, **not a claim that exit 0 means the goal is
+  met** — a passing check is still only as wide as the command, and the
+  assessor judges the goal on all the material. The next cycle's planner
+  prompt fences the `remaining` it quotes the same way. The verdict is a hard
+  JSON contract; garbage is an `*AssessError` that stops the loop. Each
+  verdict is printed the moment it returns (`GoalOptions.OnCycleAssessed`)
+  and persisted as `assess.json` in that cycle's run directory (`goal_met`,
   `remaining`, `evidence`, `assess_cost_usd` — the assessment cost the
   cycle's ledger cannot include, since the ledger prints before assessment).
   The printed `remaining:` and `evidence:` lines, the final `remaining` an
-  unmet-goal exit error quotes, and the assessor reply an `*AssessError` quotes (cleaned before its `maxOutputInError` cut), are
-  sanitised for the terminal by `fence.SanitizeTerminalLine`; `assess.json`,
+  unmet-goal exit error quotes, and the assessor reply an `*AssessError`
+  quotes (cleaned before its `maxOutputInError` cut), are sanitised for the
+  terminal by `fence.SanitizeTerminalLine`; `assess.json`,
   `AssessError.Output` and the next cycle's planner prompt keep the raw text,
   and the goal is still judged on the raw run output (#349).
 
