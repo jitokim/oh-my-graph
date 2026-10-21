@@ -1979,7 +1979,6 @@ func reuseBindsList(entry ReuseEntry) string {
 // planner's or the router's), tolerating a markdown code fence or stray prose
 // around it: everything outside the first '{' and the last '}' is discarded.
 // Returns "" when no object is present.
-// Planner and router callers use extractPlanJSON instead.
 func extractJSON(result string) string {
 	start := strings.Index(result, "{")
 	end := strings.LastIndex(result, "}")
