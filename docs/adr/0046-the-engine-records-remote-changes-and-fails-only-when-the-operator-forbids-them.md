@@ -69,7 +69,8 @@ while the run ran.
 ### 2.1 The snapshot
 
 The engine takes a **remote snapshot** (`runstate.RemoteSnapshot`, *chosen*)
-twice: once before the first node starts and once after the last node ends. It
+twice per leg: a *before* when the leg starts, before its first node, and an
+*after* when its last node ends (§3.1 says why each leg gets its own). It
 covers the **invocation repository only**: the repository `auto` or `run` was
 started in, the same `repoDir` the worktree manager is built with
 (`cmd/oh-my-graph/main.go:2357`).
@@ -108,11 +109,27 @@ The difference between the two snapshots is the **remote change record**
 `updatedAt` on comments, labels, reviews and bot activity, which §2.4 says
 the snapshot does not see, and a bot comment must not fail a guarded run.
 
+**Attribution** (*chosen* field `attribution`). Each entry also records
+whether it is attributable to this run, decided by §5.1's local check on the
+entry's **new sha**: a `branch_created` or `branch_moved` entry's new tip, a
+`pr_opened` or `pr_updated` entry's `headRefOid`. A PR entry is attributable
+exactly when its head sha is. The field takes two values (*chosen*):
+
+- `run_commit`: the new sha passes §5.1's check. The entry also records which
+  condition held (`attribution_via`, `run_branch` or `created_this_leg`,
+  *chosen*). It is labelled **"observed during the run; points at a commit
+  this run made"** (*chosen*).
+- `not_attributable`: every other entry. That includes every entry with no new
+  sha (`remote_added`, `remote_removed`, `remote_url_changed`,
+  `branch_deleted`, `pr_no_longer_open`) and every between-legs entry (§3.1).
+  It is labelled **"observed, not attributable"** (*chosen*).
+
 A part unavailable on either side yields no entries and a `not_compared` line
 naming it, so "no change" and "could not see" never print the same.
 
 The record is stored as `remote_changes` (`Snapshot.RemoteChanges`, *chosen*)
-with both snapshots and the entries, and printed after the ledger table,
+with each leg's two snapshots and entries and the between-legs entries
+(§3.1), and printed after the ledger table,
 beside `led.Print(os.Stdout)` (`cmd/oh-my-graph/main.go:1277` for `run`/`auto`,
 `cmd/oh-my-graph/resume.go:816` for `resume`). No changes prints one line
 saying so and which parts were observed.
@@ -188,14 +205,18 @@ and the git parts ship alone.
   opened and closed (`pr_no_longer_open` only shows PRs open at the *before*
   snapshot), leaves the two snapshots equal.
 - **Concurrent human changes.** A human who force-pushes an unrelated branch, or
-  updates a PR, while the run runs is indistinguishable from a node doing it.
+  updates a PR, while the run runs looks like a node doing it. §5.1's check
+  can only say whether the sha the ref now points at is one this run made.
 - **Anything outside branches, remotes and open PRs:** tags, releases, PR
   comments, issue comments, CI state.
 
 A ref change cannot be attributed to a node: the snapshot sees state, not
-actors. Every entry is labelled **"observed during the run"** (*chosen* summary
-wording), never "made by the run", in the summary, in `state.json` and in the
-assessor block.
+actors. §5.1 attributes a sha, not an act. So every entry is labelled
+**"observed during the run"** (*chosen* summary wording), never "made by the
+run", in the summary, in `state.json` and in the assessor block. An
+attributable entry adds only "points at a commit this run made", since a
+human could have pushed the run's commit. Every other entry reads "observed,
+not attributable".
 
 ## 3. Option A: a forbidden change fails the run; Option B: it is only reported
 
@@ -205,22 +226,42 @@ change (how "forbidden" is known is §4) moves the verdict.
 ### 3.1 Option A — fail
 
 **What the operator sees.** The ledger table, the change record, and a
-failure naming the forbidden entries ("remote changes observed during the run,
-and `--forbid-remote-changes` was set: branch_created origin/feat/x …"), with
-a non-zero exit.
+failure naming the forbidden entries ("remote changes observed during the run
+that point at commits this run made, and `--forbid-remote-changes` was set:
+branch_created origin/feat/x …"), with a non-zero exit. The run fails only on
+attributable entries (§5.1). Every other entry is printed as "observed, not
+attributable" and does not change the verdict.
 
-**False positive** (a human pushed during the run): an honest run fails. The
-record says exactly what changed, so the cost is a re-run, bounded and
-visible. **False negative** (a change outside §2.4's coverage, or an
-`unavailable` part): the run passes, as it does today, so A is never worse.
+**False positive** (a change no node made fails the run). A shared
+repository is the normal case, not the exception: on jitokim/oh-my-graph,
+several agents, merges and bots move refs and open PRs all day. If any entry
+failed a guarded run, an unrelated `branch_moved` or `pr_opened` would fail
+almost every guarded run that lasts more than a few minutes. That is why only
+an attributable entry fails. An unrelated push points at a commit that is not
+in the invocation repository, or not on the run's branches and not created in
+this leg, so it is reported and does not fail the run. What is left is narrow:
+a human pushes a commit this run made, or someone other than a node makes or
+fetches a commit into the invocation repository during the leg (§5.1,
+condition (b)). The record names the sha, so the cost is a re-run, bounded and
+visible.
 
-**Resume.** The *before* snapshot is taken once, before the first node of the
-first leg, and persisted in `state.json`; a resume leg never takes a new one.
-Each leg ends with an *after* snapshot that replaces the previous one, diffed
-against the original *before*. So the record covers the whole run, pauses
-included: a human push during a paused gate (`resumeGateLeg`,
-`cmd/oh-my-graph/resume.go:196`) is seen, which is what "observed during the
-run" means. A `--retry-failed` leg (`resumeRetryLeg`, :241) is the same run.
+**False negative** (a change outside §2.4's coverage, an `unavailable` part,
+an entry with no new sha such as `remote_added`, or a pushed commit that fails
+§5.1's check): the run passes, as it does today, so A is never worse.
+
+**Resume.** Each leg takes a fresh *before* snapshot when it starts
+(*chosen*). That includes a resumed leg after a paused gate (`resumeGateLeg`,
+`cmd/oh-my-graph/resume.go:196`) and a `--retry-failed` leg (`resumeRetryLeg`,
+:241). Each leg's *after* is diffed against that leg's own *before*. One
+*before* kept across a gate pause would fail a guarded run for a push that a
+human approved during the pause. Changes made between legs are still
+reported. The engine diffs the previous leg's *after* against the new leg's
+*before* and stores the result as the `between_legs` set (*chosen*). Those
+entries are reported only. They are always `not_attributable`, whatever their
+sha, and they never fail the run. §5.1's condition (b) is bounded by the
+current leg's *before*, so a commit made during a pause is not "created this
+leg". A commit on the run's own branches from an earlier leg still passes
+condition (a) if a node in a later leg pushes it.
 
 **`--continue-on-fail`** (`cmd/oh-my-graph/flags.go:107`,
 `effectiveContinueOnFail`, `internal/schedule/scheduler.go:1911`) prunes a
@@ -274,8 +315,9 @@ planned graph the planner would write the field, which is (i) with a model in
 the middle. `run` takes (ii), so hand-written graphs are covered without it.
 
 **Decision: (ii).** "Forbidden" means the operator passed
-`--forbid-remote-changes`. Any entry in the change record is then a forbidden
-change, whatever kind; the flag does not take a list of kinds (*chosen*: one
+`--forbid-remote-changes`. Any **attributable** entry in the change record
+(§5.1) is then a forbidden change, whatever its kind. Every other entry is
+reported and never forbidden. The flag does not take a list of kinds (*chosen*: one
 switch, all of §2.2).
 
 ## 5. Recommendation
@@ -289,7 +331,8 @@ flag and Option B without it:
 - **Without `--forbid-remote-changes`:** Option B. The snapshot is taken, the
   record is written and printed, the assessor sees it, and the verdict is
   today's. Merge-shepherd and every publishing graph run unchanged.
-- **With `--forbid-remote-changes`:** Option A. Any entry fails the run with
+- **With `--forbid-remote-changes`:** Option A. Any attributable entry
+  (below) fails the run with
   `RemoteChangeForbiddenError` (*chosen*, in `cmd/oh-my-graph`), exit code 6
   (*chosen*; 1–5 are taken, `exitCodeForError`, `cmd/oh-my-graph/main.go:144`),
   so a script can tell it apart from a node failure. Unlike exits 3 and 5,
@@ -298,7 +341,35 @@ flag and Option B without it:
   `state.json` is written with status **FAIL**, so `runs list` and `show`
   read FAIL. This ADR therefore **amends ADR 0023 §2.6's single-run
   agreement** from "exit 1 ↔ FAIL" to "exit 1 or 6 ↔ FAIL"; exit 0 ↔ PASS and
-  exit 2 ↔ PAUSED are unchanged.
+  exit 2 ↔ PAUSED are unchanged. An entry labelled "observed, not
+  attributable" is recorded and reported and never fails the run.
+
+**The attribution check** (*chosen*). Let S be the entry's new sha (§2.2).
+`(*GitManager).CommitAttributable` (*chosen*, seam 3, §2.3) runs these
+commands in the invocation repository, in this order:
+
+1. `git cat-file -e S^{commit}`: S must be a commit in the invocation
+   repository's object store, which the run's worktrees share. A sha that
+   someone else pushed and that no node fetched fails here, and the check
+   stops.
+2. Then one of two conditions must hold:
+   - **(a) `run_branch`:** `git merge-base --is-ancestor S R` succeeds for
+     some ref R listed by `git for-each-ref --format='%(refname)'
+     refs/heads/omg/<<runID>>/`. Those refs are the run's own branches,
+     named by `branchPrefix` (`internal/worktree/git.go:81`).
+   - **(b) `created_this_leg`:** `git show -s --format=%ct S` is at or after
+     the current leg's *before* snapshot time. This covers a commit a node made
+     on a branch it renamed, or, without `worktree:`, on the invocation
+     repository's own branch.
+
+An entry with no new sha is never attributable. The commands are local: they
+read the object store and refs, never the network. Passing the check means only
+that S points at a commit this run made, never that the run moved the ref or
+opened the PR, and the label says no more than that. Condition (b) trusts the
+committer date, which leaves two gaps. A commit that a human makes in the same
+checkout during the leg, or that a node fetches from someone who committed
+during the leg, passes it. A node that backdates `GIT_COMMITTER_DATE` escapes it
+unless (a) catches the commit. §9 watches both.
 
 "Explicitly" is made machine-checkable by the flag. **The engine never parses
 the goal text.**
@@ -319,7 +390,11 @@ the flag the prompt is byte-identical to today's.
 With the flag and an unavailable part, the run still starts and the launch
 line names the part (*chosen*): a repository with no GitHub remote has no PRs
 to observe, and refusing would make the flag unusable there. The verdict uses
-only the observed parts, and the summary says which were not.
+only the observed parts, and the summary says which were not. When the PR
+part is unavailable because `gh` is unusable, the notice `PR part not guarded:
+<<reason>>` (*chosen*) is printed twice: at launch and again in the final run
+summary beside the change record. An operator who reads only the end of the
+output still sees it.
 
 ### 5.3 Schema stamp of the flag
 
@@ -348,15 +423,22 @@ run rather than silently drop the guard.
 ## 7. Consequences and implementation outline
 
 For the operator: every `run`, `auto` and `resume` summary and the assessor
-gain the remote record, and `--forbid-remote-changes` fails on any entry (exit 6).
+gain the remote record, and `--forbid-remote-changes` fails on any
+attributable entry (exit 6).
 
 ### 7.1 Cost
 
-Per run, a *before* snapshot once and an *after* snapshot at the end of each
-leg: one `git remote -v`, one `git ls-remote --heads` per remote, and one
+Per leg, a *before* and an *after* snapshot: one `git remote -v`, one `git ls-remote --heads` per remote, and one
 `gh pr list` each. For a single-remote repository that is two to four extra
 git/gh calls per snapshot, each under a 30s timeout, off the per-node path,
 against a run that spends minutes in model calls.
+
+The attribution check (§5.1) runs only for entries with a new sha, and a quiet
+run has none. Each such entry costs one `git cat-file -e`, one `git show -s`
+and at most one `git merge-base --is-ancestor` per run branch, plus one `git
+for-each-ref` per leg. All of these are local, use no network and take
+milliseconds. The check runs whether or not the flag is set, because the label
+is part of the record.
 
 ### 7.2 What it does not fix
 
@@ -368,8 +450,8 @@ prevention would need a narrower tool grant, which §6 rejects for now.
 None of these exist at `ac7391c`; every name is *chosen* and given in §2.3,
 §4 and §5. By file:
 
-- `internal/worktree/git.go`, `worktree.go`: the git snapshot methods and
-  `RemoteObserver` with a fake (§2.3).
+- `internal/worktree/git.go`, `worktree.go`: the git snapshot methods,
+  `CommitAttributable` (§5.1) and `RemoteObserver` with a fake (§2.3).
 - `internal/remote/gh.go`, `snapshot.go` (new): `GHRunner` (the fifth seam),
   and a pure `Take`/`Diff` over `RemoteObserver` and `PRLister`.
 - `internal/runstate/runstate.go`: the §2.2 records, the persisted flag and
@@ -402,15 +484,20 @@ Unit tests use a fake `RemoteObserver` and a fake `PRLister` (the
    yields `not_compared` for PRs and no `pr_no_longer_open` entries.
 4. **Report only without the flag.** A `branch_created` entry with no flag:
    the run's exit is today's, the record is in `state.json` and the summary.
-5. **Fail with the flag.** The same entry with `--forbid-remote-changes`:
+5. **Fail with the flag.** The same entry, attributable through condition
+   (a), with `--forbid-remote-changes`:
    `RemoteChangeForbiddenError`, exit 6, the entry named in the message.
    With every node PASS, `state.json`'s status is FAIL and `runs list` and
    `show` read FAIL (ADR 0023 §2.6 as amended in §5.1).
 6. **The label.** No rendering of the record (summary, assessor block) contains
-   "made by"; each entry carries "observed during the run".
-7. **Resume keeps the first *before*.** A two-leg run where the fake changes
-   state between legs: the second leg takes no *before*, and the record diffs
-   leg-2 *after* against leg-1 *before*.
+   "made by". Each entry carries "observed during the run", an attributable
+   one adds "points at a commit this run made", and every other one reads
+   "observed, not attributable".
+7. **Each leg takes a fresh *before*.** A two-leg run paused at a gate,
+   where the fake moves a branch during the pause to a commit created in that
+   pause. The second leg takes its own *before*. The move appears only in the
+   `between_legs` set, as `not_attributable`. With the flag, the run does not
+   fail on it. Leg 2's entries are diffed against leg 2's *before*.
 8. **`--continue-on-fail` does not prune it.** A pruned node failure plus a
    forbidden change reports both, and the exit is 6.
 9. **The flag survives resume and stamps the schema.** A guarded snapshot is
@@ -430,21 +517,46 @@ Unit tests use a fake `RemoteObserver` and a fake `PRLister` (the
     `truncated`, and yields `not_compared`, with or without the flag.
 14. **No new feed event.** The feed schema constant is still 3 and no event
     type is added.
+15. **An unrelated push is reported, not failed.** With the flag, the fake
+    shows a `branch_moved` to a sha absent from the object store (`cat-file -e`
+    fails), plus a `pr_opened` whose head sha exists but is on no run branch
+    and predates the leg. Both are recorded `not_attributable` and printed
+    "observed, not attributable". The exit is the nodes' exit (0 when all
+    pass) and the status is not FAIL.
+16. **A push of the run's own commit fails.** With the flag, a
+    `branch_created` whose new sha is an ancestor of
+    `refs/heads/omg/<<runID>>/<<node>>` is `run_commit` via `run_branch`, and
+    the run exits 6. The same holds via `created_this_leg` for a commit made
+    after the leg's *before* on a branch outside the prefix.
+17. **No-sha entries are never attributable.** `remote_added`,
+    `branch_deleted` and `pr_no_longer_open` are `not_attributable` and never
+    fail a guarded run.
+18. **gh unusable is said twice.** With the flag and a fake `PRLister` that
+    returns "not authenticated", the run starts, and both the launch line and
+    the final summary carry `PR part not guarded`.
 
 ## 9. Falsification
 
-1. **Guarded runs fail mostly on changes no node made.** If most of the first
-   twenty `--forbid-remote-changes` failures are human pushes or unrelated
-   refs, the scope is too wide: narrow the guarded set (say, new branches and
-   new PRs only) before dropping the flag.
-2. **Forbidden pushes still land unflagged.** If a guarded run is found to have
+1. **Guarded runs fail mostly on changes no node made.** Attribution should
+   make this rare. If most of the first twenty `--forbid-remote-changes`
+   failures still point at commits that no node pushed, most likely through
+   condition (b) (a human committing in the same checkout, or a fetched
+   commit), the check is too wide. Drop (b) and keep (a) before dropping the
+   flag.
+2. **Node pushes are labelled not attributable.** If a guarded run's node is
+   found to have pushed and the entry read "observed, not attributable" (for
+   example a backdated commit off the run's branches, or a `remote_added`,
+   which has no sha), the check is too narrow. Widen it (say, to the reflog
+   of the run's worktrees) rather than counting every entry again, because
+   shared repositories are the normal case (§3.1).
+3. **Forbidden pushes still land unflagged.** If a guarded run is found to have
    pushed here and the record shows nothing, either a part was `unavailable`
    (the launch warning should become a refusal) or §2.4's reverted-change gap
    is hit in practice (a per-node snapshot is owed).
-3. **Operators never pass the flag.** If "do not push" goals keep running
+4. **Operators never pass the flag.** If "do not push" goals keep running
    without it, reconsider (iii) or make the flag more visible; never (i).
-4. **The snapshot costs more than a node.** If snapshots routinely approach
+5. **The snapshot costs more than a node.** If snapshots routinely approach
    their timeouts, drop to remotes and refs only, with PRs observed on demand.
-5. **The fifth seam is refused.** Then §2.3's fallback stands: git parts only,
+6. **The fifth seam is refused.** Then §2.3's fallback stands: git parts only,
    PRs `unavailable` with reason `no gh seam`, #410 half-answered until a seam
    is agreed.
