@@ -3983,17 +3983,23 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   cannot hold every floor, the floor goes to non-sinks before sinks, then
   shorter remaining length first, never by graph position or node ID.
   Artifacts of the same kind (sink or non-sink) and the same remaining
-  length form one group, and either every member of a group gets the floor
-  or none does: groups take their floors in that order while the budget left
-  holds the whole group's. The first group it cannot hold splits what is
-  left equally among its members by water-filling, so equal artifacts always
-  get equal shares; node ID only hands out the few bytes that do not split
-  evenly. Every later group gets nothing in pass 2 (a sink keeps its pass-1
-  share). The groups that got the floor share the whole pass-2 budget by the
-  same water-filling, with no floor, so none of it is wasted. A sink's
-  allowance is its pass-1 share plus its pass-2 share, so one 12 KB sink
-  beside three 1 KB non-sinks gets 9000 bytes and each non-sink renders
-  whole. The no-sink path exists only for evidence built without `Sink` set
+  length form one group: groups take their floors in that order while the
+  budget left holds the whole group's. The first group it cannot hold is
+  split evenly only when each member's share of what is left is at least
+  1000 bytes (`minAssessEqualShare`, half the floor): then its members split
+  it equally, so equal artifacts get equal shares, and node ID only hands
+  out the few bytes that do not split evenly. Below that half-floor, as many
+  members as the budget left holds get the floor, chosen in node-ID order,
+  and join the artifacts taking part; the rest of the group gets nothing and
+  is omitted with its own omission line, because slices that small are
+  useless as evidence. Every later group gets nothing in pass 2 (a sink
+  keeps its pass-1 share). The artifacts taking part share the rest of the
+  pass-2 budget by the same water-filling, with no floor, so the budget a
+  floor left over, less than one floor on the node-ID path, is shared
+  fairly and the allowances sum to at or near the budget, never above it.
+  A sink's allowance is its pass-1 share plus its pass-2 share, so one
+  12 KB sink beside three 1 KB non-sinks gets 9000 bytes and each non-sink
+  renders whole. The no-sink path exists only for evidence built without `Sink` set
   (older callers, tests): there pass 1 is empty and the whole budget splits
   as in pass 2. Artifacts still render in graph order, each cut to its fixed
   allowance. An artifact whose allowance is zero is omitted with its own
