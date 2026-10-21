@@ -171,3 +171,61 @@ func TestLaunchCommitOfWorkingDir_EmptyOutsideARepository(t *testing.T) {
 		t.Errorf("launchCommitOfWorkingDir = %q, want \"\"", got)
 	}
 }
+
+// #414: `chat` reads HEAD once at launch, and every plan of the session
+// carries that commit — even after turn 1's run has moved HEAD.
+func TestRunChatWith_EveryPlanOfTheSessionScopesFromTheLaunchCommit(t *testing.T) {
+	conventionsHome(t)
+	dir, launch := launchRepo(t)
+	t.Chdir(dir)
+	fake := newChatFake(map[string]runner.NodeOutcome{
+		routerKey:   {Result: `{"mode":"graph","goal":"add a README section"}`},
+		autoPlanKey: {Result: cycleSpec},
+		"work":      {SessionID: "s-work", Result: "PASS"},
+	})
+	key := fake.KeyFn
+	var moved string
+	var moveErr error
+	fake.KeyFn = func(spec runner.NodeInvocation) string {
+		k := key(spec)
+		if k == "work" && moved == "" {
+			moveErr = commitFile(dir, "turn1.txt")
+			moved = launchCommit(dir)
+		}
+		return k
+	}
+
+	var out strings.Builder
+	var chatErr error
+	captureStdout(t, func() {
+		chatErr = runChatWith(runner.RuntimeClaude, []string{"--no-agent-mapping", "--no-skill-activation"},
+			strings.NewReader("add a README section\ny\nadd another section\ny\n"), &out, fake)
+	})
+	if chatErr != nil {
+		t.Fatalf("chat: %v\n%s", chatErr, out.String())
+	}
+	if moveErr != nil {
+		t.Fatalf("fixture: %v", moveErr)
+	}
+	if moved == "" || moved == launch {
+		t.Fatalf("fixture: turn 1 did not move HEAD (launch %s, after %s)", launch, moved)
+	}
+	invocations := fake.Invocations()
+	planned := 0
+	for i, k := range fake.Calls() {
+		if k != autoPlanKey {
+			continue
+		}
+		planned++
+		prompt := invocations[i].Prompt
+		if !strings.Contains(prompt, launch+"..HEAD") {
+			t.Errorf("plan %d does not measure from the launch commit %s", planned, launch)
+		}
+		if strings.Contains(prompt, moved) {
+			t.Errorf("plan %d names the HEAD turn 1 moved to (%s); it must keep the launch commit", planned, moved)
+		}
+	}
+	if planned != 2 {
+		t.Fatalf("%d planner call(s), want 2", planned)
+	}
+}
