@@ -62,11 +62,15 @@ func TestExtractJSON(t *testing.T) {
 	}
 }
 
+// TestExtractPlanJSON pins the planner/router extractor's rules: one valid
+// json fence, else exactly one decodable top-level object, else the strict
+// cut; more than one object is an error, never a pick.
 func TestExtractPlanJSON(t *testing.T) {
 	cases := []struct {
 		name  string
 		reply string
 		want  string
+		err   bool
 	}{
 		{
 			name:  "template placeholder in prose before the plan (#387)",
@@ -98,10 +102,63 @@ func TestExtractPlanJSON(t *testing.T) {
 			reply: "Here {is a broken {plan: , } tail",
 			want:  "{is a broken {plan: , }",
 		},
+		{
+			name:  "unbalanced brace in prose skips only itself",
+			reply: "I will use the {name field.\n" + validSpec,
+			want:  validSpec,
+		},
+		{
+			// The aside decodes only if its span skips the braces in its
+			// string, so it becomes a second hit.
+			name:  "braces inside JSON strings do not end the span",
+			reply: `aside {"note":"a } and an escaped \" {"} then ` + validSpec,
+			err:   true,
+		},
+		{
+			name:  "matched non-JSON span hides the braces inside it",
+			reply: "see {x " + `{"a":1}` + " y} then " + validSpec,
+			want:  validSpec,
+		},
+		{
+			name:  "cut-off compact plan never yields an inner node",
+			reply: "Plan:\n" + cutOffSpec,
+			want:  cutOffSpec,
+		},
+		{
+			name:  "cut-off pretty plan never yields an inner node",
+			reply: "{\n  \"name\": \"x\",\n  \"nodes\": [\n    {\"id\": \"a\", \"prompt\": \"p\"}",
+			want:  "{\n  \"name\": \"x\",\n  \"nodes\": [\n    {\"id\": \"a\", \"prompt\": \"p\"}",
+		},
+		{
+			name:  "cut-off placeholder in prose skips only itself",
+			reply: "reads " + strings.Repeat("{", 2) + " artifacts.impl\n" + validSpec,
+			want:  validSpec,
+		},
+		{
+			name:  "two top-level objects",
+			reply: `{"a":1} and {"b":2}`,
+			err:   true,
+		},
+		{
+			name:  "two valid json fences",
+			reply: "```json\n{\"a\":1}\n```\n```json\n{\"b\":2}\n```",
+			err:   true,
+		},
+		{
+			name:  "one valid json fence beside an invalid one",
+			reply: "```json\n{oops}\n```\n```json\n{\"b\":2}\n```",
+			want:  `{"b":2}`,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := extractPlanJSON(tc.reply)
+			if tc.err {
+				if err == nil || !strings.Contains(err.Error(), "more than one JSON object") {
+					t.Fatalf("extractPlanJSON(%q) = %q, %v; want a more-than-one-JSON-object error", tc.reply, got, err)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("extractPlanJSON(%q): %v", tc.reply, err)
 			}

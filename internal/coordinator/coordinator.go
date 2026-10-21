@@ -664,7 +664,15 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string, offe
 		}}
 	}
 
-	spec, _ := extractPlanJSON(outcome.Result)
+	spec, err := extractPlanJSON(outcome.Result)
+	if err != nil {
+		// Like a decode failure, not repairable: there is no single plan to
+		// diagnose, so a re-plan would be a blind retry on a paid runtime.
+		return Plan{}, accounting, &planRefusal{err: &PlanError{
+			Reason: "planner " + err.Error(),
+			Output: outcome.Result,
+		}}
+	}
 	if spec == "" {
 		return Plan{}, accounting, &planRefusal{err: &PlanError{
 			Reason: "planner reply contained no JSON object",
@@ -1194,7 +1202,10 @@ func plannedNodeKeys(reply string) [][]string {
 	var raw struct {
 		Nodes []yaml.Node `yaml:"nodes"`
 	}
-	spec, _ := extractPlanJSON(reply)
+	spec, err := extractPlanJSON(reply)
+	if err != nil {
+		return nil
+	}
 	if err := yaml.Unmarshal([]byte(spec), &raw); err != nil {
 		return nil
 	}
@@ -1968,6 +1979,7 @@ func reuseBindsList(entry ReuseEntry) string {
 // planner's or the router's), tolerating a markdown code fence or stray prose
 // around it: everything outside the first '{' and the last '}' is discarded.
 // Returns "" when no object is present.
+// Planner and router callers use extractPlanJSON instead.
 func extractJSON(result string) string {
 	start := strings.Index(result, "{")
 	end := strings.LastIndex(result, "}")
@@ -1977,50 +1989,120 @@ func extractJSON(result string) string {
 	return result[start : end+1]
 }
 
-// extractPlanJSON isolates the JSON object from a planner or router reply,
-// whose prose may quote template syntax before the plan (#387). In order:
-//   - the content of the first ```json fenced block that decodes as a JSON
-//     object, trimmed of surrounding whitespace;
-//   - else the first '{' from which exactly one JSON object decodes, as the
-//     bytes of that object alone — so braces in prose before the plan (a
-//     quoted artifacts placeholder, an aside) are skipped, and prose after
-//     it is dropped even when it holds braces;
-//   - else extractJSON's first '{' to last '}' cut, so a genuinely broken
-//     reply still reaches the parser (and its error) as before.
+// extractPlanJSON isolates the plan (or route decision) from a planner or
+// router reply, whose prose may quote template syntax or carry stray braces
+// before the plan (#387). Rules, in order:
 //
-// Returns "" when no '{' is present. The error is always nil for now. The
-// goal assessor does NOT use this: its reply quotes untrusted artifacts by
-// design, so it keeps extractJSON's strict cut and fails loudly on two objects.
+//   - If the reply has ```json fenced blocks and exactly one of them is a
+//     valid JSON object, that object is returned (trimmed). More than one
+//     valid json fence is an error: the reply holds more than one JSON object.
+//   - Else every '{' is a candidate, left to right. Its span runs to the
+//     matching '}' by brace-depth counting that ignores braces inside JSON
+//     strings, and a '{' inside an earlier candidate's span is never tried.
+//     An unmatched '{' whose first non-whitespace successor is '"' looks like
+//     a cut-off object, so its span runs to the end of the reply and nothing
+//     after it is tried — a cut-off plan never yields one of its inner node
+//     objects. Any other unmatched '{' (prose like "use the {name field", a
+//     cut-off placeholder) skips only itself. A candidate whose span decodes
+//     as one JSON object is a hit: exactly one hit is returned, more than one
+//     is an error.
+//   - No hit falls back to extractJSON's first '{' to last '}' cut, so a
+//     broken or cut-off reply still reaches the parser and its real syntax
+//     error. "" with a nil error when the reply has no '{'.
+//
+// The goal assessor does NOT use this: its reply quotes untrusted artifacts
+// by design, and picking one object out of several could hand it a quoted
+// verdict, so it keeps extractJSON's strict cut and fails to decode instead.
 func extractPlanJSON(reply string) (string, error) {
-	const fenceOpen = "```json"
-	for rest := reply; ; {
-		i := strings.Index(rest, fenceOpen)
-		if i == -1 {
-			break
-		}
-		rest = rest[i+len(fenceOpen):]
-		end := strings.Index(rest, "```")
-		if end == -1 {
-			break
-		}
-		content := strings.TrimSpace(rest[:end])
-		if strings.HasPrefix(content, "{") && json.Valid([]byte(content)) {
-			return content, nil
-		}
-		rest = rest[end+len("```"):]
+	if fenced := jsonFenceObjects(reply); len(fenced) == 1 {
+		return fenced[0], nil
+	} else if len(fenced) > 1 {
+		return "", fmt.Errorf("reply holds more than one JSON object (%d valid ```json fences)", len(fenced))
 	}
 
+	var hits []string
 	for i := 0; i < len(reply); i++ {
 		if reply[i] != '{' {
 			continue
 		}
-		var obj json.RawMessage
-		if err := json.NewDecoder(strings.NewReader(reply[i:])).Decode(&obj); err == nil {
-			return string(obj), nil
+		end := matchingBrace(reply, i)
+		if end == -1 {
+			if strings.HasPrefix(strings.TrimLeft(reply[i+1:], " \t\r\n"), `"`) {
+				// A cut-off object: its span is the rest of the reply, which
+				// cannot decode with a '{' left open.
+				break
+			}
+			continue
+		}
+		if span := reply[i : end+1]; json.Valid([]byte(span)) {
+			hits = append(hits, span)
+		}
+		i = end
+	}
+	switch len(hits) {
+	case 1:
+		return hits[0], nil
+	case 0:
+		return extractJSON(reply), nil
+	default:
+		return "", fmt.Errorf("reply holds more than one JSON object (%d decodable top-level objects)", len(hits))
+	}
+}
+
+// jsonFenceObjects is the trimmed content of every closed ```json fenced block
+// in reply that is a valid JSON object, in order.
+func jsonFenceObjects(reply string) []string {
+	const fenceOpen = "```json"
+	var objects []string
+	for rest := reply; ; {
+		i := strings.Index(rest, fenceOpen)
+		if i == -1 {
+			return objects
+		}
+		rest = rest[i+len(fenceOpen):]
+		end := strings.Index(rest, "```")
+		if end == -1 {
+			return objects
+		}
+		content := strings.TrimSpace(rest[:end])
+		if strings.HasPrefix(content, "{") && json.Valid([]byte(content)) {
+			objects = append(objects, content)
+		}
+		rest = rest[end+len("```"):]
+	}
+}
+
+// matchingBrace is the index of the '}' closing the '{' at s[open], counting
+// brace depth outside JSON strings (escapes honoured); -1 when it never closes.
+func matchingBrace(s string, open int) int {
+	depth := 0
+	inString, escaped := false, false
+	for j := open; j < len(s); j++ {
+		c := s[j]
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return j
+			}
 		}
 	}
-
-	return extractJSON(reply), nil
+	return -1
 }
 
 // plannerRetryCauses is the closed retry.on cause set, rendered into the
