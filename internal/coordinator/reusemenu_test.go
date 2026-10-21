@@ -19,7 +19,7 @@ import (
 // empty renders the no-command spelling.
 func plannerPromptNoMenu(t *testing.T, goal string, verifyCommand string) string {
 	t.Helper()
-	prompt, err := plannerPrompt(goal, nil, verifyCommand, nil)
+	prompt, err := plannerPrompt(goal, nil, verifyCommand, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
