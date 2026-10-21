@@ -725,6 +725,36 @@ func TestPlannerPromptGivesTheFailBranchAPlaceForTheCaveat(t *testing.T) {
 	}
 }
 
+// TestPlannerPromptKeepsCheckNodesOffStateTheGoalForbids pins #388, in BOTH
+// spellings of the final-check paragraph. A goal that said not to push, not to
+// open a PR and not to create a remote got a final check node asserting an
+// open pull request — state the run was forbidden to change — and the cycle
+// FAILed over work that had landed. The pull-request assertion is scoped to a
+// goal whose own nodes push and open it, every check node asserts only what
+// this run produces, and a forbidden action is never a reason to reply FAIL.
+func TestPlannerPromptKeepsCheckNodesOffStateTheGoalForbids(t *testing.T) {
+	for _, verifyCmd := range []string{"make test", ""} {
+		prompt := plannerPromptNoMenu(t, "fix it on a branch; do not push, open a PR or create a remote", verifyCmd)
+		for _, want := range []string{
+			// 1: the PR assertion only for a goal that pushes and opens it itself
+			"ONLY when the goal's own nodes push the branch and open the pull\n    request",
+			"including any goal that says not to push, not to open or edit a\n    pull request, or not to create a remote — assert the branch REF instead",
+			"never asserts remotes, pushes or pull-request state.",
+			// 2: one scope rule for every planned check node
+			"- Every planned check node, final or not, asserts only what this run's own\n  nodes produce or change",
+			"It never asserts state the goal forbids\n  the run to change",
+			"it never asserts the ABSENCE of something the goal\n  only forbids creating",
+			"a remote that already existed is not a violation\n  of \"do not create a remote\"",
+			// 3: a forbidden action is the operator's next step, never a FAIL
+			"is the operator's\n  next step, not a qualification a reader would act on, so it is never a\n  reason to reply FAIL.",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("verify-cmd %q: prompt lost the #388 rule: missing %q", verifyCmd, want)
+			}
+		}
+	}
+}
+
 // --- §3: detection informs, it never grants ---------------------------------
 
 // TestDetectBuildSignals_ReadsMarkersNotContent — a marker file is detected by
