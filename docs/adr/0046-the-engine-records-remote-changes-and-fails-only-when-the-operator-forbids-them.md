@@ -117,7 +117,10 @@ exactly when its head sha is. The field takes two values (*chosen*):
 
 - `run_commit`: the new sha passes §5.1's check. The entry also records which
   condition held (`attribution_via`, `run_branch` or `created_this_leg`,
-  *chosen*). It is labelled **"observed during the run; points at a commit
+  *chosen*). `run_branch` means the sha is reachable from one of the run's
+  own `omg/<<runID>>/` branches **and not** from the run's base commit
+  (`run_base_sha`, §5.1), so a commit that was already in the invocation
+  repository's history when the run started never counts. It is labelled **"observed during the run; points at a commit
   this run made"** (*chosen*).
 - `not_attributable`: every other entry. That includes every entry with no new
   sha (`remote_added`, `remote_removed`, `remote_url_changed`,
@@ -159,7 +162,7 @@ existing helper `m.git(ctx, …)` (`internal/worktree/git.go:304`), which reache
 the single spawn in `gitCmd` (`git.go:330–334`) with
 `cmd.Env = childenv.Scrub(m.environ())`. No `exec.Command` is added, so the
 one-per-file invariant holds and the scrub is inherited. This **amends ADR
-0005's scope**: that ADR and the `CONTRIBUTING.md:180` table row define the
+0005's scope**: that ADR and the `CONTRIBUTING.md:181` table row define the
 seam as "the `git worktree` commands behind a node's `worktree:`"; it becomes
 "the `git` commands the engine itself issues against the invocation
 repository: worktrees, and the remote snapshot". The table row is updated with
@@ -237,9 +240,12 @@ repository is the normal case, not the exception: on jitokim/oh-my-graph,
 several agents, merges and bots move refs and open PRs all day. If any entry
 failed a guarded run, an unrelated `branch_moved` or `pr_opened` would fail
 almost every guarded run that lasts more than a few minutes. That is why only
-an attributable entry fails. An unrelated push points at a commit that is not
-in the invocation repository, or not on the run's branches and not created in
-this leg, so it is reported and does not fail the run. What is left is narrow:
+an attributable entry fails. An unrelated push points at a commit that is
+either missing from the invocation repository, or reachable from the run's
+base commit (for example a branch pushed at the current `main` tip, or a PR
+whose head is already on `main`), or on none of the run's branches and not
+created in this leg. Any of these makes it not attributable (§5.1), so it is
+reported and does not fail the run. What is left is narrow:
 a human pushes a commit this run made, or someone other than a node makes or
 fetches a commit into the invocation repository during the leg (§5.1,
 condition (b)). The record names the sha, so the cost is a re-run, bounded and
@@ -316,9 +322,11 @@ the middle. `run` takes (ii), so hand-written graphs are covered without it.
 
 **Decision: (ii).** "Forbidden" means the operator passed
 `--forbid-remote-changes`. Any **attributable** entry in the change record
-(§5.1) is then a forbidden change, whatever its kind. Every other entry is
-reported and never forbidden. The flag does not take a list of kinds (*chosen*: one
-switch, all of §2.2).
+(§5.1) is then a forbidden change. Every other entry is reported and never
+forbidden. The flag does not take a list of kinds (*chosen*): one switch; it
+can fail the run only on the kinds that carry a new sha (`branch_created`,
+`branch_moved`, `pr_opened`, `pr_updated`); the other §2.2 kinds are reported
+only (§3.1 false negative, §9 item 2).
 
 ## 5. Recommendation
 
@@ -353,10 +361,20 @@ commands in the invocation repository, in this order:
    someone else pushed and that no node fetched fails here, and the check
    stops.
 2. Then one of two conditions must hold:
-   - **(a) `run_branch`:** `git merge-base --is-ancestor S R` succeeds for
-     some ref R listed by `git for-each-ref --format='%(refname)'
-     refs/heads/omg/<<runID>>/`. Those refs are the run's own branches,
-     named by `branchPrefix` (`internal/worktree/git.go:81`).
+   - **(a) `run_branch`:** `git merge-base --is-ancestor S B` **fails**, and
+     `git merge-base --is-ancestor S R` succeeds for some ref R listed by
+     `git for-each-ref --format='%(refname)' refs/heads/omg/<<runID>>/`.
+     Those refs are the run's own branches, named by `branchPrefix`
+     (`internal/worktree/git.go:81`). B is the run's base commit: the
+     invocation repository's `HEAD` read at the start of the first leg and
+     persisted in `state.json` as `run_base_sha` (*chosen*), so resumed legs
+     keep the same B. The exclusion is needed because each run branch is
+     created off the invocation repository's `HEAD` (`Acquire`, `git.go:140`)
+     and a branch that carries commits is kept (`cleanupOne`, `git.go:261`),
+     so every commit already on `main` when the run started is an ancestor of
+     some run ref. Without it, a branch someone pushes at the `main` tip
+     would count as the run's. A resumed run whose `state.json` has no
+     `run_base_sha` cannot pass (a), only (b).
    - **(b) `created_this_leg`:** `git show -s --format=%ct S` is at or after
      the current leg's *before* snapshot time. This covers a commit a node made
      on a branch it renamed, or, without `worktree:`, on the invocation
@@ -435,8 +453,9 @@ against a run that spends minutes in model calls.
 
 The attribution check (§5.1) runs only for entries with a new sha, and a quiet
 run has none. Each such entry costs one `git cat-file -e`, one `git show -s`
-and at most one `git merge-base --is-ancestor` per run branch, plus one `git
-for-each-ref` per leg. All of these are local, use no network and take
+and at most one `git merge-base --is-ancestor` against the run's base
+commit B plus one per run branch, plus one `git for-each-ref` per leg.
+Reading B costs one `git rev-parse HEAD`, once per run. All of these are local, use no network and take
 milliseconds. The check runs whether or not the flag is set, because the label
 is part of the record.
 
@@ -525,13 +544,18 @@ Unit tests use a fake `RemoteObserver` and a fake `PRLister` (the
     pass) and the status is not FAIL.
 16. **A push of the run's own commit fails.** With the flag, a
     `branch_created` whose new sha is an ancestor of
-    `refs/heads/omg/<<runID>>/<<node>>` is `run_commit` via `run_branch`, and
+    `refs/heads/omg/<<runID>>/<<worktree>>` and not of `run_base_sha` is
+    `run_commit` via `run_branch`, and
     the run exits 6. The same holds via `created_this_leg` for a commit made
     after the leg's *before* on a branch outside the prefix.
 17. **No-sha entries are never attributable.** `remote_added`,
     `branch_deleted` and `pr_no_longer_open` are `not_attributable` and never
     fail a guarded run.
-18. **gh unusable is said twice.** With the flag and a fake `PRLister` that
+18. **The run's base commit is not attributable.** With the flag, a
+    `branch_created` whose new sha is the run's `run_base_sha` (an ancestor of
+    every `omg/<<runID>>/` branch) is `not_attributable`, and the run does not
+    exit 6.
+19. **gh unusable is said twice.** With the flag and a fake `PRLister` that
     returns "not authenticated", the run starts, and both the launch line and
     the final summary carry `PR part not guarded`.
 
