@@ -3125,11 +3125,12 @@ a looser match that guessed wrong would skip a suite nothing then runs.
 
 **The planner is told the commit the run started from (#414).** `auto` and
 `design` read the invocation repository's HEAD once, at launch
-(`launchCommit`, `cmd/oh-my-graph/launchcommit.go`). The helper reads the git
-dir in-process (`HEAD`, loose refs, `packed-refs`), so it adds no fifth
-spawner. It is empty when the directory is not a repository. They pass it with
-`coordinator.WithStartCommit`, and since one coordinator serves the whole goal
-loop, every cycle of a goal gets the same launch commit. The planner prompt
+(`launchCommit`, `cmd/oh-my-graph/launchcommit.go`). The helper asks git
+through `worktree.GitManager.HeadCommit` (`git rev-parse --verify HEAD`), the
+third exec seam (ADR 0005), so the CLI itself spawns nothing and no fifth
+spawner is added. It is empty when the directory is not a repository.
+They pass it with `coordinator.WithStartCommit`, and since one coordinator
+serves the whole goal loop, every cycle of a goal gets the same launch commit. The planner prompt
 then tells planned nodes to measure any scope or changed-files check from
 `<sha>..HEAD`, never from main, and never to revert, restore or check out a
 file the goal did not ask them to change. A file changed before the start
