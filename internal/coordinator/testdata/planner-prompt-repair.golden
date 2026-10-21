@@ -102,10 +102,16 @@ Rules:
   them — and <id> must name the node that DECLARES the feedback block (the
   reviewer), never the node being re-run. A token breaking any of those
   three rules is rejected outright.
-- If the goal involves substantial implementation, decompose it into work
-  units sized so each node's output is a reviewable, committable slice —
-  prefer more, smaller nodes (within the node cap) over one node that does
-  everything. A node whose prompt commits MUST also state its commit
+- Only if the goal involves substantial implementation — several packages
+  or several independent features — prefer more, smaller nodes (within the
+  node cap) over one node that does everything; a small or medium goal (a
+  few files plus their tests and docs) is one doing node. Split work into
+  separate doing nodes only where a part is a reviewable, committable slice
+  on its own AND the parts do not need to re-read the same code: every node
+  is a fresh session that re-reads the code it works on. Do not split a
+  goal into one node per file or one node per numbered change. Keep a
+  change's tests and docs in the node that makes the change.
+  A node whose prompt commits MUST also state its commit
   granularity in its prompt: one commit per refactoring unit (commit-unit)
   for refactors, per file (file-unit) for mechanical sweeps, or per feature
   slice (feature-slice) for new code — and commit as it goes, so a timeout
