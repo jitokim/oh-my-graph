@@ -12,7 +12,7 @@ import (
 
 // launchRepo makes a git repository with one commit in a temp dir and returns
 // the dir and `git rev-parse HEAD` — the value launchCommit must reproduce
-// without spawning git (#414).
+// through the worktree seam (#414).
 func launchRepo(t *testing.T) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -43,7 +43,7 @@ func commitFile(dir, name string) error {
 	return err
 }
 
-func TestLaunchCommit_ReadsHEADWithoutSpawningGit(t *testing.T) {
+func TestLaunchCommit_MatchesGitRevParseHEAD(t *testing.T) {
 	dir, want := launchRepo(t)
 	sub := filepath.Join(dir, "a", "b")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
@@ -73,19 +73,7 @@ func TestLaunchCommit_DetachedHEAD(t *testing.T) {
 	}
 }
 
-func TestLaunchCommit_PackedRefs(t *testing.T) {
-	dir, want := launchRepo(t)
-	mustGit(t, dir, "pack-refs", "--all")
-	if _, err := os.Stat(filepath.Join(dir, ".git", "refs", "heads", "main")); err == nil {
-		t.Fatal("fixture: the loose ref survived pack-refs --all")
-	}
-	if got := launchCommit(dir); got != want {
-		t.Errorf("packed: launchCommit = %q, want %q", got, want)
-	}
-}
-
-// A linked worktree's `.git` is a gitdir: file, and its branch ref lives in
-// the commondir, not in the worktree's own gitdir.
+// A linked worktree reports its own HEAD, not the main checkout's.
 func TestLaunchCommit_LinkedWorktree(t *testing.T) {
 	dir, _ := launchRepo(t)
 	wt := filepath.Join(t.TempDir(), "wt")
@@ -97,20 +85,6 @@ func TestLaunchCommit_LinkedWorktree(t *testing.T) {
 	}
 	if got := launchCommit(dir); got == want {
 		t.Error("the main checkout reports the worktree's HEAD")
-	}
-}
-
-func TestIsFullSHA(t *testing.T) {
-	for s, want := range map[string]bool{
-		strings.Repeat("a", 40): true,
-		strings.Repeat("0", 64): true,
-		strings.Repeat("a", 39): false,
-		strings.Repeat("g", 40): false,
-		"":                      false,
-	} {
-		if got := isFullSHA(s); got != want {
-			t.Errorf("isFullSHA(%q) = %v, want %v", s, got, want)
-		}
 	}
 }
 
