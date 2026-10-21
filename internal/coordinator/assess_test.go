@@ -404,7 +404,9 @@ func TestAssess_LongArtifactIsExcerptedKeepingHeadAndTail(t *testing.T) {
 
 	head := "HEAD-OF-ARTIFACT "
 	tail := " TAIL-OF-ARTIFACT"
-	long := head + strings.Repeat("x", 3*maxAssessArtifactExcerpt) + tail
+	// Longer than the whole artifact budget, so even a lone artifact's fair
+	// share cannot hold it.
+	long := head + strings.Repeat("x", 2*maxAssessArtifactMaterial) + tail
 	evidence := CycleEvidence{RunID: "r1", Nodes: []NodeEvidence{{ID: "n", Verdict: "PASS", Artifact: long}}}
 	if _, err := New(fake).Assess(context.Background(), "goal", evidence); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -418,6 +420,35 @@ func TestAssess_LongArtifactIsExcerptedKeepingHeadAndTail(t *testing.T) {
 	}
 	if strings.Contains(captured.Prompt, long) {
 		t.Error("the full over-long artifact leaked into the prompt")
+	}
+	if strings.Contains(captured.Prompt, strings.Repeat("x", maxAssessArtifactMaterial)) {
+		t.Error("the artifact's middle was not dropped: more than the whole artifact budget rendered")
+	}
+}
+
+// #405: the per-artifact size is a minimum fair share, not a fixed cap. A
+// long artifact beside a short one gets the budget the short one leaves
+// unused, so finished work renders whole instead of being cut at 2000 bytes.
+func TestAssess_LongArtifactBesideShortOneRendersWhole(t *testing.T) {
+	fake, captured := newPlannerFake(runner.NodeOutcome{Result: assessMetReply})
+
+	big := "HEAD-MARKER " + strings.Repeat("a", 2900) + " MIDDLE-MARKER " + strings.Repeat("b", 2900) + " TAIL-MARKER"
+	evidence := CycleEvidence{RunID: "r1", Nodes: []NodeEvidence{
+		{ID: "small", Verdict: "PASS", Artifact: "ok"},
+		{ID: "big", Verdict: "PASS", Artifact: big},
+	}}
+	if _, err := New(fake).Assess(context.Background(), "goal", evidence); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(captured.Prompt, big) {
+		t.Error("a long artifact that fits the remaining budget must render whole")
+	}
+	if !strings.Contains(captured.Prompt, "MIDDLE-MARKER") {
+		t.Error("the long artifact's middle was dropped")
+	}
+	if strings.Contains(captured.Prompt, fence.ExcerptMarker) {
+		t.Error("an artifact that fits the remaining budget was excerpted")
 	}
 }
 
@@ -476,5 +507,36 @@ func TestAssess_TotalMaterialCapOmitsLaterArtifactsLoudly(t *testing.T) {
 	}
 	if got := strings.Count(captured.Prompt, "--- artifact of node"); got > maxAssessArtifactMaterial/maxAssessArtifactExcerpt {
 		t.Errorf("%d artifact blocks rendered, want at most %d", got, maxAssessArtifactMaterial/maxAssessArtifactExcerpt)
+	}
+}
+
+// Artifacts larger than the minimum share are cut to a fair share of what
+// remains: the total stays within the material cap, every rendered artifact
+// is excerpted, and the ones past the cap are omitted loudly.
+func TestAssess_ManyLargeArtifactsShareTheCapAndOmitLoudly(t *testing.T) {
+	fake, captured := newPlannerFake(runner.NodeOutcome{Result: assessMetReply})
+
+	const count = 10
+	var nodes []NodeEvidence
+	for i := 0; i < count; i++ {
+		nodes = append(nodes, NodeEvidence{ID: fmt.Sprintf("n%d", i), Verdict: "PASS", Artifact: strings.Repeat("z", 3*maxAssessArtifactExcerpt)})
+	}
+	material := assessMaterial(CycleEvidence{RunID: "r1", Nodes: nodes}, "nonce")
+	if _, err := New(fake).Assess(context.Background(), "goal", CycleEvidence{RunID: "r1", Nodes: nodes}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(captured.Prompt, "(further artifacts omitted: total material cap reached)") {
+		t.Error("artifacts past the total cap must be omitted LOUDLY, not silently")
+	}
+	rendered := strings.Count(captured.Prompt, "--- artifact of node")
+	if rendered == 0 || rendered >= count {
+		t.Fatalf("%d artifact blocks rendered, want some but not all %d", rendered, count)
+	}
+	if got := strings.Count(captured.Prompt, fence.ExcerptMarker); got != rendered {
+		t.Errorf("%d of %d rendered artifacts were excerpted, want all of them cut", got, rendered)
+	}
+	if got := strings.Count(material, "z"); got > maxAssessArtifactMaterial {
+		t.Errorf("artifact material totals %d bytes, over the %d cap", got, maxAssessArtifactMaterial)
 	}
 }
