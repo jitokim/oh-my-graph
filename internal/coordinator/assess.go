@@ -1,6 +1,7 @@
 package coordinator
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -418,45 +419,37 @@ func assessMaterial(evidence CycleEvidence, nonce string) string {
 		material += writeVerificationBlock(&b, node.ID, *node.Verification, maxAssessArtifactMaterial-material, nonce)
 	}
 
+	var ids []string
 	var lengths []int
 	var sinks []bool
 	for _, node := range evidence.Nodes {
 		if node.Artifact != "" {
+			ids = append(ids, node.ID)
 			lengths = append(lengths, len(node.Artifact))
 			sinks = append(sinks, node.Sink)
 		}
 	}
-	allowances, priority := sinkFirstAllowances(lengths, sinks, maxAssessArtifactMaterial-material)
-	reserved := 0
-	for _, share := range priority {
-		reserved += share
-	}
+	allowances := sinkFirstAllowances(ids, lengths, sinks, maxAssessArtifactMaterial-material)
 	next := 0
 	for _, node := range evidence.Nodes {
 		if node.Artifact == "" {
 			continue
 		}
 		allowance := allowances[next]
-		reserved -= priority[next]
 		next++
-		// Each allowance was fixed above from every artifact's length in two
-		// passes — the sinks' priority share, at most half the budget, then
-		// the rest across all artifacts (#408) — so a cut does not depend on
-		// where the other artifacts sit in graph order. The floor can promise
-		// more than the budget holds, so the running remainder still bounds
-		// the cut, less the pass-1 priority share of the sinks still to
-		// render. Only that pass-1 share is reserved, never a sink's pass-2
-		// extra, so the sinks' reserve stays within half the budget and the
-		// evidence of the work still renders beside them. The reserve bounds
-		// every artifact, sinks included, so neither a non-sink nor an earlier
-		// sink's pass-2 extra can eat a later sink's priority share. An
-		// artifact with nothing left is omitted with a line naming its node,
+		// Every allowance was fixed above, before any artifact renders, from
+		// every artifact's length, sink flag and node ID in two passes — the
+		// sinks' priority share, at most half the budget, then the rest across
+		// all artifacts (#408) — and they sum to at most the budget, so a cut
+		// does not depend on where the other artifacts sit in graph order.
+		// The min with the budget left is defensive only: it never binds,
+		// because the allowances are fixed and sum to at most the budget. An
+		// artifact with no allowance is omitted with a line naming its node,
 		// where its block would have been, and rendering goes on: a later
 		// sink can still render, and no dropped node goes unnamed.
-		bound := maxAssessArtifactMaterial - material - reserved
 		cut := ""
-		if allowance > 0 && bound > 0 {
-			cut = fence.Excerpt(node.Artifact, min(allowance, bound))
+		if bound := min(allowance, maxAssessArtifactMaterial-material); bound > 0 {
+			cut = fence.Excerpt(node.Artifact, bound)
 		}
 		if cut == "" {
 			fmt.Fprintf(&b, "(artifact of node %s omitted: material cap reached)\n", node.ID)
@@ -474,87 +467,154 @@ func assessMaterial(evidence CycleEvidence, nonce string) string {
 }
 
 // sinkFirstAllowances splits the artifact budget in two passes, sinks first
-// (#408). Pass 1, the priority share: the sinks together get at most
+// (#408), and fixes every artifact's allowance before any renders: the
+// allowances sum to at most the budget, so the renderer never has to trim
+// one, and the split does not depend on graph order. Pass 1, the priority
+// share: the sinks together get at most
 // maxSinkPriorityShareNum/maxSinkPriorityShareDen of the budget, water-filled
 // among them (artifactAllowances), so a short sink takes only its length and
 // the rest goes to the longer sinks. Where the floor would push the sinks past
-// that share, the sinks are trimmed in the caller's order so their pass-1
-// total never exceeds it. Pass 2, the rest: whatever the budget has left after
-// pass 1 is water-filled across EVERY artifact's remaining length — the
+// that share, the sinks are trimmed shortest first, ties broken by node ID,
+// so their pass-1 total never exceeds it and the trim never depends on graph
+// position. Pass 2, the rest: whatever the budget has left after pass 1 is
+// split across EVERY artifact's remaining length by restAllowances — the
 // non-sinks, and the sinks pass 1 cut, which can receive more. A sink's
 // allowance is its pass-1 share plus its pass-2 share. Every plan has at least
 // one sink, because a DAG always has one; the no-sink path exists only for
 // evidence built without Sink set (older callers, tests), and there pass 1 is
-// empty and this is artifactAllowances over the whole budget. Allowance i
-// and priority i belong to lengths[i], sinks[i], in the caller's order;
-// priority i is sink i's pass-1 share (zero for a non-sink), the part the
-// renderer reserves for a sink until it renders.
-func sinkFirstAllowances(lengths []int, sinks []bool, budget int) (allowances, priority []int) {
+// empty and the whole budget splits as in pass 2. Allowance i belongs to
+// ids[i], lengths[i], sinks[i], in the caller's order.
+func sinkFirstAllowances(ids []string, lengths []int, sinks []bool, budget int) []int {
+	var sinkAt []int
 	var sinkLengths []int
 	for i, length := range lengths {
 		if sinks[i] {
+			sinkAt = append(sinkAt, i)
 			sinkLengths = append(sinkLengths, length)
 		}
 	}
 
-	allowances = make([]int, len(lengths))
-	priority = make([]int, len(lengths))
-	if len(sinkLengths) > 0 {
+	allowances := make([]int, len(lengths))
+	if len(sinkAt) > 0 {
 		share := max(budget*maxSinkPriorityShareNum/maxSinkPriorityShareDen, 0)
 		sinkAllowances := artifactAllowances(sinkLengths, share)
-		next := 0
-		for i := range lengths {
-			if sinks[i] {
-				allowances[i] = min(sinkAllowances[next], share)
-				priority[i] = allowances[i]
-				share -= allowances[i]
-				budget -= allowances[i]
-				next++
-			}
+		for i, at := range sinkAt {
+			allowances[at] = sinkAllowances[i]
+		}
+		slices.SortFunc(sinkAt, func(a, b int) int {
+			return cmp.Or(cmp.Compare(lengths[a], lengths[b]), cmp.Compare(ids[a], ids[b]))
+		})
+		for _, at := range sinkAt {
+			allowances[at] = min(allowances[at], share)
+			share -= allowances[at]
+			budget -= allowances[at]
 		}
 	}
-	if budget > 0 {
-		remaining := make([]int, len(lengths))
-		for i, length := range lengths {
-			remaining[i] = length - allowances[i]
-		}
-		for i, extra := range artifactAllowances(remaining, budget) {
-			allowances[i] += extra
+	remaining := make([]int, len(lengths))
+	for i, length := range lengths {
+		remaining[i] = length - allowances[i]
+	}
+	for i, extra := range restAllowances(ids, remaining, sinks, budget) {
+		allowances[i] += extra
+	}
+	return allowances
+}
+
+// restAllowances is pass 2 of sinkFirstAllowances (#408): it splits budget
+// across the artifacts' remaining lengths so the allowances sum to at most
+// budget, and the split never depends on the caller's order. Each artifact
+// that still needs something asks for its floor, min(its remaining length,
+// maxAssessArtifactExcerpt). When the budget holds every floor, every artifact
+// takes part. When it cannot, who gets the floor is decided without graph
+// position: non-sinks before sinks (the sinks already got their priority
+// share in pass 1), then shorter remaining length first, ties broken by node
+// ID, each taking its floor while the budget left still holds it; the ones
+// whose floor no longer fits get nothing, so the renderer names them in an
+// omission line (a sink keeps its pass-1 share). The artifacts that take part
+// then water-fill the whole budget among themselves with no floor: an
+// artifact no longer than the fair level gets its whole remaining length,
+// and the budget the short ones leave is split evenly among the longer ones,
+// so the budget a floor left over is shared fairly and none is wasted.
+// Allowance i belongs to ids[i], remaining[i], sinks[i], in the caller's
+// order.
+func restAllowances(ids []string, remaining []int, sinks []bool, budget int) []int {
+	order := make([]int, 0, len(remaining))
+	for i, length := range remaining {
+		if length > 0 {
+			order = append(order, i)
 		}
 	}
-	return allowances, priority
+	slices.SortFunc(order, func(a, b int) int {
+		return cmp.Or(compareBool(sinks[a], sinks[b]), cmp.Compare(remaining[a], remaining[b]), cmp.Compare(ids[a], ids[b]))
+	})
+	var taking []int
+	left := budget
+	for _, i := range order {
+		if floor := min(remaining[i], maxAssessArtifactExcerpt); floor <= left {
+			taking = append(taking, i)
+			left -= floor
+		}
+	}
+
+	lengths := make([]int, len(taking))
+	for k, i := range taking {
+		lengths[k] = remaining[i]
+	}
+	level := waterLevel(lengths, budget)
+	allowances := make([]int, len(remaining))
+	for _, i := range taking {
+		allowances[i] = min(remaining[i], level)
+	}
+	return allowances
+}
+
+// compareBool orders false before true.
+func compareBool(a, b bool) int {
+	switch {
+	case a == b:
+		return 0
+	case a:
+		return 1
+	default:
+		return -1
+	}
 }
 
 // artifactAllowances splits the artifact budget across artifacts of the given
 // lengths by water-filling (#405): an artifact no longer than the fair level
 // gets its whole length, and the budget the short ones leave is split evenly
 // among the longer ones. The level never drops below maxAssessArtifactExcerpt,
-// so many long artifacts each still get a usable excerpt and the ones the
-// budget cannot hold are omitted. Allowance i is min(lengths[i], level), in
-// the caller's order — the split itself never depends on that order.
-// sinkFirstAllowances calls it twice: in pass 1 over the sinks' lengths and
-// their priority share, in pass 2 over every artifact's remaining length and
-// the rest of the budget (#408).
+// so many long artifacts each still get a usable excerpt, which can sum to
+// more than the budget. Allowance i is min(lengths[i], level), in the caller's
+// order — the split itself never depends on that order. sinkFirstAllowances
+// calls it in pass 1 over the sinks' lengths and their priority share, then
+// trims the sinks to that share in an order of its own (#408), so the
+// allowances it fixes still sum to at most the budget.
 func artifactAllowances(lengths []int, budget int) []int {
+	level := max(waterLevel(lengths, budget), maxAssessArtifactExcerpt)
+	allowances := make([]int, len(lengths))
+	for i, length := range lengths {
+		allowances[i] = min(length, level)
+	}
+	return allowances
+}
+
+// waterLevel is the fair level of water-filling budget across lengths with no
+// floor: the min of each length and the level sums to at most budget, and an
+// artifact no longer than the level gets its whole length.
+func waterLevel(lengths []int, budget int) int {
 	sorted := slices.Clone(lengths)
 	slices.Sort(sorted)
 	level := 0
 	for i, length := range sorted {
 		share := budget / (len(sorted) - i)
 		if length > share {
-			level = share
-			break
+			return share
 		}
 		budget -= length
 		level = length
 	}
-	level = max(level, maxAssessArtifactExcerpt)
-
-	allowances := make([]int, len(lengths))
-	for i, length := range lengths {
-		allowances[i] = min(length, level)
-	}
-	return allowances
+	return level
 }
 
 // writeVerificationBlock renders one node's engine verification record and

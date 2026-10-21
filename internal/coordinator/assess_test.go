@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
+	"math/rand/v2"
 	"slices"
 	"strings"
 	"testing"
@@ -825,10 +827,11 @@ func TestAssess_EachOmittedArtifactIsNamedBeforeTheSink(t *testing.T) {
 	}
 }
 
-// #408: with no Sink set, nothing is reserved and the split is the #405
-// water-filling over the whole budget. Pinned byte for byte for many large
-// artifacts: six 2000-byte excerpts in graph order, then one omission line
-// per dropped node, and nothing after them.
+// #408: with no Sink set, pass 1 is empty and the whole budget splits as in
+// pass 2. Pinned byte for byte for many large artifacts: six 2000-byte
+// excerpts, then one omission line per dropped node, and nothing after them.
+// The floor goes to n0..n5 by node ID among equal lengths, which here is also
+// graph order.
 func TestAssessMaterial_NoSinksKeepsGraphOrderWaterFilling(t *testing.T) {
 	const count = 10
 	var nodes []NodeEvidence
@@ -853,36 +856,139 @@ func TestAssessMaterial_NoSinksKeepsGraphOrderWaterFilling(t *testing.T) {
 func TestSinkFirstAllowances(t *testing.T) {
 	ten := []int{9000, 9000, 9000, 9000, 9000, 9000, 9000, 9000, 9000, 9000}
 	for _, tc := range []struct {
-		name         string
-		lengths      []int
-		sinks        []bool
-		budget       int
-		want         []int
-		wantPriority []int
+		name    string
+		ids     []string
+		lengths []int
+		sinks   []bool
+		budget  int
+		want    []int
 	}{
-		{"no sinks is plain water-filling", []int{9000, 4, 9000}, []bool{false, false, false}, 12000, []int{5998, 4, 5998}, []int{0, 0, 0}},
-		{"no sinks and no budget gives nothing", []int{5000}, []bool{false}, 0, []int{0}, []int{0}},
-		{"the last sink gets half first, then shares the rest", ten, []bool{false, false, false, false, false, false, false, false, false, true},
-			12000, []int{2000, 2000, 2000, 2000, 2000, 2000, 2000, 2000, 2000, 8000}, []int{0, 0, 0, 0, 0, 0, 0, 0, 0, 6000}},
-		{"sinks share the half evenly, then the rest with the non-sink", []int{9000, 9000, 9000}, []bool{true, false, true}, 12000, []int{5000, 2000, 5000}, []int{3000, 0, 3000}},
-		{"a short sink leaves the rest to the non-sinks", []int{9000, 100}, []bool{false, true}, 12000, []int{9000, 100}, []int{0, 100}},
-		{"sinks past the half are trimmed in order, then share the rest",
-			[]int{6000, 6000, 6000, 6000, 6000, 6000, 6000, 50}, []bool{true, true, true, true, true, true, true, false},
-			12000, []int{4000, 4000, 4000, 2000, 2000, 2000, 2000, 50}, []int{2000, 2000, 2000, 0, 0, 0, 0, 0}},
-		{"sinks over a small budget water-fill half of it", []int{100, 5000, 5000, 300}, []bool{true, true, true, false}, 3000, []int{100, 3400, 2000, 300}, []int{100, 1400, 0, 0}},
-		{"one large sink leaves room for a short non-sink", []int{50, 12000}, []bool{false, true}, 12000, []int{50, 11950}, []int{0, 6000}},
-		{"one 12 KB sink beside short non-sinks", []int{12000, 1000, 1000, 1000}, []bool{true, false, false, false}, 12000, []int{9000, 1000, 1000, 1000}, []int{6000, 0, 0, 0}},
-		{"no artifacts", nil, nil, 12000, []int{}, []int{}},
+		{"no sinks is plain water-filling", []string{"a", "b", "c"}, []int{9000, 4, 9000}, []bool{false, false, false}, 12000, []int{5998, 4, 5998}},
+		{"no sinks and no budget gives nothing", []string{"a"}, []int{5000}, []bool{false}, 0, []int{0}},
+		{"the last sink gets half first, the rest floors the first non-sinks by ID",
+			[]string{"n0", "n1", "n2", "n3", "n4", "n5", "n6", "n7", "n8", "check"}, ten, []bool{false, false, false, false, false, false, false, false, false, true},
+			12000, []int{2000, 2000, 2000, 0, 0, 0, 0, 0, 0, 6000}},
+		{"sinks share the half evenly, then the rest with the non-sink", []string{"s1", "a", "s2"}, []int{9000, 9000, 9000}, []bool{true, false, true}, 12000, []int{5000, 2000, 5000}},
+		{"a short sink leaves the rest to the non-sinks", []string{"a", "s"}, []int{9000, 100}, []bool{false, true}, 12000, []int{9000, 100}},
+		{"sinks past the half are trimmed by node ID, then the floor is contested",
+			[]string{"s6", "s5", "s4", "s3", "s2", "s1", "s0", "a"}, []int{6000, 6000, 6000, 6000, 6000, 6000, 6000, 50}, []bool{true, true, true, true, true, true, true, false},
+			12000, []int{0, 0, 0, 0, 2000, 4975, 4975, 50}},
+		{"sinks past the half are trimmed shortest first", []string{"a", "b", "c"}, []int{5000, 3000, 4000}, []bool{true, true, true}, 8000, []int{0, 3000, 4000}},
+		{"sinks over a small budget water-fill half of it", []string{"s0", "s1", "s2", "a"}, []int{100, 5000, 5000, 300}, []bool{true, true, true, false}, 3000, []int{100, 1400, 0, 300}},
+		{"one large sink leaves room for a short non-sink", []string{"a", "s"}, []int{50, 12000}, []bool{false, true}, 12000, []int{50, 11950}},
+		{"one 12 KB sink beside short non-sinks", []string{"s", "a", "b", "c"}, []int{12000, 1000, 1000, 1000}, []bool{true, false, false, false}, 12000, []int{9000, 1000, 1000, 1000}},
+		{"the QA repro splits by length and ID, not position", []string{"a", "s1", "b", "s2"}, []int{3000, 9000, 3000, 9000}, []bool{false, true, false, true}, 12000, []int{2000, 5000, 2000, 3000}},
+		{"no artifacts", nil, nil, nil, 12000, []int{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, priority := sinkFirstAllowances(tc.lengths, tc.sinks, tc.budget)
+			got := sinkFirstAllowances(tc.ids, tc.lengths, tc.sinks, tc.budget)
 			if !slices.Equal(got, tc.want) {
-				t.Errorf("sinkFirstAllowances(%v, %v, %d) allowances = %v, want %v", tc.lengths, tc.sinks, tc.budget, got, tc.want)
+				t.Errorf("sinkFirstAllowances(%v, %v, %v, %d) = %v, want %v", tc.ids, tc.lengths, tc.sinks, tc.budget, got, tc.want)
 			}
-			if !slices.Equal(priority, tc.wantPriority) {
-				t.Errorf("sinkFirstAllowances(%v, %v, %d) priority = %v, want %v", tc.lengths, tc.sinks, tc.budget, priority, tc.wantPriority)
+			total := 0
+			for _, allowance := range got {
+				total += allowance
+			}
+			if total > max(tc.budget, 0) {
+				t.Errorf("allowances %v total %d, over the %d budget", got, total, tc.budget)
 			}
 		})
+	}
+}
+
+// renderedArtifactSizes renders evidence and returns each node's rendered
+// artifact size (0 when omitted, and then its omission line must be there)
+// and the total artifact material inside the fences.
+func renderedArtifactSizes(t *testing.T, evidence CycleEvidence) (map[string]int, int) {
+	t.Helper()
+	material := assessMaterial(evidence, "nonce")
+	sizes := make(map[string]int)
+	for _, node := range evidence.Nodes {
+		sizes[node.ID] = len(artifactBlock(material, node.ID))
+		omitted := strings.Contains(material, fmt.Sprintf("(artifact of node %s omitted: material cap reached)\n", node.ID))
+		if (sizes[node.ID] == 0) != omitted {
+			t.Errorf("node %s rendered %d bytes but omission line present = %v", node.ID, sizes[node.ID], omitted)
+		}
+	}
+	return sizes, artifactFenceBytes(material)
+}
+
+// #408: every allowance is fixed before rendering, so the QA repro — two
+// identical 9 KB sinks and two 3 KB non-sinks — renders every node at the
+// same size whatever the graph order, and no non-sink is dropped.
+func TestAssessMaterial_SinkSplitDoesNotDependOnGraphOrder(t *testing.T) {
+	node := map[string]NodeEvidence{
+		"s1": {ID: "s1", Verdict: "PASS", Artifact: strings.Repeat("k", 9000), Sink: true},
+		"s2": {ID: "s2", Verdict: "PASS", Artifact: strings.Repeat("k", 9000), Sink: true},
+		"a":  {ID: "a", Verdict: "PASS", Artifact: strings.Repeat("w", 3000)},
+		"b":  {ID: "b", Verdict: "PASS", Artifact: strings.Repeat("w", 3000)},
+	}
+	var first map[string]int
+	for _, order := range [][]string{{"a", "s1", "b", "s2"}, {"a", "s2", "b", "s1"}, {"s1", "s2", "a", "b"}} {
+		var nodes []NodeEvidence
+		for _, id := range order {
+			nodes = append(nodes, node[id])
+		}
+		sizes, total := renderedArtifactSizes(t, CycleEvidence{RunID: "r1", Nodes: nodes})
+		if sizes["b"] == 0 {
+			t.Errorf("order %v: non-sink b was omitted", order)
+		}
+		if total > maxAssessArtifactMaterial {
+			t.Errorf("order %v: artifact material totals %d bytes, over the %d cap", order, total, maxAssessArtifactMaterial)
+		}
+		if first == nil {
+			first = sizes
+		} else if !maps.Equal(sizes, first) {
+			t.Errorf("order %v rendered %v, want the same sizes as %v", order, sizes, first)
+		}
+	}
+}
+
+// #408: a property over permutations. A fixed mix of sinks and non-sinks
+// whose lengths contest the floor renders every node at the same size in
+// every graph order, and the total stays within the cap.
+func TestAssessMaterial_EveryPermutationRendersTheSameSizes(t *testing.T) {
+	base := []NodeEvidence{
+		{ID: "s1", Verdict: "PASS", Artifact: strings.Repeat("k", 9000), Sink: true},
+		{ID: "s2", Verdict: "PASS", Artifact: strings.Repeat("k", 7000), Sink: true},
+		{ID: "s3", Verdict: "PASS", Artifact: strings.Repeat("k", 1500), Sink: true},
+		{ID: "a", Verdict: "PASS", Artifact: strings.Repeat("w", 9000)},
+		{ID: "b", Verdict: "PASS", Artifact: strings.Repeat("w", 9000)},
+		{ID: "c", Verdict: "PASS", Artifact: strings.Repeat("w", 3000)},
+		{ID: "d", Verdict: "PASS", Artifact: strings.Repeat("w", 1200)},
+		{ID: "e", Verdict: "PASS", Artifact: strings.Repeat("w", 2500)},
+	}
+	rng := rand.New(rand.NewPCG(408, 418))
+	var first map[string]int
+	for run := 0; run < 24; run++ {
+		nodes := slices.Clone(base)
+		switch run {
+		case 0:
+		case 1:
+			slices.Reverse(nodes)
+		default:
+			rng.Shuffle(len(nodes), func(i, j int) { nodes[i], nodes[j] = nodes[j], nodes[i] })
+		}
+		sizes, total := renderedArtifactSizes(t, CycleEvidence{RunID: "r1", Nodes: nodes})
+		if total > maxAssessArtifactMaterial {
+			t.Errorf("permutation %d: artifact material totals %d bytes, over the %d cap", run, total, maxAssessArtifactMaterial)
+		}
+		if first == nil {
+			first = sizes
+			continue
+		}
+		if !maps.Equal(sizes, first) {
+			t.Errorf("permutation %d rendered %v, want the same sizes as %v", run, sizes, first)
+		}
+	}
+	omitted := 0
+	for _, size := range first {
+		if size == 0 {
+			omitted++
+		}
+	}
+	if omitted == 0 {
+		t.Errorf("rendered %v: the lengths must contest the floor so someone is omitted", first)
 	}
 }
 
