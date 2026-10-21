@@ -3128,10 +3128,10 @@ a looser match that guessed wrong would skip a suite nothing then runs.
 
 **The planner is told the commit the run started from (#414).** `auto`,
 `design` and `chat` read the invocation repository's HEAD once, at launch
-(`launchCommit`, `cmd/oh-my-graph/launchcommit.go`). `auto --interview` reads it
-before the interview starts, so it is the commit the run launched on even when
-the interview takes minutes; `chat` reads it once when it starts, and every
-plan of the session uses that one commit. The helper asks git
+(`launchCommit`, `cmd/oh-my-graph/launchcommit.go`). `auto --interview` and
+`design` read it before the interview starts, so it is the commit the run
+launched on even when the interview takes minutes; `chat` reads it once when it
+starts, and every plan of the session uses that one commit. The helper asks git
 through `worktree.GitManager.HeadCommit` (`git rev-parse --verify HEAD`), the
 third exec seam (ADR 0005), so the CLI itself spawns nothing and no fifth
 spawner is added. It is empty when the directory is not a repository.
