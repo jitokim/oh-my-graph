@@ -3954,32 +3954,44 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   artifact, and their tails share the artifacts' 12000-byte total cap, each
   tail cut to 2000 bytes (`maxAssessArtifactExcerpt`), so a node's own
   artifact cannot spend the room the engine's observation of it needs. The
-  artifacts then split what remains before any of them renders, sink nodes'
-  artifacts first (`sinkFirstAllowances`, #408). A sink is a node no other
-  node depends on — the final check node is one, and it comes last in graph
-  order, so with enough large artifacts it used to be the one dropped.
-  Each sink artifact gets its length, capped at the larger of an even share of
-  the budget among the sinks and 2000 bytes. If those sink allowances alone
-  overrun the budget, the sinks split it among themselves as below and every
-  non-sink gets nothing. Otherwise the non-sinks split what the sinks leave
-  (`artifactAllowances`): every artifact no longer than a fair level renders
-  whole, and the budget the short ones leave is split evenly among the longer
-  ones, each cut to that level. The level never drops below 2000 bytes, and
-  the split depends only on the artifacts' lengths, not on their graph order,
-  so one long artifact beside short ones renders whole wherever it sits. With
-  no sink marked, the whole budget splits this way, as before #408.
-  Artifacts still render in graph order, each cut never longer than the
-  budget left, and a non-sink's cut never reaches into the budget reserved
-  for sinks still to render. An artifact left with nothing is skipped, and
-  the first one skipped writes one loud `(further artifacts omitted: total
-  material cap reached)` line; rendering carries on past it, so a sink later
-  in graph order still renders. A tail is cut from its head, and every cut is
-  said above the fence. When the record's `output_truncated` is set, the
-  engine's own line says so (`output: the command printed more than the engine
-  retains, so the engine kept only the last N bytes of its output; everything
-  earlier was dropped when the check was recorded`). It is written from the
-  record's flag, not the tail's marker, which the command could forge and the
-  material cap could trim away. A further cut for the material cap adds
+  artifacts then split what remains before any of them renders, in two
+  passes, sink nodes' artifacts first (`sinkFirstAllowances`, #408). A sink
+  is a node no other node depends on — the final check node is one, and it
+  comes last in graph order, so with enough large artifacts it used to be the
+  one dropped. Every plan has at least one sink, because a DAG always has
+  one. Both passes split with the same water-filling (`artifactAllowances`):
+  every artifact no longer than a fair level gets its whole length, and the
+  budget the short ones leave is split evenly among the longer ones, each cut
+  to that level. The level never drops below 2000 bytes, and the split
+  depends only on the artifacts' lengths, not on their graph order. Pass 1,
+  the priority share: the sinks together get at most half of the artifact
+  budget (`maxSinkPriorityShareNum`/`maxSinkPriorityShareDen`), water-filled
+  among them, so a short sink takes only its length and the longer sinks get
+  the rest, each still at least 2000 bytes when the half allows it. Where
+  that floor would push the sinks past the half, they are trimmed in graph
+  order so their total never exceeds it. Half, because the verdict needs both
+  the final check and the evidence of the work: a single large sink can
+  never push every other artifact out. Pass 2, the rest: whatever pass 1
+  left is water-filled across every artifact's remaining length — the
+  non-sinks, and the sinks pass 1 cut, which can get more. A sink's
+  allowance is its pass-1 share plus its pass-2 share, so one 12 KB sink
+  beside three 1 KB non-sinks gets 9000 bytes and each non-sink renders
+  whole. The no-sink path exists only for evidence built without `Sink` set
+  (older callers, tests): there pass 1 is empty and the whole budget splits
+  as in pass 2, as before #408. Artifacts still render in graph order, each
+  cut never longer than the budget left, and a non-sink's cut never reaches
+  into the budget reserved for sinks still to render. An artifact left with
+  nothing is omitted with its own loud line, `(artifact of node <id>
+  omitted: material cap reached)`, outside the fences where its block would
+  have been, and rendering carries on past it: every dropped node is named,
+  and a sink later in graph order still renders. A tail is cut from its head,
+  and every cut is said above the fence. When the record's `output_truncated`
+  is set, the engine's own line says so (`output: the command printed more
+  than the engine retains, so the engine kept only the last N bytes of its
+  output; everything earlier was dropped when the check was recorded`). It
+  is written from the record's flag, not the tail's marker, which the command
+  could forge and the material cap could trim away. A further cut for the
+  material cap adds
   `output: the last N of M bytes; the earlier K bytes were dropped for the
   material cap`. Once the total cap is spent the line reads
   `output: omitted (total material cap reached)`. The engine-observed lines
