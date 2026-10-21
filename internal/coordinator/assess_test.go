@@ -793,8 +793,9 @@ func TestAssess_EachOmittedArtifactIsNamedBeforeTheSink(t *testing.T) {
 
 	const count = 10
 	var nodes []NodeEvidence
-	// Distinct lengths: equal non-sinks would share the rest equally (#408),
-	// so none would be omitted.
+	// Distinct lengths, so each non-sink is its own group and the floor goes
+	// shortest first; equal non-sinks are covered by
+	// TestAssessMaterial_TenLargeArtifactsOmitNonSinksByName.
 	for i := 0; i < count-1; i++ {
 		nodes = append(nodes, NodeEvidence{ID: fmt.Sprintf("n%d", i), Verdict: "PASS", Artifact: strings.Repeat("s", 9000+i)})
 	}
@@ -867,16 +868,16 @@ func TestSinkFirstAllowances(t *testing.T) {
 	}{
 		{"no sinks is plain water-filling", []string{"a", "b", "c"}, []int{9000, 4, 9000}, []bool{false, false, false}, 12000, []int{5998, 4, 5998}},
 		{"no sinks and no budget gives nothing", []string{"a"}, []int{5000}, []bool{false}, 0, []int{0}},
-		{"the last sink gets half first, the equal non-sinks share the rest equally",
+		{"the last sink gets half first, the equal non-sinks below half the floor take it by node ID",
 			[]string{"n0", "n1", "n2", "n3", "n4", "n5", "n6", "n7", "n8", "check"}, ten, []bool{false, false, false, false, false, false, false, false, false, true},
-			12000, []int{667, 667, 667, 667, 667, 667, 666, 666, 666, 6000}},
+			12000, []int{2000, 2000, 2000, 0, 0, 0, 0, 0, 0, 6000}},
 		{"sinks share the half evenly, then the rest with the non-sink", []string{"s1", "a", "s2"}, []int{9000, 9000, 9000}, []bool{true, false, true}, 12000, []int{5000, 2000, 5000}},
 		{"a short sink leaves the rest to the non-sinks", []string{"a", "s"}, []int{9000, 100}, []bool{false, true}, 12000, []int{9000, 100}},
-		{"equal sinks past the half split it equally, node ID only places the odd byte",
+		{"equal sinks past the half split it equally, then below half the floor the rest goes by node ID",
 			[]string{"s6", "s5", "s4", "s3", "s2", "s1", "s0", "a"}, []int{6000, 6000, 6000, 6000, 6000, 6000, 6000, 50}, []bool{true, true, true, true, true, true, true, false},
-			12000, []int{1707, 1707, 1707, 1707, 1707, 1707, 1708, 50}},
+			12000, []int{857, 857, 857, 857, 857, 3832, 3832, 50}},
 		{"sinks past the half are trimmed shortest first", []string{"a", "b", "c"}, []int{5000, 3000, 4000}, []bool{true, true, true}, 8000, []int{1000, 3000, 4000}},
-		{"sinks over a small budget water-fill half of it", []string{"s0", "s1", "s2", "a"}, []int{100, 5000, 5000, 300}, []bool{true, true, true, false}, 3000, []int{100, 1300, 1300, 300}},
+		{"sinks over a small budget water-fill half of it", []string{"s0", "s1", "s2", "a"}, []int{100, 5000, 5000, 300}, []bool{true, true, true, false}, 3000, []int{100, 700, 700, 300}},
 		{"one large sink leaves room for a short non-sink", []string{"a", "s"}, []int{50, 12000}, []bool{false, true}, 12000, []int{50, 11950}},
 		{"one 12 KB sink beside short non-sinks", []string{"s", "a", "b", "c"}, []int{12000, 1000, 1000, 1000}, []bool{true, false, false, false}, 12000, []int{9000, 1000, 1000, 1000}},
 		{"the QA repro gives the equal sinks equal shares", []string{"a", "s1", "b", "s2"}, []int{3000, 9000, 3000, 9000}, []bool{false, true, false, true}, 12000, []int{2000, 4000, 2000, 4000}},
@@ -915,6 +916,90 @@ func renderedArtifactSizes(t *testing.T, evidence CycleEvidence) (map[string]int
 	return sizes, artifactFenceBytes(material)
 }
 
+// #408: the even split stops at minAssessEqualShare, exactly. One short
+// non-sink takes its floor first; eleven equal 3 KB non-sinks then face the
+// rest. At 1000 bytes each they split it evenly and every one renders; at
+// 999 each the first five by node ID get the floor, the leftover is
+// water-filled among the artifacts taking part, and the other six are
+// omitted by name.
+func TestAssessMaterial_EqualSplitStopsAtHalfTheFloor(t *testing.T) {
+	evidence := func(short int) CycleEvidence {
+		nodes := []NodeEvidence{{ID: "short", Verdict: "PASS", Artifact: strings.Repeat("w", short)}}
+		for i := 10; i >= 0; i-- {
+			nodes = append(nodes, NodeEvidence{ID: fmt.Sprintf("n%02d", i), Verdict: "PASS", Artifact: strings.Repeat("w", 3000)})
+		}
+		return CycleEvidence{RunID: "r1", Nodes: nodes}
+	}
+
+	t.Run("1000 each splits evenly", func(t *testing.T) {
+		sizes, _ := renderedArtifactSizes(t, evidence(1000))
+		for i := 0; i <= 10; i++ {
+			if id := fmt.Sprintf("n%02d", i); sizes[id] != minAssessEqualShare {
+				t.Errorf("node %s rendered %d bytes, want an even %d", id, sizes[id], minAssessEqualShare)
+			}
+		}
+	})
+
+	t.Run("999 each takes the floor by node ID", func(t *testing.T) {
+		material := assessMaterial(evidence(1011), "nonce")
+		sizes, _ := renderedArtifactSizes(t, evidence(1011))
+		for i := 0; i <= 10; i++ {
+			id := fmt.Sprintf("n%02d", i)
+			line := fmt.Sprintf("(artifact of node %s omitted: material cap reached)\n", id)
+			switch omitted := strings.Contains(material, line); {
+			case i < 5 && (omitted || sizes[id] < maxAssessArtifactExcerpt):
+				t.Errorf("node %s rendered %d bytes, want at least the %d floor", id, sizes[id], maxAssessArtifactExcerpt)
+			case i >= 5 && !omitted:
+				t.Errorf("node %s rendered %d bytes, want it omitted by name", id, sizes[id])
+			}
+		}
+		if sizes["short"] != 1011 {
+			t.Errorf("the short artifact rendered %d bytes, want it whole", sizes["short"])
+		}
+		if total := sumSizes(sizes); total > maxAssessArtifactMaterial || total < maxAssessArtifactMaterial-10 {
+			t.Errorf("artifact material totals %d bytes, want the leftover spent, near the %d cap", total, maxAssessArtifactMaterial)
+		}
+	})
+}
+
+// #408: ten 9 KB artifacts, the last a sink. The nine equal non-sinks would
+// split the rest into useless 666-byte slices, so instead the first three by
+// node ID get the floor, the other six are omitted by name, the sink renders,
+// and the budget is spent, not wasted.
+func TestAssessMaterial_TenLargeArtifactsOmitNonSinksByName(t *testing.T) {
+	var nodes []NodeEvidence
+	for i := 0; i < 9; i++ {
+		nodes = append(nodes, NodeEvidence{ID: fmt.Sprintf("n%d", i), Verdict: "PASS", Artifact: strings.Repeat("s", 9000)})
+	}
+	nodes = append(nodes, NodeEvidence{ID: "check", Verdict: "PASS", Artifact: strings.Repeat("s", 9000), Sink: true})
+	evidence := CycleEvidence{RunID: "r1", Nodes: nodes}
+	material := assessMaterial(evidence, "nonce")
+	sizes, _ := renderedArtifactSizes(t, evidence)
+
+	if sizes["check"] == 0 {
+		t.Fatal("the sink's artifact block was dropped")
+	}
+	for i := 0; i < 9; i++ {
+		id := fmt.Sprintf("n%d", i)
+		omitted := strings.Contains(material, fmt.Sprintf("(artifact of node %s omitted: material cap reached)\n", id))
+		if want := i >= 3; omitted != want {
+			t.Errorf("node %s omitted = %v (rendered %d bytes), want %v", id, omitted, sizes[id], want)
+		}
+	}
+	if total := sumSizes(sizes); total > maxAssessArtifactMaterial || total < maxAssessArtifactMaterial-10 {
+		t.Errorf("artifact material totals %d bytes, want the leftover spent, near the %d cap", total, maxAssessArtifactMaterial)
+	}
+}
+
+// sumSizes totals the rendered artifact sizes, excerpt markers included.
+func sumSizes(sizes map[string]int) int {
+	total := 0
+	for _, size := range sizes {
+		total += size
+	}
+	return total
+}
+
 // #408: every allowance is fixed before rendering, so the QA repro — two
 // identical 9 KB sinks and two 3 KB non-sinks — renders every node at the
 // same size whatever the graph order, and no non-sink is dropped.
@@ -949,7 +1034,8 @@ func TestAssessMaterial_SinkSplitDoesNotDependOnGraphOrder(t *testing.T) {
 // #408: two equal-length sinks are one group, so they render the same size
 // (±1 byte) in every graph order: pass 1 gives each 3000, the two 3 KB
 // non-sinks take their 2000 floor, and the 2000 left is split equally between
-// the sinks, never handed to one of them by node ID.
+// the sinks, never handed to one of them by node ID: 1000 each is exactly
+// minAssessEqualShare, so the even split holds. Checked in all 24 orders.
 func TestAssessMaterial_EqualLengthSinksRenderTheSameSize(t *testing.T) {
 	node := map[string]NodeEvidence{
 		"s1": {ID: "s1", Verdict: "PASS", Artifact: strings.Repeat("k", 9000), Sink: true},
@@ -957,7 +1043,7 @@ func TestAssessMaterial_EqualLengthSinksRenderTheSameSize(t *testing.T) {
 		"a":  {ID: "a", Verdict: "PASS", Artifact: strings.Repeat("w", 3000)},
 		"b":  {ID: "b", Verdict: "PASS", Artifact: strings.Repeat("w", 3000)},
 	}
-	for _, order := range [][]string{{"a", "s1", "b", "s2"}, {"a", "s2", "b", "s1"}, {"s1", "s2", "a", "b"}} {
+	for _, order := range permutations([]string{"a", "b", "s1", "s2"}) {
 		var nodes []NodeEvidence
 		for _, id := range order {
 			nodes = append(nodes, node[id])
@@ -973,6 +1059,21 @@ func TestAssessMaterial_EqualLengthSinksRenderTheSameSize(t *testing.T) {
 			t.Errorf("order %v: artifact material totals %d bytes, over the %d cap", order, total, maxAssessArtifactMaterial)
 		}
 	}
+}
+
+// permutations returns every order of ids.
+func permutations(ids []string) [][]string {
+	if len(ids) <= 1 {
+		return [][]string{slices.Clone(ids)}
+	}
+	var orders [][]string
+	for i, id := range ids {
+		rest := slices.Delete(slices.Clone(ids), i, i+1)
+		for _, order := range permutations(rest) {
+			orders = append(orders, append([]string{id}, order...))
+		}
+	}
+	return orders
 }
 
 // #408: a property over permutations. A fixed mix of sinks and non-sinks
