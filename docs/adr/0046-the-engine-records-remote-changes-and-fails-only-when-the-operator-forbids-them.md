@@ -585,10 +585,13 @@ Unit tests use a fake `RemoteObserver` and a fake `PRLister` (the
    one adds "points at a commit this run made", and every other one reads
    "observed, not attributable".
 7. **Each leg takes a fresh *before*.** A two-leg run paused at a gate,
-   where the fake moves a branch during the pause to a commit created in that
-   pause. The second leg takes its own *before*. The move appears only in the
-   `between_legs` set, as `not_attributable`. With the flag, the run does not
-   fail on it. Leg 2's entries are diffed against leg 2's *before*.
+   with `--forbid-remote-changes`, where the fake shows two changes during
+   the pause: a `branch_created` whose new sha is the run's own commit (an
+   ancestor of `refs/heads/omg/<<runID>>/<<worktree>>` and not of
+   `run_base_sha`), and a `remote_added`. The second leg takes its own
+   *before*. Both entries appear only in the `between_legs` set, as
+   `not_attributable`. The run does not exit 6 and its status is not FAIL.
+   Leg 2's entries are diffed against leg 2's *before*.
 8. **`--continue-on-fail` does not prune it.** A pruned node failure plus a
    forbidden change reports both, and the exit is 6.
 9. **The flag survives resume and stamps the schema.** A guarded snapshot is
