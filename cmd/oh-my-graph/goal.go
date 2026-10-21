@@ -288,9 +288,9 @@ func cycleEvidence(runID string, plan coordinator.Plan, runPassed bool) (coordin
 	return evidence, nil
 }
 
-// maxArtifactReadBytes bounds what one node's artifact may contribute to the
-// assessor's material BEFORE the coordinator's own excerpting runs, so a huge
-// artifact cannot inflate the cycle's peak memory on its way to a 2KB excerpt.
+// maxArtifactReadBytes bounds a node's artifact BEFORE the assessor's own
+// fair-share excerpting (2000 bytes minimum, up to the 12000-byte budget left)
+// runs, so a huge artifact cannot inflate the cycle's peak memory on the way.
 const maxArtifactReadBytes = 64 << 10
 
 // artifactReadCutMarker marks the bytes readArtifactBounded dropped from the
