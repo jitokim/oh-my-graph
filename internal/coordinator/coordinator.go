@@ -2252,9 +2252,11 @@ func finalCheckWithoutVerifyCommand() string {
 // own, so a command cannot read as prompt prose or close the paragraph early,
 // and its % signs are doubled because the result is still the format string
 // plannerPrompt hands the verdict pattern and the reporting pointer to.
-// The final check node runs a done-list command only when one of
-// plannedBashPatterns covers it, and otherwise replies FAIL naming it — the
-// rule doneListCommandRule spells for both paragraphs.
+// It requires a single sink, the final check node, because the engine runs
+// the verify command at every sink (attachVerifyCommand, #396).
+// The final check node runs a done-list command of any kind (#333) only
+// when one of plannedBashPatterns covers it, and otherwise replies FAIL
+// naming it — the rule doneListCommandRule spells for both paragraphs.
 func finalCheckWithVerifyCommand(command string) string {
 	quoted := strings.ReplaceAll(strconv.Quote(command), "%", "%%")
 	return `- oh-my-graph itself runs an independent build verification after the final
@@ -2268,7 +2270,11 @@ func finalCheckWithVerifyCommand(command string) string {
   what it can observe with the tools it declared, and its PASS is a
   statement about those specific checks and nothing wider.
 - No planned node runs that verify command itself, even when the goal text
-  names it: the engine runs it once after the final node, outside every node.
+  names it: the engine runs it at each sink node, outside every node, which
+  with the single final check node below means once, after that node.
+- The graph ends in exactly ONE sink, the final check node, so every other
+  node is an ancestor of it: the engine runs the verify command at every
+  sink node, so a second sink runs the whole suite again.
 - A node that changes code never runs the project's whole suite — that is,
   not "make local", "make test", "make check", "go test ./..." or similar.
   It runs only the tests for what it changed (for Go, the changed packages,
