@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jitokim/oh-my-graph/internal/runner"
 )
@@ -140,6 +141,13 @@ const (
 	// only an exotic runtime, can produce it.
 	// TestRunGoal_ATimedOutCycleEndsABudgetedLoop pins that behaviour.
 	StopBudgetUnmeasurable StopReason = "budget_unmeasurable"
+	// StopUnrunnableDoneItem: the goal is unmet and the cycle's final check
+	// named, on a line opened by unrunnableDoneItemMarker, a done-list command
+	// no planned Bash pattern covers (#333). Another cycle cannot fix that —
+	// the planned node allowlist is fixed — so the loop stops rather than buy
+	// one, whatever MaxCycles is. GoalResult.UnrunnableCommands lists the
+	// commands; the caller applies the unmet-goal exit.
+	StopUnrunnableDoneItem StopReason = "unrunnable_done_item"
 )
 
 // CycleReport is one completed, assessed cycle's record — the goal summary's
@@ -160,6 +168,10 @@ type CycleReport struct {
 type GoalResult struct {
 	Cycles []CycleReport
 	Stop   StopReason
+	// UnrunnableCommands are the done-list commands the final cycle's check
+	// named as unrunnable, in first-seen order, without duplicates; set only
+	// when Stop is StopUnrunnableDoneItem.
+	UnrunnableCommands []string
 }
 
 // RunGoal is the goal loop (ADR 0011): at most opts.MaxCycles cycles of
@@ -175,8 +187,8 @@ type GoalResult struct {
 // verdict), or whatever the executor returned (a pause, an infra failure) —
 // always with the completed cycles so far in GoalResult, so the caller can
 // still print the goal summary for what did run. A loop that stops itself
-// (goal met, cycles exhausted, budget exceeded or unmeasurable, plan declined)
-// returns no error: the StopReason alone says why.
+// (goal met, cycles exhausted, budget exceeded or unmeasurable, plan declined,
+// a done-list command no planned node can run) returns no error: the StopReason alone says why.
 func (c *Coordinator) RunGoal(ctx context.Context, goal string, opts GoalOptions, execute ExecuteCycle) (GoalResult, error) {
 	if opts.MaxCycles < 1 {
 		return GoalResult{}, fmt.Errorf("goal loop: max cycles must be at least 1, got %d", opts.MaxCycles)
@@ -255,8 +267,50 @@ func (c *Coordinator) RunGoal(ctx context.Context, goal string, opts GoalOptions
 			result.Stop = StopGoalMet
 			return result, nil
 		}
+		if commands := unrunnableCommands(evidence.Nodes); len(commands) > 0 {
+			result.Stop = StopUnrunnableDoneItem
+			result.UnrunnableCommands = commands
+			return result, nil
+		}
 		remaining = assessment.Remaining
 	}
 	result.Stop = StopCyclesExhausted
 	return result, nil
+}
+
+// unrunnableCommands collects the done-list commands a cycle's final check
+// named as unrunnable: the text after unrunnableDoneItemMarker on every line
+// that starts with it (after trimming), in first-seen order, empty values
+// skipped and duplicates dropped. Only sink artifacts are read — the final
+// check node is the plan's sink — unless no node is marked a sink (evidence
+// built without Sink set), in which case every artifact is. The marker must
+// open the line, so a reply that only mentions it in prose stops nothing.
+func unrunnableCommands(nodes []NodeEvidence) []string {
+	anySink := false
+	for _, node := range nodes {
+		if node.Sink {
+			anySink = true
+			break
+		}
+	}
+	var commands []string
+	seen := map[string]bool{}
+	for _, node := range nodes {
+		if anySink && !node.Sink {
+			continue
+		}
+		for _, line := range strings.Split(node.Artifact, "\n") {
+			rest, ok := strings.CutPrefix(strings.TrimSpace(line), unrunnableDoneItemMarker)
+			if !ok {
+				continue
+			}
+			command := strings.TrimSpace(rest)
+			if command == "" || seen[command] {
+				continue
+			}
+			seen[command] = true
+			commands = append(commands, command)
+		}
+	}
+	return commands
 }
