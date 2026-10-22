@@ -2184,6 +2184,7 @@ func plannerPrompt(goal string, inputKeys []string, verifyCommand string, offere
 		finalCheck,
 		strings.Join(plannerRetryCauses, ", "),
 		menu,
+		strconv.Quote(plannedReviewGatingPattern),
 	)
 	if startCommit != "" {
 		prompt += fmt.Sprintf(plannerStartCommitTemplate, startCommit)
@@ -2499,6 +2500,17 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
 // get right, and Quote gets it right.
 const plannedVerdictPattern = "^[*_`\\s]*PASS[*_`\\s]*$"
 
+// plannedReviewGatingPattern is the verdict regex the planner is told to give a
+// node that declares a feedback arc: the GATING pattern the shipped review
+// fragments document (ADR 0043, graphs/fragments/review-style.yaml), which
+// accepts CLEAN and MINOR: and fails only FINDINGS:, so a cosmetic finding is
+// recorded instead of buying a whole round (#288). It is a prefix pattern, not
+// a whole-reply pin, because the reply goes on to list its items.
+// TestPlannedReviewGatingPatternMatchesReviewFragments holds it byte-identical
+// to the fragments' spelling. Like plannedVerdictPattern it reaches the
+// planner through strconv.Quote.
+const plannedReviewGatingPattern = "^[*_`\\s]*(MINOR[*_`\\s]*:|CLEAN\\b)"
+
 const plannerPromptTemplate = `You are the planning coordinator for oh-my-graph, an orchestrator that runs
 each node of a DAG through its selected model CLI.
 
@@ -2577,7 +2589,18 @@ prose before or after:
   open; raise a NEW finding only where the rework changed the work or where
   missing it last round was a real mistake. A re-run reviewer is a fresh
   session, and without its earlier findings it finds new nits every round
-  until the rounds are spent. Keep max small (2): every round
+  until the rounds are spent. The reviewing node's reply starts with
+  exactly one of the bare tokens CLEAN, MINOR: or FINDINGS: as its very
+  first characters — no markdown emphasis ("**CLEAN**" is WRONG), nothing
+  before the token. It judges each item by whether it would merge with it
+  unfixed: a defect, wrong behaviour, or a changed behaviour with no test
+  is blocking (FINDINGS:); naming, wording, line wrapping and style are
+  minor (MINOR:). A reply's verdict is its worst item. Its success_check
+  is
+  {"exit_zero": true, "result_matches": %[7]s}
+  so CLEAN and MINOR: pass (a MINOR: reply records its items) and only
+  FINDINGS: fails and fires the arc. Do not gate it on CLEAN alone: that
+  re-runs the implementer over a nit. Keep max small (2): every round
   re-runs the whole rerun→reviewer path at full cost, and a max above 3
   is rejected outright. The arc must point
   backward along depends_on, no node outside the loop may depend on a
