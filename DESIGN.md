@@ -3125,7 +3125,10 @@ script slipped past it and the planner wrote a stand-in check). If one of the
 Bash patterns a planned node can declare (`plannedBashPatterns`) covers it, that
 node runs it once and its PASS requires it to exit 0; if none does (`npm test`,
 `pytest`), it replies FAIL naming the command — never a PASS over a done item
-nothing ran. A different command that checks the same thing — a stand-in, a
+nothing ran. That FAIL also carries one line per such command, at the start of
+the line and without markdown, `UNRUNNABLE: <the command as the goal wrote
+it>`; the marker is one constant, `unrunnableDoneItemMarker`, rendered into
+the prompt, and the goal loop reads those lines to stop (below, "Goal cycles"). A different command that checks the same thing — a stand-in, a
 re-implementation, a test covering the same rule — never satisfies a done item:
 the item names a command, and only that command running counts. That half is
 one string, `doneListCommandRule`, shared verbatim with the without-command
@@ -4108,7 +4111,20 @@ flip an engine-reported failure. Unmet-and-exhausted (or the optional
 declined confirm on a later cycle) exits 1 with the final `remaining`; a
 session-limit pause pauses the whole loop (exit 2, standard resume hint —
 the resumed run completes as an ordinary run; the goal loop does not
-re-enter). The ceiling is rejected at parse without `--max-cycles ≥ 2` — a
+re-enter). A done-list command no planned node can run also ends the loop
+(`StopUnrunnableDoneItem`, `unrunnable_done_item`, #333): when a cycle is
+judged not met, `RunGoal` scans that cycle's sink artifacts (every artifact
+when no node is marked a sink) for lines that start with the
+`UNRUNNABLE:` marker the done-list rule asks the final check node for, and
+stops if any names a command. Another cycle cannot fix it — the planned node
+allowlist is fixed — so the loop plans none, whatever `--max-cycles` is. The
+marker counts only at the start of a line, trimmed; prose that mentions it
+does not stop anything, and a met goal still stops as `goal_met`. The
+commands, trimmed and de-duplicated, are `GoalResult.UnrunnableCommands`; the
+goal summary prints the reason, each command and the advice to check it with
+`--verify-cmd` instead or start the run with a configuration that allows it,
+and the exit is the unmet-goal exit 1. The assessor is unchanged: the scan is
+the loop's own, over the engine-assembled evidence. The ceiling is rejected at parse without `--max-cycles ≥ 2` — a
 flag that could never fire would read as a bound that isn't one. When the
 loop ends, the **goal summary** prints below the final ledger: one line per
 cycle (run id, outcome, run total with planning included, assessment cost,
