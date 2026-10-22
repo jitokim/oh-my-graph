@@ -2290,6 +2290,13 @@ func finalCheckWithVerifyCommand(command string) string {
 ` + branchEvidenceRule
 }
 
+// unrunnableDoneItemMarker opens each line of a final check node's FAIL reply
+// that names a done-list command no plannedBashPatterns entry covers (#333).
+// doneListCommandRule renders it into the prompt, and RunGoal scans the sink
+// artifacts for it: a command no planned node can run cannot be fixed by
+// another cycle, so the loop stops with StopUnrunnableDoneItem.
+const unrunnableDoneItemMarker = "UNRUNNABLE:"
+
 // doneListCommandRule is the done-list half both final-check spellings share
 // (#392, #399): it names plannedBashPatterns — never a retyped list — and says
 // what the final check node does with a done-list command one of them covers
@@ -2311,6 +2318,13 @@ func doneListCommandRule() string {
   same thing — a stand-in, a re-implementation, a test that covers the
   same rule — never satisfies a done item: the done item names a command,
   and only that command running counts.
+  When the final check node replies FAIL because a done item names a
+  command none of those patterns covers, its reply also carries one line
+  per such command, at the start of the line and with no markdown, in
+  exactly this form:
+      ` + unrunnableDoneItemMarker + ` <the command as the goal wrote it>
+  The engine reads those lines and stops the goal loop: no new cycle can
+  run a command the planned patterns do not cover.
 `
 }
 

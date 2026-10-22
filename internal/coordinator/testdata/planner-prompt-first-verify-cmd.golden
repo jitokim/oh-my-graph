@@ -159,6 +159,13 @@ Rules:
   same thing — a stand-in, a re-implementation, a test that covers the
   same rule — never satisfies a done item: the done item names a command,
   and only that command running counts.
+  When the final check node replies FAIL because a done item names a
+  command none of those patterns covers, its reply also carries one line
+  per such command, at the start of the line and with no markdown, in
+  exactly this form:
+      UNRUNNABLE: <the command as the goal wrote it>
+  The engine reads those lines and stops the goal loop: no new cycle can
+  run a command the planned patterns do not cover.
   If the named command IS that verify command, the same
   exact text, no node runs it — the engine's run covers it.
 - If the goal involves creating a branch or committing on one, the final
