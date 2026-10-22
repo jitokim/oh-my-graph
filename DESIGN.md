@@ -1629,7 +1629,9 @@ three values, below, and the shipped gates (`gated-lane`'s `review`,
 a nit rides into the PR body and only a blocking finding fires the arc.
 **Planned** review nodes now use the same gating verdict: the planner prompt's
 feedback-arc rule tells the node declaring `feedback` to open with one of the
-three bare tokens, graded the same way, and hands it
+three bare tokens, graded the same way — a claim that is not true (code,
+comment or docs) or a change to behaviour or correctness is `FINDINGS:`, never
+`MINOR:`, which is only for form when the meaning is already right — and hands it
 `{"exit_zero": true, "result_matches": <the gating pattern>}`, rendered from
 `coordinator.plannedReviewGatingPattern`, which
 `TestPlannedReviewGatingPatternMatchesReviewFragments` holds byte-identical to

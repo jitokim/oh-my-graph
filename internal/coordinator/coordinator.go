@@ -2595,8 +2595,12 @@ prose before or after:
   before the token. It judges each item by whether it would merge with it
   unfixed: a defect, wrong behaviour, or a changed behaviour with no test
   is blocking (FINDINGS:); naming, wording, line wrapping and style are
-  minor (MINOR:). A reply's verdict is its worst item. Its success_check
-  is
+  minor (MINOR:). Wording is minor only while what it says is true: a
+  claim that is not true — in code, a comment or docs — and anything that
+  changes behaviour or correctness is FINDINGS:, never MINOR:, however
+  small the fix; MINOR: is only for an item whose meaning is already
+  right and only its form differs. A reply's verdict is its worst item.
+  Its success_check is
   {"exit_zero": true, "result_matches": %[7]s}
   so CLEAN and MINOR: pass (a MINOR: reply records its items) and only
   FINDINGS: fails and fires the arc. Do not gate it on CLEAN alone: that

@@ -75,6 +75,10 @@ func TestPlan_FeedbackBulletTeachesTheGatingVerdict(t *testing.T) {
 		"MINOR:",
 		"FINDINGS:",
 		`"result_matches": ` + strconv.Quote(plannedReviewGatingPattern),
+		// An untrue claim filed as "wording" must not pass as a nit.
+		"claim that is not true",
+		"is FINDINGS:, never MINOR:",
+		"MINOR: is only for an item whose meaning is already",
 	} {
 		if !strings.Contains(bullet, want) {
 			t.Errorf("feedback-arc bullet is missing %q:\n%s", want, bullet)
