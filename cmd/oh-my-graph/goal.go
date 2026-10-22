@@ -439,6 +439,9 @@ func printGoalSummary(w io.Writer, goal string, result coordinator.GoalResult, l
 			c.Cycle, c.RunID, outcome, formatCost(c.RunCostUSD, c.RunCostUnknown), formatCost(c.Assessment.CostUSD, c.Assessment.CostUnknown), verdict)
 	}
 	if loopErr == nil {
+		if result.Stop == coordinator.StopUnrunnableDoneItem {
+			printUnrunnableCommands(w, result.UnrunnableCommands)
+		}
 		fmt.Fprintf(w, "GOAL TOTAL: %s across %d cycle(s)\n", formatCost(total, anyUnknown), len(result.Cycles))
 		if usage != (runner.TokenUsage{}) {
 			fmt.Fprintf(w, "GOAL TOKENS: %s\n", formatUsage(usage))
@@ -472,6 +475,18 @@ func printGoalSummary(w io.Writer, goal string, result coordinator.GoalResult, l
 	if usage != (runner.TokenUsage{}) {
 		fmt.Fprintf(w, "GOAL TOKENS: %s\n", formatUsage(usage))
 	}
+}
+
+// printUnrunnableCommands is the goal summary's StopUnrunnableDoneItem block
+// (#333): the stop reason, each done-list command the final check named as
+// unrunnable, and what to do instead, since another cycle could not run it.
+// The commands are a node's own reply, so each is terminal-sanitised (#349).
+func printUnrunnableCommands(w io.Writer, commands []string) {
+	fmt.Fprintf(w, "  stopped: %s — the final check named a done-list command no planned node can run\n", coordinator.StopUnrunnableDoneItem)
+	for _, command := range commands {
+		fmt.Fprintf(w, "    unrunnable: %s\n", fence.SanitizeTerminalLine(command))
+	}
+	fmt.Fprintln(w, "  No planned node can run it; check it with --verify-cmd instead, or start the run with a configuration that allows it.")
 }
 
 func addTokenUsage(a, b runner.TokenUsage) runner.TokenUsage {
@@ -508,6 +523,9 @@ func goalExit(w io.Writer, result coordinator.GoalResult) error {
 	case coordinator.StopBudgetUnmeasurable:
 		return fmt.Errorf("goal not met: the goal budget can no longer be measured — %s, so the ceiling cannot be evaluated (ADR 0025); %s",
 			unmeasurableCause(result), finalRemaining(result))
+	case coordinator.StopUnrunnableDoneItem:
+		return fmt.Errorf("goal not met: cycle %d's final check named a done-list command no planned node can run, so another cycle cannot fix it; %s",
+			len(result.Cycles), finalRemaining(result))
 	default: // StopCyclesExhausted
 		return fmt.Errorf("goal not met after %d cycle(s); %s", len(result.Cycles), finalRemaining(result))
 	}

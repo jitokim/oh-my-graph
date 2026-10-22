@@ -325,6 +325,41 @@ func TestPlanAndExecute_CyclesExhaustedIsTheUnmetGoalExit(t *testing.T) {
 	}
 }
 
+// TestPlanAndExecute_UnrunnableDoneItemStopsWithAdvice is #333: the cycle's
+// final check names a done-list command no planned node can run on an
+// UNRUNNABLE: line, so the loop stops after that cycle with the unmet-goal
+// exit, and the goal summary prints the stop reason, the command and what to
+// do instead.
+func TestPlanAndExecute_UnrunnableDoneItemStopsWithAdvice(t *testing.T) {
+	isolateRunHome(t)
+	fake := newCycleFake(map[string]runner.NodeOutcome{
+		"plan-1":   {Result: cycleSpec},
+		"work-1":   {SessionID: "s-1", Result: "FAIL\nno planned node can run it\nUNRUNNABLE: sh scripts/x.sh\n", ExitCode: 0},
+		"assess-1": {Result: cycleAssessNotMet},
+	})
+
+	out, err := runPlanAndExecute(t, fake, goalCycleOptions{maxCycles: 3}, nil)
+	if err == nil {
+		t.Fatal("an unrunnable done item must be the unmet-goal exit, not exit 0")
+	}
+	if !strings.Contains(err.Error(), "goal not met") {
+		t.Errorf("exit error %q is not the unmet-goal exit", err)
+	}
+	for _, want := range []string{
+		"GOAL SUMMARY",
+		"stopped: unrunnable_done_item",
+		"    unrunnable: sh scripts/x.sh\n",
+		"No planned node can run it; check it with --verify-cmd instead, or start the run with a configuration that allows it.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the goal summary is missing %q:\n%s", want, out)
+		}
+	}
+	if got := fake.InvocationCount("plan-2"); got != 0 {
+		t.Errorf("a second cycle was planned after an unrunnable done item: %d calls", got)
+	}
+}
+
 // TestFinalRemaining_IsSanitised_349: the unmet-goal exit error quotes the
 // final cycle's remaining, which is the assessor's own text. A CSI sequence
 // and U+202E in it never reach the error, the words around them do; a
