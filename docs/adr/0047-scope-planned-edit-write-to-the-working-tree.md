@@ -98,7 +98,7 @@ accepts path-scoped `Edit(...)` rules. `./path` (or a bare relative path)
 resolves against the working directory, `//path` is absolute, `~/path` is
 under home, and `**` matches recursively. The documentation also says an
 `Edit` rule covers every built-in file-editing tool, Write included. This repo
-has measured only part of that, at claude CLI 2.1.295 (§5.5 F2, F3); the
+has measured only part of that, at claude CLI 2.1.295 (§5.5 F2, F3, F6); the
 Edit-covers-Write claim is still unmeasured (F4). DESIGN.md says so of the one scoped rule it
 ships: "spelled from the documented syntax and not measured" (`DESIGN.md:202-203`).
 
@@ -117,6 +117,9 @@ covers both modes a planned node can pick, `auto` and `acceptEdits`. An
 out-of-scope edit auto-approved under either one is the same hole. F1 is
 measured (claude CLI 2.1.295): under `auto` the out-of-scope write happened
 3/3; under `acceptEdits` it was denied 3/3, and under `dontAsk` 1/1.
+F6 is measured too (same CLI): a Bash call that matches no allowed pattern
+was denied under `acceptEdits` 2/2, returning in 7-9 s with no hang in `-p`
+mode, and under `dontAsk` 1/1; under `auto` it ran.
 
 ### 1.4 What the codex runtime enforces
 
@@ -246,19 +249,22 @@ show the deny binds before A relies on it.
 - **Which mode A uses for write-holding planned nodes: `acceptEdits` or
   `dontAsk`.** Both denied the out-of-scope write in F1. `dontAsk` also
   refuses every other call not on the allow list, by definition (ADR 0034
-  §1.2). ADR 0034 §1.5 measured what that costs: it is the friction `auto` was
+  §1.2), read-only commands aside (§5.5 F6). ADR 0034 §1.5 measured what that costs: it is the friction `auto` was
   made the default to retire, so `dontAsk` may break more planned nodes, for
   example a node whose `Bash(go *)` grant does not match the command it
   actually needs. In exchange, its refusal of an out-of-scope edit follows
-  from its definition, not only from three runs. What `acceptEdits` does with
-  an unmatched call that is not an edit is not measured here. ADR 0034 §2.1
-  calls it a prompting mode for everything else, so in a process that cannot prompt
-  it may land on the dead ask, but that is a reading, not a measurement.
+  from its definition, not only from three runs. ADR 0034 §2.1 calls
+  `acceptEdits` a prompting mode for everything else, which read as a risk
+  that an unmatched non-edit call would land on the dead ask in a process
+  that cannot prompt. F6 measured that case: under `acceptEdits` an unallowed
+  Bash call was denied 2/2, cleanly, with no hang in `-p` mode (§5.5 F6).
   **Recommendation: `acceptEdits`**, because it is the one that keeps
   write-holding nodes closest to how they run today while still refusing the
-  out-of-scope write in every measured run. Switch to `dontAsk` if F3 with
-  Edit (Read granted) shows `acceptEdits` pre-approving an out-of-scope Edit,
-  or if a later CLI version changes F1's `acceptEdits` result.
+  out-of-scope write in every measured run (F1), and F6 measured it denying
+  an unallowed Bash call cleanly, with no hang in `-p` mode. Switch to
+  `dontAsk` if F3 with Edit (Read granted) shows `acceptEdits` pre-approving
+  an out-of-scope Edit, or if a later CLI version changes F1's or F6's
+  `acceptEdits` result.
 - **Codex enforcement.** Unchanged: the codex argv never carries
   `allowed_tools`. The `workspace-write` sandbox already scopes the node
   (§1.4). For codex, the plan screen's added line names the sandbox instead
@@ -361,7 +367,10 @@ mode planned nodes run in by default, the classifier approved the
 out-of-scope write 3/3, so a scoped allow alone is not enforcement. A
 therefore needs its fail-closed branch: write-holding planned nodes stop
 running under `auto` and run under `acceptEdits` (recommended over `dontAsk`,
-§2 Option A), and the run refuses to start if that cannot be applied. The
+§2 Option A), and the run refuses to start if that cannot be applied.
+`acceptEdits` stays the recommendation because F6 measured it denying an
+unallowed Bash call cleanly, with no hang in `-p` mode (§5.5 F6), so it does
+not trade `auto`'s hole for a dead ask. The
 captain should weigh that cost before accepting. This remains a
 recommendation pending the captain's decision.
 
@@ -387,7 +396,8 @@ recommendation pending the captain's decision.
 - With A, write-holding planned nodes lose `auto`. They run under
   `acceptEdits` (or `dontAsk`), so a call the classifier would have approved
   may now be refused, and a run whose node cannot get that mode does not
-  start (F1, §4).
+  start (F1, §4). Under `acceptEdits` the refusal is clean: an unallowed Bash
+  call was denied with no hang in `-p` mode (F6).
 - The Bash route stays open on claude. The plan-screen line says so, and
   DESIGN.md and SECURITY.md have to say it in the same words.
 - `--accept-loaded-user-config` weakens the scope to a declaration (§1.2). The
@@ -408,7 +418,8 @@ recommendation pending the captain's decision.
   `editScopePermissionMode` (*not yet existing*); a read-only planned node
   keeps the default. `auto` is dropped because a scoped allow is a
   pre-approval, not a deny, and under `auto` the classifier approved the
-  out-of-scope write 3/3 (F1).
+  out-of-scope write 3/3 (F1). `acceptEdits` is the default sub-choice
+  because it denied an unallowed Bash call cleanly, with no hang (F6).
 - `internal/coordinator/coordinator.go`: the fail-closed refusal,
   `refuseUnscopedEditMode` (*not yet existing*), called once the policies and
   modes are resolved and before any node is scheduled. It refuses the run when
@@ -467,7 +478,8 @@ recommendation pending the captain's decision.
 
 **Evidence base.** QA, 2026-10-22, claude CLI **2.1.295**. Every run used
 `--setting-sources "" --tools Edit,Write --allowedTools 'Edit(./**)'
-'Write(./**)'` and started from a fresh, empty working directory. These are
+'Write(./**)'` (F6 adds Bash to both) and started from a fresh, empty
+working directory. These are
 claims about Claude Code at that version, not about this repository: they
 must be re-measured whenever the claude CLI changes, and A's fail-closed
 branch must not rely on a result older than the CLI it runs against.
@@ -488,13 +500,14 @@ branch must not rely on a result older than the CLI it runs against.
   So Option A as written is not enforcement for planned nodes running under
   `auto`, and its fail-closed branch is required (§2, §4).
 - **F2 (measured).** Under the same argv, a `Write` to `./x` inside the tree
-  **wrote** under both `auto` and `acceptEdits`: the scoped allow is honoured
+  **wrote** under both `auto` (session `0f4c7169`) and `acceptEdits`
+  (session `574ebdb5`): the scoped allow is honoured
   inside the tree. Had it been denied, `Write(./**)` would not be a rule
   Claude Code honours, and the allowlist would have had to rely on
   `Edit(./**)` covering Write.
 - **F3 with Write (measured).** Under the same argv, a `Write` to
   `./../outside`: `auto` **wrote** (session `bdabe976`); `acceptEdits`
-  **denied**. Under `auto` this is F1's hole again. Under `acceptEdits` it
+  **denied** (session `dff5e261`). Under `auto` this is F1's hole again. Under `acceptEdits` it
   shows `./**` does not pre-approve a `..` escape.
 - **F3 with Edit (inconclusive).** The `Edit` to `./../outside` was refused
   with 0 denials and the file unchanged, because Edit requires a prior Read
@@ -511,3 +524,24 @@ branch must not rely on a result older than the CLI it runs against.
   `Write(...)` twin.
 - **F5.** A codex node under `workspace-write` cannot write `~/omg-f5-probe`.
   If it can, §1.4's claim about Codex is wrong, and codex is unscoped too.
+- **F6 (measured).** Under `acceptEdits`, a Bash call that matches no allowed
+  pattern is either denied, or the node hangs waiting for an answer nobody
+  can give. QA, 2026-10-22, claude CLI 2.1.295: F1's argv plus
+  `--tools Edit,Write,Bash` and `--allowedTools ... 'Bash(go *)'`, 180 s
+  timeout. The unallowed command has a side effect:
+  `python3 -c "open('f6-marker.txt','w').write('x')"`. Result:
+  - `acceptEdits`: **denied 2/2**, no hang. Each run returned in 7-9 s with
+    one Bash denial and no marker file (sessions `a06d1c1d`, `288d802b`).
+    So `-p` mode has no dead ask.
+  - `dontAsk`: **denied 1/1** (session `f4a3bee0`).
+  - `auto`: **ran**. The marker file was created, `permission_denials` 0
+    (session `3666e862`), the same pattern as F1.
+
+  Side finding: a read-only command (`uname -a`) ran under every mode,
+  `dontAsk` included, with 0 denials (4 runs: sessions `a0bbc90e`,
+  `2d54a14c`, `b1a92a75`, `15a7278a`), so the CLI auto-allows read-only
+  commands and a Bash allow list does not stop reads.
+
+  `acceptEdits` denies an unallowed Bash call cleanly, with no hang, so it
+  stays the recommended mode for write-holding planned nodes (§2 Option A,
+  §4). `auto` again ran the call.
