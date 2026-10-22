@@ -384,6 +384,10 @@ recommendation pending the captain's decision.
 
 - With A, the plan screen states a write scope, and on claude the scope sits in
   argv for every planned write-holding node.
+- With A, write-holding planned nodes lose `auto`. They run under
+  `acceptEdits` (or `dontAsk`), so a call the classifier would have approved
+  may now be refused, and a run whose node cannot get that mode does not
+  start (F1, §4).
 - The Bash route stays open on claude. The plan-screen line says so, and
   DESIGN.md and SECURITY.md have to say it in the same words.
 - `--accept-loaded-user-config` weakens the scope to a declaration (§1.2). The
@@ -402,7 +406,16 @@ recommendation pending the captain's decision.
   planned node's permission mode is resolved to `acceptEdits` (or `dontAsk`,
   per the captain's sub-choice) instead of `auto`, through
   `editScopePermissionMode` (*not yet existing*); a read-only planned node
-  keeps the default.
+  keeps the default. `auto` is dropped because a scoped allow is a
+  pre-approval, not a deny, and under `auto` the classifier approved the
+  out-of-scope write 3/3 (F1).
+- `internal/coordinator/coordinator.go`: the fail-closed refusal,
+  `refuseUnscopedEditMode` (*not yet existing*), called once the policies and
+  modes are resolved and before any node is scheduled. It refuses the run when
+  a write-holding planned node's resolved mode is not the chosen non-`auto`
+  mode, or when that mode cannot be put on the node's argv as
+  `--permission-mode`. A scope the CLI does not enforce would only look
+  enforced, so the run does not start.
 - `internal/coordinator/field_dispositions_test.go`: `plannedToolEffects`
   re-keyed to the scoped spellings.
 - `cmd/oh-my-graph/main.go`: `noteEditScope` (*not yet existing*), printed
@@ -442,7 +455,11 @@ recommendation pending the captain's decision.
     chosen non-`auto` mode even when the planner declared `auto`, and its argv
     carries that `--permission-mode`. A read-only planned node still runs
     under `auto`.
-11. (C) `--allow-edit-outside` makes paths absolute and symlink-resolved,
+11. When a write-holding planned node would otherwise run under `auto` (its
+    mode cannot be resolved to the chosen non-`auto` mode, or cannot be put on
+    argv), the run refuses to start before any node runs, and the refusal
+    names the node and the mode.
+12. (C) `--allow-edit-outside` makes paths absolute and symlink-resolved,
     refuses a path under `OMG_HOME`, is refused under `--runtime codex`, and
     `resume` rebuilds it from `state.json`.
 
