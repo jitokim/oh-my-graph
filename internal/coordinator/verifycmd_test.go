@@ -510,8 +510,9 @@ func TestPlannerPromptStatesWhoGathersBuildEvidence(t *testing.T) {
 
 // TestPlannerPromptKeepsTheFullSuiteOutOfNodesWhenTheEngineRunsIt pins #392:
 // with a --verify-cmd the engine runs the full suite at each sink node — once,
-// after the final node, in the single-sink plan the prompt asks for — so the planner is told no node runs it again and a node that changes code
-// runs only the tests for what it changed. Without one there is no end-of-run
+// after the final node, in the single-sink plan the prompt asks for — so the
+// planner is told no node runs it again and a node that changes code runs only
+// the tests for what it changed. Without one there is no end-of-run
 // suite to defer to, so the rule is absent. The goal names neither command, so
 // only the rule can satisfy the presence checks.
 func TestPlannerPromptKeepsTheFullSuiteOutOfNodesWhenTheEngineRunsIt(t *testing.T) {
