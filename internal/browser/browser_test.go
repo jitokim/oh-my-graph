@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRefusingOpener_RefusesAndNamesTheURL(t *testing.T) {
@@ -63,5 +64,36 @@ func TestFakeOpener_CancelledContextRefusesWithoutRecording(t *testing.T) {
 	}
 	if got := f.URLs(); len(got) != 0 {
 		t.Errorf("a cancelled Open must not be recorded, got %v", got)
+	}
+}
+
+func TestFakeOpener_WaitForURLsReturnsOnceAnOpenFromAnotherGoroutineLands(t *testing.T) {
+	f := NewFakeOpener()
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		_ = f.Open(context.Background(), "http://127.0.0.1:8642/")
+	}()
+
+	if !f.WaitForURLs(1, 5*time.Second) {
+		t.Fatalf("WaitForURLs must report the Open that landed, got %v", f.URLs())
+	}
+	if got := f.URLs(); len(got) != 1 {
+		t.Errorf("exactly one URL must be recorded, got %v", got)
+	}
+}
+
+func TestFakeOpener_WaitForURLsTimesOutWhenNothingIsRecorded(t *testing.T) {
+	f := NewFakeOpener()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	// A cancelled Open records nothing, so there is nothing to wait for.
+	_ = f.Open(ctx, "http://127.0.0.1:8642/")
+
+	start := time.Now()
+	if f.WaitForURLs(1, 50*time.Millisecond) {
+		t.Fatalf("WaitForURLs must report false when no URL is recorded, got %v", f.URLs())
+	}
+	if elapsed := time.Since(start); elapsed < 50*time.Millisecond {
+		t.Errorf("WaitForURLs gave up after %v, before its 50ms timeout", elapsed)
 	}
 }
