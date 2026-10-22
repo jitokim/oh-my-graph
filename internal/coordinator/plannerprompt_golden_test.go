@@ -21,9 +21,10 @@ var updatePlannerGoldens = flag.Bool("update-planner-goldens", false, "regenerat
 
 // The fixed inputs every planner-prompt golden is rendered from.
 const (
-	goldenGoal        = "add a --json flag to the status command"
-	goldenRemaining   = "the status command still prints text when --json is passed"
-	goldenStartCommit = "0123456789abcdef0123456789abcdef01234567"
+	goldenGoal          = "add a --json flag to the status command"
+	goldenRemaining     = "the status command still prints text when --json is passed"
+	goldenStartCommit   = "0123456789abcdef0123456789abcdef01234567"
+	goldenVerifyCommand = "make test"
 )
 
 var goldenInputKeys = []string{"repo", "branch"}
@@ -137,4 +138,12 @@ func TestPlannerPromptGoldens_MenuOn(t *testing.T) {
 func TestPlannerPromptGoldens_StartCommit(t *testing.T) {
 	first, _, _ := plannerPrompts(t, WithStartCommit(goldenStartCommit))
 	checkPlannerGolden(t, "first-start-commit", first.Prompt)
+}
+
+// #396: the first-cycle prompt with a --verify-cmd, so the with-command
+// final-check paragraph — the single-sink rule among it — is a reviewed golden
+// diff. No other golden supplies a command, so none renders that paragraph.
+func TestPlannerPromptGoldens_VerifyCommand(t *testing.T) {
+	first, _, _ := plannerPrompts(t, WithVerifyCommand(VerifyCommand{Command: goldenVerifyCommand}))
+	checkPlannerGolden(t, "first-verify-cmd", first.Prompt)
 }
