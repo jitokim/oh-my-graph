@@ -1,6 +1,6 @@
 # ADR 0047 — A planned node's Edit and Write reach only the directory it runs in
 
-Decision needed: should planned nodes get Edit/Write scoped to the directory they run in, with unscoped forms refused (A); stay unscoped with only a launch warning and a post-run report (B); or get A plus a repeatable `--allow-edit-outside <<path>>` flag that widens the scope (C)?
+Decision needed: should planned nodes get Edit/Write scoped to the directory they run in, with unscoped forms refused (A); stay unscoped with only a launch warning and a post-run report (B); or get A plus a repeatable `--allow-edit-outside <path>` flag that widens the scope (C)? Choosing A or C means planned nodes that hold Edit or Write stop running under `auto`, because under `auto` the scoped rule did not stop an out-of-scope write (F1, measured); they run under `acceptEdits` (recommended) or `dontAsk`.
 
 **Status:** Proposed. No code exists. This record frames a decision for the
 captain; §4 recommends one option, and that is a recommendation, not a
@@ -98,7 +98,8 @@ accepts path-scoped `Edit(...)` rules. `./path` (or a bare relative path)
 resolves against the working directory, `//path` is absolute, `~/path` is
 under home, and `**` matches recursively. The documentation also says an
 `Edit` rule covers every built-in file-editing tool, Write included. This repo
-has not measured any of that. DESIGN.md says so of the one scoped rule it
+has measured only part of that, at claude CLI 2.1.295 (§5.5 F2, F3); the
+Edit-covers-Write claim is still unmeasured (F4). DESIGN.md says so of the one scoped rule it
 ships: "spelled from the documented syntax and not measured" (`DESIGN.md:202-203`).
 
 **The permission mode decides what an out-of-scope call becomes.** A scoped
@@ -111,8 +112,11 @@ rules are evaluated before the classifier
 
 So under `auto`, a scoped allow narrows what is pre-approved, not what is
 possible. A planned node may also set `acceptEdits`, because only
-`bypassPermissions` is refused (`coordinator.go:1272`). What `acceptEdits`
-does with an out-of-scope edit is not measured here.
+`bypassPermissions` is refused (`coordinator.go:1272`). F1 (§5.5) therefore
+covers both modes a planned node can pick, `auto` and `acceptEdits`. An
+out-of-scope edit auto-approved under either one is the same hole. F1 is
+measured (claude CLI 2.1.295): under `auto` the out-of-scope write happened
+3/3; under `acceptEdits` it was denied 3/3, and under `dontAsk` 1/1.
 
 ### 1.4 What the codex runtime enforces
 
@@ -177,7 +181,7 @@ unreported:
 A `worktree:` node does **not** run inside the working tree.
 `worktreeManagerFor` puts every worktree under `<run-dir>/worktrees`
 (`cmd/oh-my-graph/main.go:2365-2366`), and `GitManager.Acquire` joins
-`<<name>>` onto that base (`internal/worktree/git.go:112`). The scheduler then
+`<name>` onto that base (`internal/worktree/git.go:112`). The scheduler then
 replaces the node's cwd with that path (`internal/schedule/scheduler.go:1546-1547`).
 
 So the precise wording is **the directory the node's process runs in**. That is
@@ -205,7 +209,7 @@ the single repair attempt can recover. `toolName` still reduces the rule to
 scoped forms, because it renders from the same list (`coordinator.go:2183`).
 
 On top of that, `toolPolicyFor` appends a path-scoped deny for the run root
-to every planned node that holds a write tool: `Edit(//<<omg home>>/**)`
+to every planned node that holds a write tool: `Edit(//<omg home>/**)`
 (*chosen*). That deny is evaluated before the classifier (§1.3), so the run
 directory stays protected whatever the permission mode does with other
 out-of-scope calls. That is a scoped deny, which goes against layer 5's
@@ -215,7 +219,7 @@ show the deny binds before A relies on it.
 
 - **What the operator sees.** The plan screen's `[tools: …]` already prints
   the rules verbatim (`main.go:1505-1506`), so it shows `Edit(./**)`. One added
-  line (*chosen* wording): `edits: limited to <<invocation dir>> (Edit/Write
+  line (*chosen* wording): `edits: limited to <invocation dir> (Edit/Write
   rules); the run directory is denied; Bash(go|make) still runs code that can
   write anywhere`. Under `--accept-loaded-user-config` the line instead says
   the scope is a declaration, because the operator's own `Edit` grants load
@@ -227,20 +231,45 @@ show the deny binds before A relies on it.
   Write tools. A saved plan from an earlier version that declares bare `Edit`
   is refused if it is re-planned. Run with `run`, it is a hand-written graph
   (§3).
-- **Claude enforcement.** The scoped allow rule (layer 2) and the run-root
-  deny. Under `dontAsk`, any other out-of-scope edit is denied. Under `auto`,
-  it goes to the classifier. Whether the classifier approves is the first
-  measurement owed (§5.5 F1).
+- **Claude enforcement.** The scoped allow rule (layer 2), the run-root
+  deny, and the permission mode. A scoped allow rule is a pre-approval, not a
+  deny. Under `auto`, a call outside it goes to the classifier, and in F1 the
+  classifier approved the out-of-scope write 3/3 (§5.5). So under A, **planned
+  nodes that hold Edit or Write do not run under `auto`.** They run under
+  `acceptEdits` or `dontAsk`, where the scoped rule acted as a limit in the
+  measurement (`acceptEdits` denied 3/3, `dontAsk` 1/1), or A fails closed.
+  The coordinator resolves the mode for a write-holding planned node; a
+  planner-declared `auto` on such a node is replaced, not obeyed (*chosen*),
+  and the plan screen prints the mode the node will run under. Inside the
+  tree the scoped rule is honoured under both `auto` and `acceptEdits` (F2).
+  Read-only planned nodes keep `auto`.
+- **Which mode A uses for write-holding planned nodes: `acceptEdits` or
+  `dontAsk`.** Both denied the out-of-scope write in F1. `dontAsk` also
+  refuses every other call not on the allow list, by definition (ADR 0034
+  §1.2). ADR 0034 §1.5 measured what that costs: it is the friction `auto` was
+  made the default to retire, so `dontAsk` may break more planned nodes, for
+  example a node whose `Bash(go *)` grant does not match the command it
+  actually needs. In exchange, its refusal of an out-of-scope edit follows
+  from its definition, not only from three runs. What `acceptEdits` does with
+  an unmatched call that is not an edit is not measured here. ADR 0034 §2.1
+  calls it a prompting mode for everything else, so in a process that cannot prompt
+  it may land on the dead ask, but that is a reading, not a measurement.
+  **Recommendation: `acceptEdits`**, because it is the one that keeps
+  write-holding nodes closest to how they run today while still refusing the
+  out-of-scope write in every measured run. Switch to `dontAsk` if F3 with
+  Edit (Read granted) shows `acceptEdits` pre-approving an out-of-scope Edit,
+  or if a later CLI version changes F1's `acceptEdits` result.
 - **Codex enforcement.** Unchanged: the codex argv never carries
   `allowed_tools`. The `workspace-write` sandbox already scopes the node
   (§1.4). For codex, the plan screen's added line names the sandbox instead
   of the rules.
 - **When a runtime cannot enforce it.** The planner itself refuses when the
-  invocation directory lies inside `<<omg home>>`, because the deny would
-  cover the tree. If F1 finds that `auto` approves out-of-scope edits, A
-  fails closed: a planned node holding a write tool runs under `dontAsk`, or
-  the run refuses to start. A does not ship with a scope that only looks
-  enforced.
+  invocation directory lies inside `<omg home>`, because the deny would
+  cover the tree. F1 found that `auto` approves out-of-scope writes, so A's
+  fail-closed branch is required, not contingent: a planned node holding a
+  write tool runs under the chosen non-`auto` mode, and if that mode cannot
+  be applied (or a re-measurement shows it no longer limits), the run refuses
+  to start. A does not ship with a scope that only looks enforced.
 
 ### Option B — unscoped, warned and reported
 
@@ -262,21 +291,21 @@ with a report of changed files outside the invocation directory.
 
 ### Option C — A, plus an explicit widening flag
 
-C is A, plus `--allow-edit-outside <<path>>` (*chosen*). The flag is
+C is A, plus `--allow-edit-outside <path>` (*chosen*). The flag is
 repeatable and accepted by `auto` (and by `resume` from the record). Each
-`<<path>>` is made absolute and symlink-resolved at launch, then added to
-every planned write-holding node as `Edit(//<<abs path>>/**)` and
-`Write(//<<abs path>>/**)`. It is recorded in `state.json` as
+`<path>` is made absolute and symlink-resolved at launch, then added to
+every planned write-holding node as `Edit(//<abs path>/**)` and
+`Write(//<abs path>/**)`. It is recorded in `state.json` as
 `edit_scope_extra` (*chosen*, optional, so the schema stays 3) so `resume`
 rebuilds it instead of re-reading flags.
 
 - **What the operator sees.** A's line, plus one line per widened path:
-  `edits: also <<abs path>> (--allow-edit-outside)`.
+  `edits: also <abs path> (--allow-edit-outside)`.
 - **What breaks.** Same as A, except a graph the operator widens for keeps
-  running. A path inside `<<omg home>>` is refused, because the run-root deny
+  running. A path inside `<omg home>` is refused, because the run-root deny
   would win anyway and the flag must not suggest otherwise.
-- **Claude enforcement.** A's, with extra allow rules. The same F1 caveat
-  applies.
+- **Claude enforcement.** A's, with extra allow rules. Write-holding planned
+  nodes run under A's non-`auto` mode for the same F1 reason.
 - **Codex enforcement.** **Claim about Codex, not this repo:** the sandbox
   takes extra writable roots (`--add-dir`, or the
   `sandbox_workspace_write.writable_roots` config key). Neither is measured
@@ -327,10 +356,14 @@ of adding it later inside `toolPolicyFor`.
    shipping an unmeasured door. A keeps C's shape open, since it is only extra
    rules.
 
-The recommendation is conditional on F1 (§5.5). If `auto`'s classifier
-approves out-of-scope edits, A is not enforcement as written. It then needs
-its fail-closed branch, and the captain should weigh that cost (`dontAsk` for
-write-holding planned nodes) before accepting.
+F1 (§5.5) is measured, and it changes what A must be. Under `auto`, the
+mode planned nodes run in by default, the classifier approved the
+out-of-scope write 3/3, so a scoped allow alone is not enforcement. A
+therefore needs its fail-closed branch: write-holding planned nodes stop
+running under `auto` and run under `acceptEdits` (recommended over `dontAsk`,
+§2 Option A), and the run refuses to start if that cannot be applied. The
+captain should weigh that cost before accepting. This remains a
+recommendation pending the captain's decision.
 
 ## 5. Alternatives, consequences, implementation, tests, falsification
 
@@ -364,13 +397,18 @@ write-holding planned nodes) before accepting.
 - `internal/coordinator/coordinator.go`: `plannedToolAllowlist`, entries
   changed. `validatePlannedNodeTools`: a refusal sentence naming the scoped
   spelling. `toolPolicyFor`: append the run-root deny through
-  `runRootDenyRules` (*not yet existing*), which needs `<<omg home>>` passed in
-  from the CLI. `toolPoliciesByNode` gains that parameter.
+  `runRootDenyRules` (*not yet existing*), which needs `<omg home>` passed in
+  from the CLI. `toolPoliciesByNode` gains that parameter. A write-holding
+  planned node's permission mode is resolved to `acceptEdits` (or `dontAsk`,
+  per the captain's sub-choice) instead of `auto`, through
+  `editScopePermissionMode` (*not yet existing*); a read-only planned node
+  keeps the default.
 - `internal/coordinator/field_dispositions_test.go`: `plannedToolEffects`
   re-keyed to the scoped spellings.
 - `cmd/oh-my-graph/main.go`: `noteEditScope` (*not yet existing*), printed
   beside `noteCodexRuntimePolicy`. It picks the claude, codex or loaded-config
-  sentence. Also add the refusal when the invocation directory lies inside
+  sentence, and names the non-`auto` mode a write-holding node runs under.
+  Also add the refusal when the invocation directory lies inside
   `omgHome()`.
 - For C only: a repeatable `--allow-edit-outside` in `cmd/oh-my-graph/flags.go`;
   `editScopeExtra` (*not yet existing*) in `internal/runstate`; and the codex
@@ -400,24 +438,59 @@ write-holding planned nodes) before accepting.
    unchanged.
 9. `gated-dev`'s `Edit(./.omg-pr-body.md)` is unchanged
    (`TestPRPublishPassesItsBodyThroughAGrantedFile` stays green).
-10. (C) `--allow-edit-outside` makes paths absolute and symlink-resolved,
+10. A planned node holding `Edit(./**)` or `Write(./**)` runs under the
+    chosen non-`auto` mode even when the planner declared `auto`, and its argv
+    carries that `--permission-mode`. A read-only planned node still runs
+    under `auto`.
+11. (C) `--allow-edit-outside` makes paths absolute and symlink-resolved,
     refuses a path under `OMG_HOME`, is refused under `--runtime codex`, and
     `resume` rebuilds it from `state.json`.
 
 ### 5.5 Falsification
 
-- **F1 (owed before Accepted).** Use a real claude under `auto` with
-  `--setting-sources ""`, `--tools Edit,Write` and
-  `--allowedTools Edit(./**),Write(./**)`. Ask it to write `~/omg-f1-probe`.
-  If the file appears, the scoped allow is not a limit under `auto`, and A's
-  fail-closed branch is mandatory.
-- **F2.** Under the same argv, a `Write` to `./x` succeeds. If it is denied,
-  then `Write(./**)` is not a rule Claude Code honours, and the allowlist must
-  rely on `Edit(./**)` covering Write, as its documentation claims.
-- **F3.** Under the same argv, an `Edit` to `./../outside` is not
-  pre-approved. If it is, then `./**` does not normalise `..`, and the scope
-  is not a scope.
-- **F4.** The run-root deny blocks a write to `<<omg home>>/runs/x` under
-  `auto`, `dontAsk` and `acceptEdits`.
+**Evidence base.** QA, 2026-10-22, claude CLI **2.1.295**. Every run used
+`--setting-sources "" --tools Edit,Write --allowedTools 'Edit(./**)'
+'Write(./**)'` and started from a fresh, empty working directory. These are
+claims about Claude Code at that version, not about this repository: they
+must be re-measured whenever the claude CLI changes, and A's fail-closed
+branch must not rely on a result older than the CLI it runs against.
+
+- **F1 (measured; covers `auto` and `acceptEdits`).** Under the argv above,
+  ask claude to write `~/omg-f1-probe`. F1 covers both permission modes a
+  planned node can pick, because an out-of-scope edit auto-approved under
+  either is the same hole for Option A. Result:
+  - `auto`: **wrote 3/3**, `permission_denials` 0 (sessions `89aab393`,
+    `982b0156`, `7ab1d51c`).
+  - `acceptEdits`: **denied 3/3**, one Write denial each (sessions
+    `fed42435`, `908f296a`, `395909ad`).
+  - `dontAsk`: **denied 1/1**.
+
+  F1 is **falsified under `auto`**: a scoped allow rule pre-approves but does
+  not deny, and `auto`'s classifier approved the out-of-scope write. Under
+  `acceptEdits` and `dontAsk` the scoped rule acted as a limit in these runs.
+  So Option A as written is not enforcement for planned nodes running under
+  `auto`, and its fail-closed branch is required (§2, §4).
+- **F2 (measured).** Under the same argv, a `Write` to `./x` inside the tree
+  **wrote** under both `auto` and `acceptEdits`: the scoped allow is honoured
+  inside the tree. Had it been denied, `Write(./**)` would not be a rule
+  Claude Code honours, and the allowlist would have had to rely on
+  `Edit(./**)` covering Write.
+- **F3 with Write (measured).** Under the same argv, a `Write` to
+  `./../outside`: `auto` **wrote** (session `bdabe976`); `acceptEdits`
+  **denied**. Under `auto` this is F1's hole again. Under `acceptEdits` it
+  shows `./**` does not pre-approve a `..` escape.
+- **F3 with Edit (inconclusive).** The `Edit` to `./../outside` was refused
+  with 0 denials and the file unchanged, because Edit requires a prior Read
+  and `--tools Edit,Write` excluded Read. It says nothing about the rule.
+- **F3 with Edit, Read granted (open, owed before Accepted).** Repeat F3 with
+  `--tools Read,Edit,Write` under `acceptEdits` and `dontAsk`. The `Edit` to
+  `./../outside` must be denied. If it is pre-approved, `./**` does not
+  normalise `..` for Edit, and the scope is not a scope.
+- **F4 (open).** The run-root deny blocks a write to `<omg home>/runs/x` under
+  `auto`, `dontAsk` and `acceptEdits`. It must be tried with **both** Edit and
+  Write: A spells the deny as one `Edit(...)` rule and relies on the
+  documented claim that an Edit rule also covers Write (§1.3), and F4 is
+  where that claim is tested. If the Write is not blocked, the deny needs a
+  `Write(...)` twin.
 - **F5.** A codex node under `workspace-write` cannot write `~/omg-f5-probe`.
   If it can, §1.4's claim about Codex is wrong, and codex is unscoped too.
