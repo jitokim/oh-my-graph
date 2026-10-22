@@ -69,9 +69,10 @@ func TestFakeOpener_CancelledContextRefusesWithoutRecording(t *testing.T) {
 
 func TestFakeOpener_WaitForURLsReturnsOnceAnOpenFromAnotherGoroutineLands(t *testing.T) {
 	f := NewFakeOpener()
+	errc := make(chan error, 1)
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		_ = f.Open(context.Background(), "http://127.0.0.1:8642/")
+		errc <- f.Open(context.Background(), "http://127.0.0.1:8642/")
 	}()
 
 	if !f.WaitForURLs(1, 5*time.Second) {
@@ -80,6 +81,14 @@ func TestFakeOpener_WaitForURLsReturnsOnceAnOpenFromAnotherGoroutineLands(t *tes
 	if got := f.URLs(); len(got) != 1 {
 		t.Errorf("exactly one URL must be recorded, got %v", got)
 	}
+	select {
+	case err := <-errc:
+		if err != nil {
+			t.Errorf("Open from the other goroutine failed: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Open from the other goroutine never returned")
+	}
 }
 
 func TestFakeOpener_WaitForURLsTimesOutWhenNothingIsRecorded(t *testing.T) {
@@ -87,7 +96,9 @@ func TestFakeOpener_WaitForURLsTimesOutWhenNothingIsRecorded(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	// A cancelled Open records nothing, so there is nothing to wait for.
-	_ = f.Open(ctx, "http://127.0.0.1:8642/")
+	if err := f.Open(ctx, "http://127.0.0.1:8642/"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Open on a cancelled context must return the context error, got: %v", err)
+	}
 
 	start := time.Now()
 	if f.WaitForURLs(1, 50*time.Millisecond) {
