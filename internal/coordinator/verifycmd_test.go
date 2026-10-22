@@ -509,8 +509,8 @@ func TestPlannerPromptStatesWhoGathersBuildEvidence(t *testing.T) {
 }
 
 // TestPlannerPromptKeepsTheFullSuiteOutOfNodesWhenTheEngineRunsIt pins #392:
-// with a --verify-cmd the engine runs the full suite once after the final node,
-// so the planner is told no node runs it again and a node that changes code
+// with a --verify-cmd the engine runs the full suite at each sink node — once,
+// after the final node, in the single-sink plan the prompt asks for — so the planner is told no node runs it again and a node that changes code
 // runs only the tests for what it changed. Without one there is no end-of-run
 // suite to defer to, so the rule is absent. The goal names neither command, so
 // only the rule can satisfy the presence checks.
@@ -530,6 +530,32 @@ func TestPlannerPromptKeepsTheFullSuiteOutOfNodesWhenTheEngineRunsIt(t *testing.
 	without := plannerPromptNoMenu(t, "build it", "")
 	if strings.Contains(without, "runs only the tests for what it changed") {
 		t.Error("with no --verify-cmd, the planner is told to defer the full suite to a run that will not happen")
+	}
+}
+
+// singleSinkRule is the with-command rule that the plan ends in one sink, the
+// final check node (#396).
+const singleSinkRule = "The graph ends in exactly ONE sink, the final check node"
+
+// TestPlannerPromptAsksForASingleSinkWhenTheEngineRunsTheVerifyCommand pins
+// #396: attachVerifyCommand attaches the --verify-cmd to every sink node, so a
+// second sink would run the whole suite again. With a --verify-cmd the planner
+// is told the graph ends in exactly one sink and why; without one there is no
+// engine run to repeat, so the rule is absent.
+func TestPlannerPromptAsksForASingleSinkWhenTheEngineRunsTheVerifyCommand(t *testing.T) {
+	with := plannerPromptNoMenu(t, "build it", "make test")
+	for _, want := range []string{
+		singleSinkRule,
+		"so a second sink runs the whole suite again",
+	} {
+		if !strings.Contains(with, want) {
+			t.Errorf("with a --verify-cmd, the planner prompt lacks %q", want)
+		}
+	}
+
+	without := plannerPromptNoMenu(t, "build it", "")
+	if strings.Contains(without, singleSinkRule) {
+		t.Error("with no --verify-cmd, the planner is told to end in one sink for a verify run that will not happen")
 	}
 }
 

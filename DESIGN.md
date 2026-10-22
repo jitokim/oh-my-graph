@@ -3111,7 +3111,11 @@ LIMITATIONS.md.
 it (#392, #399).** With `--verify-cmd`, the planner's final-check paragraph
 (`finalCheckWithVerifyCommand`) quotes the command's exact text, `strconv.Quote`'d
 onto a line of its own, and says no planned node runs it: the engine runs it
-once, after the final node. A node that changes code runs only the tests for
+at each sink node, which with the single final check node means once, after
+that node. So the paragraph also asks for exactly one sink, the final check
+node, with every other node its ancestor (#396): `attachVerifyCommand` attaches
+the command to every sink (ADR 0016 §2), so a second sink would run the whole
+suite again. The fix is the prompt's alone; the attachment is unchanged. A node that changes code runs only the tests for
 what it changed (for Go, the changed packages), never the whole suite. A
 whole-suite command the goal's done list names that is not the verify command,
 character for character, belongs to the final check node: if one of the Bash
