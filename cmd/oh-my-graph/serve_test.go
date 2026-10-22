@@ -363,6 +363,20 @@ func TestServeFlags_AutoOpenerGatesOnTTYAndNoOpen(t *testing.T) {
 	}
 }
 
+// openerWait bounds how long a test waits for serveUntilCancelled's Open to
+// land after a request has already been served.
+const openerWait = 5 * time.Second
+
+// waitForOpen blocks until fake has recorded one URL. serveUntilCancelled
+// starts Serve before it calls Open, so a served request does not prove Open
+// has run — and cancelling first makes Open refuse without recording (#422).
+func waitForOpen(t *testing.T, fake *browser.FakeOpener) {
+	t.Helper()
+	if !fake.WaitForURLs(1, openerWait) {
+		t.Fatalf("the FakeOpener recorded no URL within %v of the server answering", openerWait)
+	}
+}
+
 func TestServeUntilCancelled_HandsTheServedURLToTheOpener(t *testing.T) {
 	listener, err := serve.Listen(0)
 	if err != nil {
@@ -382,6 +396,7 @@ func TestServeUntilCancelled_HandsTheServedURLToTheOpener(t *testing.T) {
 	if strings.TrimSpace(body) != "[]" {
 		t.Errorf("the opened server did not answer: %q", body)
 	}
+	waitForOpen(t, fake)
 	want := "http://" + listener.Addr().String() + "/"
 	if urls := fake.URLs(); len(urls) != 1 || urls[0] != want {
 		t.Errorf("opener received %v, want exactly [%s]", urls, want)
@@ -411,6 +426,10 @@ func TestServeUntilCancelled_WithoutAnOpenerNothingSpawnsAndStdoutIsIdentical(t 
 		done := make(chan error, 1)
 		go func() { done <- serveUntilCancelled(ctx, &out, listener, handler, banner, opener) }()
 		getWithRetry(t, "http://"+listener.Addr().String()+"/api/graph")
+		// Only the opened run must wait: the quiet run has no Open to race.
+		if fake, ok := opener.(*browser.FakeOpener); ok {
+			waitForOpen(t, fake)
+		}
 		cancel()
 		if err := <-done; err != nil {
 			t.Fatalf("a cancelled serve must return nil, got %v", err)
@@ -449,6 +468,7 @@ func TestServeUntilCancelled_AFailedLaunchStillServes(t *testing.T) {
 	if body := getWithRetry(t, "http://"+listener.Addr().String()+"/api/cards"); strings.TrimSpace(body) != "[]" {
 		t.Errorf("the server stopped answering after a failed launch: %q", body)
 	}
+	waitForOpen(t, fake)
 	if urls := fake.URLs(); len(urls) != 1 {
 		t.Errorf("the launch must still have been attempted once, got %v", urls)
 	}
