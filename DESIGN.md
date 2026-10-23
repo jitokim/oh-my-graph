@@ -1638,8 +1638,9 @@ comment or docs) or a change to behaviour or correctness is `FINDINGS:`, never
 the fragments' spelling. Only that node gets it; the planned final check keeps
 its whole-reply `PASS` pin (`branchEvidenceRule`). A
 re-run reviewer is also told that an item it rated minor stays minor unless
-the rework changed the code it is about, so a nit cannot be promoted into a
-new round over code nobody touched. Neither half is a convergence proof —
+the rework changed the code it is about — a claim that is not true was never
+minor, so it is the exception — so a nit cannot be promoted into a new round
+over code nobody touched. Neither half is a convergence proof —
 whether #288's first half, `{{ self.previous }}`, made the shipped loops
 converge is still unmeasured, and #288 stays open for that measurement and
 for the ledger, which does not tell a `MINOR:` pass from a `CLEAN` one.

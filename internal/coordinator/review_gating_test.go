@@ -84,6 +84,17 @@ func TestPlan_FeedbackBulletTeachesTheGatingVerdict(t *testing.T) {
 			t.Errorf("feedback-arc bullet is missing %q:\n%s", want, bullet)
 		}
 	}
+	// A re-run reviewer keeps an unchanged MINOR: item minor, except an
+	// untrue claim; these phrases wrap, so match them on the flattened text.
+	flat := strings.Join(strings.Fields(bullet), " ")
+	for _, want := range []string{
+		"stays minor unless the rework changed the code that item concerns",
+		"or the item is a claim that is not true (that was never minor)",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("feedback-arc bullet is missing %q:\n%s", want, bullet)
+		}
+	}
 }
 
 // TestPlan_FeedbackReviewerWithGatingCheckValidates is the plan the bullet asks

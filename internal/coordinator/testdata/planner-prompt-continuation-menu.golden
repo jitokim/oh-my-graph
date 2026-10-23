@@ -115,7 +115,9 @@ Rules:
   changes behaviour or correctness is FINDINGS:, never MINOR:, however
   small the fix; MINOR: is only for an item whose meaning is already
   right and only its form differs. A reply's verdict is its worst item.
-  Its success_check is
+  On a re-run, an item rated MINOR: in {{ self.previous }} stays minor
+  unless the rework changed the code that item concerns, or the item is a
+  claim that is not true (that was never minor). Its success_check is
   {"exit_zero": true, "result_matches": "^[*_`\\s]*(MINOR[*_`\\s]*:|CLEAN\\b)"}
   so CLEAN and MINOR: pass (a MINOR: reply records its items) and only
   FINDINGS: fails and fires the arc. Do not gate it on CLEAN alone: that
