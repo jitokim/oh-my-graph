@@ -5,8 +5,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/jitokim/oh-my-graph/internal/browser"
 	"github.com/jitokim/oh-my-graph/internal/runner"
@@ -389,14 +392,15 @@ func TestResume_RecordsAndPrintsTheRemoteChanges(t *testing.T) {
 }
 
 // interruptingObserver is the user's Ctrl-C landing on the before snapshot.
-// during: Remotes cancels the run context and answers with its error — an
+// during: Remotes interrupts the run and answers with its error — an
 // unreachable remote's git killed by the interrupt. Otherwise the last
-// ls-remote answers in full and cancels as it returns, so the snapshot comes
-// back observed with the run already interrupted. It counts Remotes, one
-// call per snapshot taken.
+// ls-remote answers in full and interrupts as it returns, so the snapshot
+// comes back observed with the run already interrupted. Either way it waits
+// for the run context to be cancelled before answering. It counts Remotes,
+// one call per snapshot taken.
 type interruptingObserver struct {
 	*worktree.FakeRemoteObserver
-	cancel       context.CancelFunc
+	interrupt    func()
 	during       bool
 	remotesCalls int
 }
@@ -404,8 +408,9 @@ type interruptingObserver struct {
 func (o *interruptingObserver) Remotes(ctx context.Context) ([]worktree.Remote, error) {
 	o.remotesCalls++
 	if o.during {
-		o.cancel()
-		<-ctx.Done()
+		if err := o.interruptAndWait(ctx); err != nil {
+			return nil, err
+		}
 		return nil, ctx.Err()
 	}
 	return o.FakeRemoteObserver.Remotes(ctx)
@@ -413,8 +418,31 @@ func (o *interruptingObserver) Remotes(ctx context.Context) ([]worktree.Remote, 
 
 func (o *interruptingObserver) LsRemoteHeads(ctx context.Context, remote string) ([]worktree.RemoteHead, error) {
 	heads, err := o.FakeRemoteObserver.LsRemoteHeads(ctx, remote)
-	o.cancel()
+	if waitErr := o.interruptAndWait(ctx); waitErr != nil {
+		return nil, waitErr
+	}
 	return heads, err
+}
+
+func (o *interruptingObserver) interruptAndWait(ctx context.Context) error {
+	o.interrupt()
+	select {
+	case <-ctx.Done():
+		return nil
+	case <-time.After(10 * time.Second):
+		return errors.New("interruptingObserver: the interrupt never cancelled the run context")
+	}
+}
+
+// sigint sends this process SIGINT, which the leg's signal.NotifyContext
+// catches exactly as a Ctrl-C at the terminal: a resumed leg makes its own
+// context, so a test cannot hand it a cancellable one.
+func sigint(t *testing.T) func() {
+	return func() {
+		if err := syscall.Kill(os.Getpid(), syscall.SIGINT); err != nil {
+			t.Errorf("SIGINT: %v", err)
+		}
+	}
 }
 
 // QA at bfee490: a Ctrl-C during the before snapshot ran the graph anyway and
@@ -434,7 +462,7 @@ func TestRunGraph_AnInterruptDuringTheRemoteSnapshotStartsNoNode(t *testing.T) {
 			isolateRunHome(t)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			obs := &interruptingObserver{FakeRemoteObserver: originObserver(), cancel: cancel, during: tc.during}
+			obs := &interruptingObserver{FakeRemoteObserver: originObserver(), interrupt: cancel, during: tc.during}
 			useRemoteObserver(t, obs, remoteBaseSHA)
 			fake := passingWork()
 			g := mustParse(t, `{"name":"interrupted","nodes":[
@@ -473,6 +501,81 @@ func TestRunGraph_AnInterruptDuringTheRemoteSnapshotStartsNoNode(t *testing.T) {
 			d := lastLegChanges(t, remoteRunSnapshot(t, "run-1"))
 			if len(d.Entries) != 0 || len(d.Observed) != 0 || len(d.NotCompared) != 2 {
 				t.Errorf("changes = %+v, want both parts not compared, never none observed", d)
+			}
+		})
+	}
+}
+
+// The same holds on a resumed leg: an interrupt during its own before
+// snapshot, or as it returns, starts no node, takes no after snapshot and
+// records the new leg's after unavailable, "interrupted", leaving the earlier
+// legs' records as they were.
+func TestResume_AnInterruptDuringTheRemoteSnapshotStartsNoNode(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		during bool
+	}{
+		{"cancelled while the before snapshot runs", true},
+		{"cancelled as the before snapshot returns", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateRunHome(t)
+			useRemoteObserver(t, originObserver(), remoteBaseSHA)
+			fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+				"a":    {Result: "PASS", ExitCode: 0},
+				"ship": {Result: "PASS", ExitCode: 0},
+			})
+			g := mustParse(t, `{"name":"gate-flow","nodes":[
+				{"id":"a","prompt":"a"},
+				{"id":"approve","type":"gate","depends_on":["a"]},
+				{"id":"ship","prompt":"ship","depends_on":["approve"]}]}`)
+			var err error
+			captureStdout(t, func() {
+				err = executeGraph(context.Background(), "run-1", g, fake, commonRunFlags{inputs: inputFlag{}}, nil, 0, "gate-flow.yaml", []byte("name: gate-flow\n"), false, nil, nil, nil)
+			})
+			var paused *schedule.PausedError
+			if !errors.As(err, &paused) {
+				t.Fatalf("expected the first leg to pause, got %v", err)
+			}
+			firstLegs := remoteRunSnapshot(t, "run-1").RemoteChanges
+			if firstLegs == nil || len(firstLegs.Legs) != 1 {
+				t.Fatalf("remote_changes after the first leg = %+v, want one leg", firstLegs)
+			}
+			firstCalls := len(fake.Calls())
+
+			obs := &interruptingObserver{FakeRemoteObserver: originObserver(), interrupt: sigint(t), during: tc.during}
+			useRemoteObserver(t, obs, remoteBaseSHA)
+			captureStdout(t, func() {
+				err = executeResume(parseResumeFlags(t, []string{"run-1", "--approve", "approve"}), fake, nil)
+			})
+			if !errors.Is(err, context.Canceled) || err.Error() != "context canceled" {
+				t.Fatalf("err = %v, want the bare context.Canceled an interrupt before any node returns", err)
+			}
+			if code := exitCodeForError(err); code != 1 {
+				t.Errorf("exit code = %d, want 1", code)
+			}
+			if calls := fake.Calls(); len(calls) != firstCalls {
+				t.Errorf("nodes ran after the interrupt: %v", calls[firstCalls:])
+			}
+			if obs.remotesCalls != 1 {
+				t.Errorf("Remotes ran %d times on the resumed leg, want once: the after snapshot must not be taken", obs.remotesCalls)
+			}
+
+			rc := remoteRunSnapshot(t, "run-1").RemoteChanges
+			if rc == nil || len(rc.Legs) != 2 || rc.Legs[1].After == nil {
+				t.Fatalf("remote_changes = %+v, want two legs, the resumed one with an after", rc)
+			}
+			if !reflect.DeepEqual(rc.Legs[0], firstLegs.Legs[0]) {
+				t.Errorf("leg 1 = %+v after the interrupted resume, want it unchanged: %+v", rc.Legs[0], firstLegs.Legs[0])
+			}
+			after := *rc.Legs[1].After
+			if after.Remotes.Status != runstate.RemotePartUnavailable || after.Remotes.Reason != "interrupted" ||
+				after.Branches.Status != runstate.RemotePartUnavailable || after.Branches.Reason != "interrupted" {
+				t.Errorf("leg 2's after = %+v, want both parts unavailable, reason interrupted", after)
+			}
+			d := lastLegChanges(t, remoteRunSnapshot(t, "run-1"))
+			if len(d.Entries) != 0 || len(d.Observed) != 0 || len(d.NotCompared) != 2 {
+				t.Errorf("leg 2's changes = %+v, want both parts not compared, never none observed", d)
 			}
 		})
 	}
