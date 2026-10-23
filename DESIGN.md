@@ -1155,11 +1155,10 @@ the scrubbed environment. That stops only git's own prompt — ssh asks on
 the user chose an ssh command (`GIT_SSH_COMMAND` or `GIT_SSH` in the
 environment, or `core.sshCommand` in the repository), which is left
 untouched; an ssh prompt then fails at once into an unavailable part. This
-widens the third seam's scope from the `git
-worktree` commands to the git commands the engine issues against the
-invocation repository, and adds no spawner. Tests inject
-`worktree.FakeRemoteObserver`. What the record cannot see is listed in
-docs/LIMITATIONS.md.
+widens the third seam's scope from the `git worktree` commands to the git
+commands the engine issues against the invocation repository, and adds no
+spawner. Tests inject `worktree.FakeRemoteObserver`. What the record cannot
+see is listed in docs/LIMITATIONS.md.
 
 ## Execution engine
 Scheduler = Kahn on `depends_on`, but maintains a **ready set** run concurrently:
