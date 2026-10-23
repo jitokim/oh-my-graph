@@ -2380,7 +2380,27 @@ func plannedBashPatterns() []string {
 // carries the scope rule every planned check node shares — it asserts only
 // what this run's own nodes produce, never the absence of what the goal only
 // forbids creating — and the verdict clause says a forbidden action is the
-// operator's next step, never a reason to reply FAIL.
+// operator's next step, never a reason to reply FAIL. Beside it sits the
+// write-side rule (#427): a check node changes no repository state. A planner
+// once told a final check node to 'git checkout' a branch, which moves HEAD in
+// a checkout other people or runs may be using; the rule names the read-only
+// spellings ('git show <ref>:<path>', 'git diff <a>..<b>') it uses instead.
+// Running in the tree as it finds it is only right when that tree's HEAD IS
+// the work: a doing node in its own worktree, or one that switched back to
+// main, leaves a done-list command PASSing on main's tree. So on a branch goal
+// the check node first compares, in the tree that holds the work,
+// 'git -C <tree> rev-parse HEAD' with 'git -C <tree> rev-parse <branch>' — two
+// commit shas, not the branch-name assertion forbidden above — and replies
+// FAIL, still checking nothing out, if they differ. That tree may be a git
+// worktree of the same repository or another repository; run in the
+// invocation directory instead, the comparison reads that checkout's HEAD
+// (often main's) and FAILs correct work. The done-list commands run in the
+// same tree ('go -C <tree> ...', 'make -C <tree> ...', 'git -C <tree> ...'),
+// already covered by the Bash(go *), Bash(make *) and Bash(git *) patterns, so
+// nothing is checked out anywhere. When the tree's path is unknown, or the
+// command that reaches it is not covered by a planned pattern, the command
+// belongs to the node that made the work or to --verify-cmd, and the check
+// node's FAIL reason says so.
 //
 // Its closing rule names WHICH node may carry the whole-reply pin, which every
 // earlier spelling assumed and never said. The paragraph speaks of "the final
@@ -2427,6 +2447,25 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
     itself, which leaves every other checkout's HEAD untouched, and
     oh-my-graph isolates no repository but the one it was invoked from — so
     a HEAD assertion reports FAIL on work that in fact succeeded.
+  - Before it runs a done-list command, a check node on such a goal
+    confirms, in the tree that holds the work, that
+    'git -C <tree> rev-parse HEAD' equals 'git -C <tree> rev-parse <branch>',
+    under the "Bash(git *)" pattern a check node already declares. That
+    tree may be a git worktree of the same repository or another
+    repository; run in the directory oh-my-graph was invoked from, the
+    comparison reads that checkout's HEAD instead (often main's) and FAILs
+    correct work. It runs its done-list commands in that same tree too
+    ('go -C <tree> ...', 'make -C <tree> ...', 'git -C <tree> ...'), under
+    the "Bash(go *)", "Bash(make *)" and "Bash(git *)" patterns already
+    planned; nothing is checked out anywhere. If HEAD and the tip differ
+    it replies FAIL saying the command cannot run against the work from
+    here (HEAD <sha> is not the tip of <branch> <sha>), and still checks
+    nothing out. If the path of that tree is unknown, or the command that
+    reaches it is not covered by a planned pattern, the command belongs to
+    the node that made the work or to --verify-cmd, and the check node
+    replies FAIL saying so. This compares two commit shas — whether the
+    content is the same — not a branch name, so it is not the
+    '--abbrev-ref HEAD' assertion forbidden above.
   When the assertion holds, instruct the node that its whole reply is
   exactly the four bare characters PASS and nothing else, with no markdown
   emphasis ("**PASS**" is WRONG), no heading, no backticks and no preamble;
@@ -2460,6 +2499,17 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
   the run to change, and it never asserts the ABSENCE of something the goal
   only forbids creating — a remote that already existed is not a violation
   of "do not create a remote".
+- Every planned check node, final or not, observes and judges; it never
+  changes repository state. It runs no 'git checkout', 'git switch',
+  'git reset', 'git restore', 'git stash', 'git commit', 'git merge' or
+  'git rebase', creates or deletes no branch, and creates no tag: a
+  checked-out HEAD belongs to one directory, which other people or runs
+  may be using, and switching it is the write-side form of asserting on
+  it. To read content on another ref it uses 'git show <ref>:<path>' or
+  'git diff <a>..<b>', never a checkout. A command that would need another
+  ref checked out to run belongs to the node that made the work, or to
+  --verify-cmd; a check node runs its own commands, done-list ones
+  included, in the tree as it finds it.
 - That whole-reply pin belongs ONLY on a node whose entire job is to
   ASSERT: it observes, it judges, and its reply IS the verdict, because
   nothing else it produced is needed afterwards. Being the LAST node of the

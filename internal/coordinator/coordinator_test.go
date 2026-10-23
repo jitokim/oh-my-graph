@@ -231,6 +231,75 @@ func TestPlannerPromptAsksForRepositoryStateNotCheckoutState(t *testing.T) {
 	}
 }
 
+// TestPlannerPromptForbidsCheckNodesFromChangingRepositoryState pins the
+// write-side twin of the repository-state rule, in BOTH spellings of the
+// final-check paragraph (#427). A planner told a final check node to
+// 'git checkout' a branch; that moves HEAD in a checkout other people or runs
+// may be using. The rule must forbid the checkout by name and offer the
+// read-only spelling instead, since a prohibition with no offer is the shape
+// DESIGN.md's "Verdict patterns" already records. It must also say the check
+// node still runs its own commands, done-list ones included, in the tree as it
+// finds it, so the rule never reads as taking the done-list command (#426) away
+// from the final check node. Running in the tree as it finds it is only right
+// when that tree's HEAD is the work, so on a branch goal the node first
+// compares HEAD with the branch tip in the tree that holds the work (git -C,
+// which covers a worktree or another repository) and FAILs, still checking
+// nothing out, when they differ — a sha comparison that must sit beside, not
+// replace, the --abbrev-ref prohibition.
+func TestPlannerPromptForbidsCheckNodesFromChangingRepositoryState(t *testing.T) {
+	for _, verifyCmd := range []string{"make test", ""} {
+		prompt := plannerPromptNoMenu(t, "fix the bug on a feature branch", verifyCmd)
+
+		for _, want := range []string{
+			"it never\n  changes repository state.",
+			"'git checkout'",
+			"'git show <ref>:<path>'",
+			"never a checkout.",
+			"A command that would need another\n  ref checked out to run",
+			"done-list ones\n  included, in the tree as it finds it.",
+			"Before it runs a done-list command, a check node on such a goal\n    confirms, in the tree that holds the work, that\n    'git -C <tree> rev-parse HEAD' equals 'git -C <tree> rev-parse <branch>'",
+			"That\n    tree may be a git worktree of the same repository or another\n    repository",
+			"It runs its done-list commands in that same tree too\n    ('go -C <tree> ...', 'make -C <tree> ...', 'git -C <tree> ...')",
+			"nothing is checked out anywhere.",
+			"and still checks\n    nothing out.",
+			"If the path of that tree is unknown, or the command that\n    reaches it is not covered by a planned pattern, the command belongs to\n    the node that made the work or to --verify-cmd, and the check node\n    replies FAIL saying so.",
+			"This compares two commit shas",
+			"NEVER assert on 'git rev-parse --abbrev-ref HEAD'",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("verify-cmd %q: prompt lost the no-state-change rule: missing %q", verifyCmd, want)
+			}
+		}
+
+		// The HEAD-equals-tip bullet itself, read as one sentence with the
+		// prompt's wrapping folded away: it names the tree (git -C, a
+		// worktree), keeps the no-checkout clause, and sits after the
+		// --abbrev-ref prohibition rather than replacing it.
+		start := strings.Index(prompt, "  - Before it runs a done-list command")
+		if start < 0 {
+			t.Fatalf("verify-cmd %q: prompt lost the HEAD-equals-tip bullet", verifyCmd)
+		}
+		end := strings.Index(prompt[start:], "  When the assertion holds")
+		if end < 0 {
+			t.Fatalf("verify-cmd %q: HEAD-equals-tip bullet has no end", verifyCmd)
+		}
+		rule := strings.Join(strings.Fields(prompt[start:start+end]), " ")
+		for _, want := range []string{
+			"git -C",
+			"worktree",
+			"still checks nothing out",
+			"not the '--abbrev-ref HEAD' assertion forbidden above",
+		} {
+			if !strings.Contains(rule, want) {
+				t.Errorf("verify-cmd %q: HEAD-equals-tip bullet is missing %q: %s", verifyCmd, want, rule)
+			}
+		}
+		if !strings.Contains(prompt[:start], "NEVER assert on 'git rev-parse --abbrev-ref HEAD'") {
+			t.Errorf("verify-cmd %q: the --abbrev-ref prohibition no longer precedes the HEAD-equals-tip bullet", verifyCmd)
+		}
+	}
+}
+
 // TestPlannerPromptReservesTheWholeReplyPinForAssertingNodes pins the rule that
 // decides WHICH node may carry the whole-reply PASS pin, in BOTH spellings of
 // the final-check paragraph — it is one prompt, and a rule that holds only when
