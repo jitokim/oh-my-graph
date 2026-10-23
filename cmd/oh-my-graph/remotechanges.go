@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
+	"github.com/jitokim/oh-my-graph/internal/schedule"
 	"github.com/jitokim/oh-my-graph/internal/worktree"
 )
 
@@ -56,16 +58,44 @@ func beginRemoteLeg(ctx context.Context, runID string, recorder *runstate.Snapsh
 // has interrupted the run (Ctrl-C, SIGTERM) the after snapshot is not taken
 // — an unreachable remote would hold the exit for the git timeout — and both
 // parts are recorded unavailable, "interrupted", so the record never reads
-// "no change". Otherwise it runs on a fresh context, since a halt-on-fail
-// cancels only the scheduler's own, and the leg still ended.
-func (l *remoteLeg) end(runCtx context.Context) {
-	ctx := context.Background()
+// "no change". Otherwise it runs on a context of its own, since a
+// halt-on-fail cancels only the scheduler's, and the leg still ended; that
+// context is cancelled with runCtx, so an interrupt while the snapshot runs
+// kills its git and records it interrupted the same way. It reports whether
+// the leg was interrupted by the time the record was written.
+func (l *remoteLeg) end(runCtx context.Context) (interrupted bool) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stop := context.AfterFunc(runCtx, cancel)
+	defer stop()
+
 	after := interruptedRemoteSnapshot
 	if runCtx.Err() == nil {
 		after = worktree.TakeRemoteSnapshot(ctx, l.obs)
 	}
+	// Read after the snapshot: an interrupt that landed while it ran made
+	// its parts git's kill, not the remote's state.
+	interrupted = runCtx.Err() != nil
+	if interrupted {
+		after = interruptedRemoteSnapshot
+	}
 	l.changes.EndLeg(after, worktree.RunCommitCheck(ctx, l.obs, l.baseSHA))
 	l.record()
+	return interrupted
+}
+
+// interruptedRunErr is the error a leg whose after snapshot was interrupted
+// ends with: an interrupt there ends the leg as interrupted (exit 1), like
+// one during any node, rather than as the pause or the pass the scheduler
+// returned. A failure the scheduler already returned is kept — its exit is
+// 1 already and it says more.
+func interruptedRunErr(runCtx context.Context, runErr error) error {
+	var paused *schedule.PausedError
+	var limited *schedule.LimitPausedError
+	if runErr == nil || errors.As(runErr, &paused) || errors.As(runErr, &limited) {
+		return runCtx.Err()
+	}
+	return runErr
 }
 
 // remoteSnapshotInterrupted is the reason of an after snapshot not taken

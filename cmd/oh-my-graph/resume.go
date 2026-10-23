@@ -826,7 +826,9 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		return ctxErr
 	}
 	runErr := scheduler.Run(ctx, g, h, led)
-	remote.end(ctx)
+	if remote.end(ctx) {
+		runErr = interruptedRunErr(ctx, runErr)
+	}
 	reportWorktreeCleanup(os.Stderr, worktrees.Cleanup(context.Background()))
 
 	fmt.Fprintln(os.Stdout)

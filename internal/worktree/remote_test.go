@@ -453,6 +453,32 @@ func TestGitManager_TimeoutIsNamedOnlyWhenItsOwn(t *testing.T) {
 	}
 }
 
+// TestGitManager_ACancelledContextKillsTheRemoteSnapshotsGit pins that the
+// caller's cancellation reaches git itself: the CLI cancels the after
+// snapshot's context when the user interrupts the run, and a hanging
+// ls-remote must end then, not at the manager's timeout.
+func TestGitManager_ACancelledContextKillsTheRemoteSnapshotsGit(t *testing.T) {
+	m, repo := newTestManager(t)
+	gitIn(t, repo, "config", "protocol.ext.allow", "always")
+	gitIn(t, repo, "remote", "add", "slow", "ext::sh -c sleep% 5")
+
+	m.timeout = 10 * time.Second
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(200*time.Millisecond, cancel)
+	start := time.Now()
+	_, err := m.LsRemoteHeads(ctx, "slow")
+	if err == nil {
+		t.Fatal("LsRemoteHeads under a cancelled context succeeded")
+	}
+	if took := time.Since(start); took > 4*time.Second {
+		t.Errorf("the cancellation did not cut the command short: it took %s", took)
+	}
+	if strings.Contains(err.Error(), "timed out after") {
+		t.Errorf("a cancellation was reported as a git timeout: %v", err)
+	}
+}
+
 func assertScrubbedEnv(t *testing.T, env []string) {
 	t.Helper()
 	for _, kv := range env {

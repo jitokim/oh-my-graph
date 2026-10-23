@@ -1296,7 +1296,9 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 		return ctxErr
 	}
 	runErr := scheduler.Run(ctx, g, h, led)
-	remote.end(ctx)
+	if remote.end(ctx) {
+		runErr = interruptedRunErr(ctx, runErr)
+	}
 	// Cleanup runs on a fresh context: the run's own may already be cancelled
 	// (halt-on-fail, Ctrl-C), and a halted run is exactly when leftover
 	// worktrees still need tearing down.

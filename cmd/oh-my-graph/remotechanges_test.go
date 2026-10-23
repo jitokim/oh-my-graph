@@ -580,3 +580,115 @@ func TestResume_AnInterruptDuringTheRemoteSnapshotStartsNoNode(t *testing.T) {
 		})
 	}
 }
+
+// afterSnapshotInterrupter is the user's Ctrl-C landing on the after
+// snapshot of a leg whose nodes have finished. Its first Remotes (the before
+// snapshot) answers in full; its second (the after snapshot) interrupts the
+// run and then blocks like an unreachable remote until its own ctx is
+// cancelled — or, if the interrupt never reaches it, answers in full after
+// a delay longer than the test allows.
+type afterSnapshotInterrupter struct {
+	*worktree.FakeRemoteObserver
+	interrupt    func()
+	remotesCalls int
+}
+
+func (o *afterSnapshotInterrupter) Remotes(ctx context.Context) ([]worktree.Remote, error) {
+	o.remotesCalls++
+	if o.remotesCalls < 2 {
+		return o.FakeRemoteObserver.Remotes(ctx)
+	}
+	o.interrupt()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(30 * time.Second):
+		return o.FakeRemoteObserver.Remotes(ctx)
+	}
+}
+
+// QA at 2198b74: a Ctrl-C while the after snapshot ran was ignored — the
+// snapshot waited out the git timeout and the leg ended paused at its gate
+// (exit 2). The interrupt now reaches the snapshot's git: the leg ends
+// promptly, as interrupted (exit 1), with both after parts recorded
+// unavailable, "interrupted".
+func TestRunGraph_AnInterruptDuringTheAfterSnapshotEndsTheLegInterrupted(t *testing.T) {
+	gateGraph := `{"name":"gate-flow","nodes":[
+		{"id":"a","prompt":"a"},
+		{"id":"approve","type":"gate","depends_on":["a"]},
+		{"id":"ship","prompt":"ship","depends_on":["approve"]}]}`
+	for _, tc := range []struct {
+		name string
+		leg  func(t *testing.T, fake *runner.FakeRunner, obs *afterSnapshotInterrupter) (string, error)
+	}{
+		{"a first leg", func(t *testing.T, fake *runner.FakeRunner, obs *afterSnapshotInterrupter) (string, error) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			obs.interrupt = cancel
+			useRemoteObserver(t, obs, remoteBaseSHA)
+			var err error
+			out := captureStdout(t, func() {
+				err = executeGraph(ctx, "run-1", mustParse(t, gateGraph), fake, commonRunFlags{inputs: inputFlag{}}, nil, 0, "gate-flow.yaml", []byte("name: gate-flow\n"), false, nil, nil, nil)
+			})
+			return out, err
+		}},
+		{"a resumed leg", func(t *testing.T, fake *runner.FakeRunner, obs *afterSnapshotInterrupter) (string, error) {
+			useRemoteObserver(t, originObserver(), remoteBaseSHA)
+			var err error
+			captureStdout(t, func() {
+				err = executeGraph(context.Background(), "run-1", mustParse(t, gateGraph), fake, commonRunFlags{inputs: inputFlag{}}, nil, 0, "gate-flow.yaml", []byte("name: gate-flow\n"), false, nil, nil, nil)
+			})
+			var paused *schedule.PausedError
+			if !errors.As(err, &paused) {
+				t.Fatalf("expected the first leg to pause, got %v", err)
+			}
+			// The resumed leg passes; the interrupt lands on its after snapshot.
+			obs.interrupt = sigint(t)
+			useRemoteObserver(t, obs, remoteBaseSHA)
+			out := captureStdout(t, func() {
+				err = executeResume(parseResumeFlags(t, []string{"run-1", "--approve", "approve"}), fake, nil)
+			})
+			return out, err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateRunHome(t)
+			fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+				"a":    {Result: "PASS", ExitCode: 0},
+				"ship": {Result: "PASS", ExitCode: 0},
+			})
+			obs := &afterSnapshotInterrupter{FakeRemoteObserver: originObserver()}
+
+			start := time.Now()
+			out, err := tc.leg(t, fake, obs)
+			if elapsed := time.Since(start); elapsed > 5*time.Second {
+				t.Errorf("the leg took %s to end after the interrupt, want well under the git timeout", elapsed)
+			}
+			if obs.remotesCalls != 2 {
+				t.Fatalf("Remotes ran %d times on the leg, want twice: the interrupt must land on the after snapshot", obs.remotesCalls)
+			}
+			if !errors.Is(err, context.Canceled) || err.Error() != "context canceled" {
+				t.Fatalf("err = %v, want the bare context.Canceled of an interrupted leg", err)
+			}
+			if code := exitCodeForError(err); code != 1 {
+				t.Errorf("exit code = %d, want 1, an ordinary Ctrl-C's", code)
+			}
+			if strings.Contains(out, "Paused at gate") {
+				t.Errorf("an interrupted leg printed the pause hint:\n%s", out)
+			}
+
+			rc := remoteRunSnapshot(t, "run-1").RemoteChanges
+			if rc == nil || len(rc.Legs) == 0 || rc.Legs[len(rc.Legs)-1].After == nil {
+				t.Fatalf("remote_changes = %+v, want the leg with an after", rc)
+			}
+			after := *rc.Legs[len(rc.Legs)-1].After
+			if !reflect.DeepEqual(after, interruptedRemoteSnapshot) {
+				t.Errorf("after = %+v, want both parts unavailable, reason interrupted", after)
+			}
+			d := lastLegChanges(t, remoteRunSnapshot(t, "run-1"))
+			if len(d.Entries) != 0 || len(d.Observed) != 0 || len(d.NotCompared) != 2 {
+				t.Errorf("changes = %+v, want both parts not compared, never none observed", d)
+			}
+		})
+	}
+}
