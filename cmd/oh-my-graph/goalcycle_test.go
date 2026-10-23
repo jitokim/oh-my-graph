@@ -326,15 +326,16 @@ func TestPlanAndExecute_CyclesExhaustedIsTheUnmetGoalExit(t *testing.T) {
 }
 
 // TestPlanAndExecute_UnrunnableDoneItemStopsWithAdvice is #333: the cycle's
-// final check names a done-list command no planned node can run on an
-// UNRUNNABLE: line, so the loop stops after that cycle with the unmet-goal
-// exit, and the goal summary prints the stop reason, the command and what to
-// do instead.
+// final check FAILS, naming a done-list command no planned node can run on an
+// UNRUNNABLE: line of its reply, so the loop stops after that cycle with the
+// unmet-goal exit, and the goal summary prints the stop reason, the command
+// and what to do instead. The check must really fail: the marker counts only
+// in a FAILed node's reply (failed/<node-id>.out), never in an artifact.
 func TestPlanAndExecute_UnrunnableDoneItemStopsWithAdvice(t *testing.T) {
 	isolateRunHome(t)
 	fake := newCycleFake(map[string]runner.NodeOutcome{
 		"plan-1":   {Result: cycleSpec},
-		"work-1":   {SessionID: "s-1", Result: "FAIL\nno planned node can run it\nUNRUNNABLE: sh scripts/x.sh\n", ExitCode: 0},
+		"work-1":   {SessionID: "s-1", Result: "FAIL\nno planned node can run it\nUNRUNNABLE: sh scripts/x.sh\n", ExitCode: 1, FailureCause: "a done-list command no planned node can run"},
 		"assess-1": {Result: cycleAssessNotMet},
 	})
 
