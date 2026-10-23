@@ -571,10 +571,12 @@ has no open issue behind it.
   <br>**The network, on every run.** The snapshot runs `ls-remote` per
   remote at the start and at the end of each leg, each bounded by the git
   timeout (30 s), so an unreachable remote can add up to 30 s per remote at
-  each of those points. ssh remotes run in BatchMode unless you chose an ssh
-  command (`GIT_SSH_COMMAND`, `GIT_SSH` or `core.sshCommand`): an unknown
-  host key or an encrypted key without an agent makes that part
-  `unavailable` instead of prompting.
+  each of those points. Ctrl-C during the start snapshot ends the leg
+  before any node starts, and an interrupted leg records its end snapshot
+  as `unavailable` ("interrupted") instead of waiting for it. ssh remotes
+  run in BatchMode unless you chose an ssh command (`GIT_SSH_COMMAND`,
+  `GIT_SSH` or `core.sshCommand`): an unknown host key or an encrypted key
+  without an agent makes that part `unavailable` instead of prompting.
 
 See [Deferred](#deferred-not-implemented) below for the full out-of-scope list.
 

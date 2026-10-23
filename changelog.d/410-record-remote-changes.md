@@ -6,5 +6,7 @@
   before and after each leg, stores the difference as `remote_changes` in
   `state.json` and prints it after the ledger table, running ssh in BatchMode
   unless you chose an ssh command, so a remote that would prompt is recorded
-  `unavailable` instead. It never changes a verdict or an exit code.
+  `unavailable` instead. It never changes a verdict or an exit code. Ctrl-C
+  during the start snapshot ends the run before any node starts, and an
+  interrupted run records its end snapshot as `unavailable` ("interrupted").
   ([#410](https://github.com/jitokim/oh-my-graph/issues/410))
