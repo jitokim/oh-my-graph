@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // initBareRemote creates an empty bare repository to push to — a remote that
@@ -223,6 +224,37 @@ func TestGitManager_LsRemoteHeadsChildSeesScrubbedNoPromptEnv(t *testing.T) {
 	assertScrubbedEnv(t, env)
 	if got := lastValue(env, "GIT_TERMINAL_PROMPT"); got != "0" {
 		t.Errorf("GIT_TERMINAL_PROMPT = %q in ls-remote's child, want 0", got)
+	}
+}
+
+// TestGitManager_TimeoutIsNamedOnlyWhenItsOwn pins the error gitEnv returns
+// when a git command outlives the manager's own deadline: "timed out after",
+// the reason the snapshot records. A deadline the caller's context carried
+// is the caller's, not a git timeout, and must not be reported as one.
+func TestGitManager_TimeoutIsNamedOnlyWhenItsOwn(t *testing.T) {
+	m, repo := newTestManager(t)
+	gitIn(t, repo, "config", "protocol.ext.allow", "always")
+	gitIn(t, repo, "remote", "add", "slow", "ext::sh -c sleep% 5")
+
+	m.timeout = 200 * time.Millisecond
+	start := time.Now()
+	_, err := m.LsRemoteHeads(context.Background(), "slow")
+	if err == nil || !strings.Contains(err.Error(), "timed out after 200ms") {
+		t.Fatalf("LsRemoteHeads past the manager's timeout: err = %v, want it to name the timeout", err)
+	}
+	if took := time.Since(start); took > 4*time.Second {
+		t.Errorf("the timeout did not cut the command short: it took %s", took)
+	}
+
+	m.timeout = 10 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_, err = m.LsRemoteHeads(ctx, "slow")
+	if err == nil {
+		t.Fatal("LsRemoteHeads under an expired caller context succeeded")
+	}
+	if strings.Contains(err.Error(), "timed out after") {
+		t.Errorf("the caller's own deadline was reported as a git timeout: %v", err)
 	}
 }
 

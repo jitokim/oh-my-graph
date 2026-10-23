@@ -21,6 +21,10 @@ import (
 // cleanup — indefinitely.
 const gitTimeout = 30 * time.Second
 
+// gitWaitDelay is how long a git command's output pipes may stay open after
+// the command was killed — see gitCmd.
+const gitWaitDelay = time.Second
+
 // GitManager is the production Provider: it materializes each declared
 // worktree name as a real `git worktree add` off the invocation repo's HEAD,
 // once per unique name, and tears everything down at run end without ever
@@ -32,8 +36,8 @@ const gitTimeout = 30 * time.Second
 // Its scope is the git commands the engine itself issues against the
 // invocation repository: worktrees, and the remote snapshot (#410). The
 // snapshot's reads — Remotes, LsRemoteHeads and the local CommitAttributable
-// check — go through the same m.git helper, so they inherit the
-// one exec.Command, the env scrub and gitTimeout, and add only
+// check — go through the same m.gitEnv/gitCmd path that m.git uses, so they
+// inherit the one exec.Command, the env scrub and the timeout, and add only
 // GIT_TERMINAL_PROMPT=0. That widens ADR 0005's "the git worktree commands
 // behind a node's worktree:" to cover them; it adds no spawner.
 //
@@ -56,6 +60,9 @@ type GitManager struct {
 	// to os.Environ) so a test can inject a parent env that DOES carry the
 	// API keys and then assert they are absent from the built child env.
 	environ func() []string
+	// timeout bounds each git command. A field (defaulting to gitTimeout) so
+	// a test can trip the deadline in milliseconds instead of 30 seconds.
+	timeout time.Duration
 
 	mu      sync.Mutex
 	created map[string]*managedWorktree
@@ -89,6 +96,7 @@ func NewGitManager(repoDir, baseDir, runID string) *GitManager {
 		baseDir:      baseDir,
 		branchPrefix: "omg/" + runID,
 		environ:      os.Environ,
+		timeout:      gitTimeout,
 		created:      make(map[string]*managedWorktree),
 	}
 }
@@ -353,14 +361,14 @@ func (m *GitManager) git(ctx context.Context, args ...string) (string, error) {
 // shape live, so the worktree and the remote-snapshot commands cannot drift
 // apart on either.
 func (m *GitManager) gitEnv(ctx context.Context, extraEnv []string, args ...string) (string, error) {
-	cmdCtx, cancel := context.WithTimeout(ctx, gitTimeout)
+	cmdCtx, cancel := context.WithTimeout(ctx, m.timeout)
 	defer cancel()
 
 	out, err := m.gitCmd(cmdCtx, extraEnv, args...).CombinedOutput()
 	output := strings.TrimSpace(string(out))
 	if err != nil {
 		if errors.Is(cmdCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-			err = fmt.Errorf("timed out after %s: %w", gitTimeout, err)
+			err = fmt.Errorf("timed out after %s: %w", m.timeout, err)
 		}
 		if output != "" {
 			return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, output)
@@ -385,11 +393,17 @@ func (m *GitManager) gitEnv(ctx context.Context, extraEnv []string, args ...stri
 // extraEnv is appended AFTER the scrub, never instead of it, and nil for the
 // worktree commands. os/exec keeps the last value of a repeated key, so an
 // extra variable overrides the parent's own setting of it.
+//
+// WaitDelay makes the timeout hold: killing git does not kill what git
+// spawned (an ext:: transport, a credential helper, a hook), and a
+// grandchild still holding the output pipe would otherwise keep
+// CombinedOutput waiting for as long as it lives.
 func (m *GitManager) gitCmd(ctx context.Context, extraEnv []string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = m.repoDir
 	cmd.Env = childenv.Scrub(m.environ())
 	cmd.Env = append(cmd.Env, extraEnv...)
+	cmd.WaitDelay = gitWaitDelay
 	return cmd
 }
 
