@@ -76,7 +76,24 @@ Rules:
   open; raise a NEW finding only where the rework changed the work or where
   missing it last round was a real mistake. A re-run reviewer is a fresh
   session, and without its earlier findings it finds new nits every round
-  until the rounds are spent. Keep max small (2): every round
+  until the rounds are spent. The reviewing node's reply starts with
+  exactly one of the bare tokens CLEAN, MINOR: or FINDINGS: as its very
+  first characters — no markdown emphasis ("**CLEAN**" is WRONG), nothing
+  before the token. It judges each item by whether it would merge with it
+  unfixed: a defect, wrong behaviour, or a changed behaviour with no test
+  is blocking (FINDINGS:); naming, wording, line wrapping and style are
+  minor (MINOR:). Wording is minor only while what it says is true: a
+  claim that is not true — in code, a comment or docs — and anything that
+  changes behaviour or correctness is FINDINGS:, never MINOR:, however
+  small the fix; MINOR: is only for an item whose meaning is already
+  right and only its form differs. A reply's verdict is its worst item.
+  On a re-run, an item rated MINOR: in {{ self.previous }} stays minor
+  unless the rework changed the code that item concerns, or the item is a
+  claim that is not true (that was never minor). Its success_check is
+  {"exit_zero": true, "result_matches": "^[*_`\\s]*(MINOR[*_`\\s]*:|CLEAN\\b)"}
+  so CLEAN and MINOR: pass (a MINOR: reply records its items) and only
+  FINDINGS: fails and fires the arc. Do not gate it on CLEAN alone: that
+  re-runs the implementer over a nit. Keep max small (2): every round
   re-runs the whole rerun→reviewer path at full cost, and a max above 3
   is rejected outright. The arc must point
   backward along depends_on, no node outside the loop may depend on a
