@@ -4118,8 +4118,11 @@ re-enter). A done-list command no planned node can run also ends the loop
 judged not met, `RunGoal` scans that cycle's sinks (every node when none is
 marked a sink) for lines that start with the `UNRUNNABLE:` marker the
 done-list rule asks the final check node for, and stops if any names a
-command. A node's artifact is scanned, and so is a FAILED node's own reply:
-the final check that writes the marker has failed, and a failed node
+command. The marker counts only at the start of a line in the reply of a
+final check that FAILED: only a node whose verdict is FAIL is read, and only
+its own reply, never an artifact — an artifact belongs to a node that passed,
+so a marker line a passing node wrote (a model mistake, or a doing node
+quoting the brief) stops nothing. A failed node
 registers no artifact — `handoff.PersistFailure` writes its reply only to
 `failed/<node-id>.out`. `cycleEvidence` reads that file back, bounded like an
 artifact and located by the same `handoff.FailedOutputPath` that wrote it,
