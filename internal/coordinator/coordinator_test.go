@@ -242,7 +242,8 @@ func TestPlannerPromptAsksForRepositoryStateNotCheckoutState(t *testing.T) {
 // finds it, so the rule never reads as taking the done-list command (#426) away
 // from the final check node. Running in the tree as it finds it is only right
 // when that tree's HEAD is the work, so on a branch goal the node first
-// compares 'git rev-parse HEAD' with the branch tip and FAILs, still checking
+// compares HEAD with the branch tip in the tree that holds the work (git -C,
+// which covers a worktree or another repository) and FAILs, still checking
 // nothing out, when they differ — a sha comparison that must sit beside, not
 // replace, the --abbrev-ref prohibition.
 func TestPlannerPromptForbidsCheckNodesFromChangingRepositoryState(t *testing.T) {
@@ -256,14 +257,45 @@ func TestPlannerPromptForbidsCheckNodesFromChangingRepositoryState(t *testing.T)
 			"never a checkout.",
 			"A command that would need another\n  ref checked out to run",
 			"done-list ones\n  included, in the tree as it finds it.",
-			"Before it runs a done-list command, a check node on such a goal\n    confirms 'git rev-parse HEAD' equals 'git rev-parse <branch>'",
-			"and still\n    checks nothing out.",
+			"Before it runs a done-list command, a check node on such a goal\n    confirms, in the tree that holds the work, that\n    'git -C <tree> rev-parse HEAD' equals 'git -C <tree> rev-parse <branch>'",
+			"That\n    tree may be a git worktree of the same repository or another\n    repository",
+			"It runs its done-list commands in that same tree too\n    ('go -C <tree> ...', 'make -C <tree> ...', 'git -C <tree> ...')",
+			"nothing is checked out anywhere.",
+			"and still checks\n    nothing out.",
+			"If the path of that tree is unknown, or the command that\n    reaches it is not covered by a planned pattern, the command belongs to\n    the node that made the work or to --verify-cmd, and the check node\n    replies FAIL saying so.",
 			"This compares two commit shas",
 			"NEVER assert on 'git rev-parse --abbrev-ref HEAD'",
 		} {
 			if !strings.Contains(prompt, want) {
 				t.Errorf("verify-cmd %q: prompt lost the no-state-change rule: missing %q", verifyCmd, want)
 			}
+		}
+
+		// The HEAD-equals-tip bullet itself, read as one sentence with the
+		// prompt's wrapping folded away: it names the tree (git -C, a
+		// worktree), keeps the no-checkout clause, and sits after the
+		// --abbrev-ref prohibition rather than replacing it.
+		start := strings.Index(prompt, "  - Before it runs a done-list command")
+		if start < 0 {
+			t.Fatalf("verify-cmd %q: prompt lost the HEAD-equals-tip bullet", verifyCmd)
+		}
+		end := strings.Index(prompt[start:], "  When the assertion holds")
+		if end < 0 {
+			t.Fatalf("verify-cmd %q: HEAD-equals-tip bullet has no end", verifyCmd)
+		}
+		rule := strings.Join(strings.Fields(prompt[start:start+end]), " ")
+		for _, want := range []string{
+			"git -C",
+			"worktree",
+			"still checks nothing out",
+			"not the '--abbrev-ref HEAD' assertion forbidden above",
+		} {
+			if !strings.Contains(rule, want) {
+				t.Errorf("verify-cmd %q: HEAD-equals-tip bullet is missing %q: %s", verifyCmd, want, rule)
+			}
+		}
+		if !strings.Contains(prompt[:start], "NEVER assert on 'git rev-parse --abbrev-ref HEAD'") {
+			t.Errorf("verify-cmd %q: the --abbrev-ref prohibition no longer precedes the HEAD-equals-tip bullet", verifyCmd)
 		}
 	}
 }

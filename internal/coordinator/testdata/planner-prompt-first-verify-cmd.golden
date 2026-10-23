@@ -212,11 +212,22 @@ Rules:
     oh-my-graph isolates no repository but the one it was invoked from — so
     a HEAD assertion reports FAIL on work that in fact succeeded.
   - Before it runs a done-list command, a check node on such a goal
-    confirms 'git rev-parse HEAD' equals 'git rev-parse <branch>', under
-    the "Bash(git *)" pattern a check node already declares. If they
-    differ it replies FAIL saying the command cannot run against the work
-    from here (HEAD <sha> is not the tip of <branch> <sha>), and still
-    checks nothing out. This compares two commit shas — whether the
+    confirms, in the tree that holds the work, that
+    'git -C <tree> rev-parse HEAD' equals 'git -C <tree> rev-parse <branch>',
+    under the "Bash(git *)" pattern a check node already declares. That
+    tree may be a git worktree of the same repository or another
+    repository; run in the directory oh-my-graph was invoked from, the
+    comparison reads that checkout's HEAD instead (often main's) and FAILs
+    correct work. It runs its done-list commands in that same tree too
+    ('go -C <tree> ...', 'make -C <tree> ...', 'git -C <tree> ...'), under
+    the "Bash(go *)", "Bash(make *)" and "Bash(git *)" patterns already
+    planned; nothing is checked out anywhere. If HEAD and the tip differ
+    it replies FAIL saying the command cannot run against the work from
+    here (HEAD <sha> is not the tip of <branch> <sha>), and still checks
+    nothing out. If the path of that tree is unknown, or the command that
+    reaches it is not covered by a planned pattern, the command belongs to
+    the node that made the work or to --verify-cmd, and the check node
+    replies FAIL saying so. This compares two commit shas — whether the
     content is the same — not a branch name, so it is not the
     '--abbrev-ref HEAD' assertion forbidden above.
   When the assertion holds, instruct the node that its whole reply is

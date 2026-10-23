@@ -1570,8 +1570,16 @@ So a verdict pattern is written in two halves, and both are load-bearing:
   that would need another ref checked out to run belongs to the node that
   made the work, or to `--verify-cmd`; a check node runs its own commands,
   done-list ones included, in the tree as it finds it (#427). On a branch goal
-  it first confirms `git rev-parse HEAD` equals `git rev-parse <branch>` and
-  replies `FAIL`, still checking nothing out, if they differ; that compares
+  it first confirms, in the tree that holds the work,
+  `git -C <tree> rev-parse HEAD` equals `git -C <tree> rev-parse <branch>` and
+  replies `FAIL`, still checking nothing out, if they differ. That tree may be
+  a git worktree of the same repository or another repository, and the
+  done-list commands run in it too (`go -C <tree> ...`, `make -C <tree> ...`,
+  `git -C <tree> ...`, under the `Bash(go *)`, `Bash(make *)` and
+  `Bash(git *)` patterns already planned), so nothing is checked out anywhere.
+  If the tree's path is unknown, or the command that reaches it is not covered
+  by a planned pattern, the command belongs to the node that made the work or
+  to `--verify-cmd`, and the `FAIL` reason says so. The sha comparison compares
   whether the CONTENT is the same (two commit shas), not the branch NAME, so it
   does not conflict with the rule that a check node asserts repository state,
   not checkout state, and never asserts on `--abbrev-ref HEAD`. The pattern itself is unchanged — the caveat found a home in the

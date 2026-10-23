@@ -10,4 +10,9 @@
   node runs its own commands, done-list ones included, in the tree as it
   finds it — after confirming, on a branch goal, that `git rev-parse HEAD`
   equals `git rev-parse <branch>`, and replying `FAIL` without checking
-  anything out when it does not. Planner prompt only, with and without `--verify-cmd`. ([#427](https://github.com/jitokim/oh-my-graph/issues/427))
+  anything out when it does not. Both that comparison and the done-list
+  commands run in the tree that holds the work (`git -C <tree>`,
+  `go -C <tree>`, `make -C <tree>`), which covers a git worktree of the same
+  repository as well as another repository; a tree whose path is unknown, or
+  that no planned pattern reaches, means a `FAIL` naming the node that made
+  the work or `--verify-cmd`. Planner prompt only, with and without `--verify-cmd`. ([#427](https://github.com/jitokim/oh-my-graph/issues/427))
