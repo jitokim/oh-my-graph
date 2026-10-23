@@ -577,7 +577,10 @@ has no open issue behind it.
   snapshot as `unavailable` ("interrupted") instead of waiting for it.
   During the end snapshot only the exit code changes: `state.json` and the
   run feed keep the outcome the nodes reached, so a leg that reached a gate
-  stays paused and resumable, and its resume hint still prints. ssh
+  stays paused and resumable, and its resume hint still prints. That is
+  the one case where a single-run invocation's exit code and its run's
+  status disagree: exit 1 with the run `PAUSED` or `PASS`, an exception to
+  ADR 0023 §2.6 (exit 2 ↔ `PAUSED`, exit 1 ↔ `FAIL`, exit 0 ↔ `PASS`). ssh
   remotes run in BatchMode unless you chose an ssh command
   (`GIT_SSH_COMMAND`, `GIT_SSH` or `core.sshCommand`): an unknown host key or
   an encrypted key without an agent makes that part `unavailable` instead of

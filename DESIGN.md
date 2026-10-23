@@ -1081,8 +1081,10 @@ the concrete `GitManager`. See ADR 0005.
 
 A node holding `Bash(git *)` can push a branch or add a remote, and no check
 node is asked to notice. The engine records it itself, outside any model, as
-a report: the record changes no verdict, no exit code and no run status, and
-nothing in the engine reads it to decide anything.
+a report: the record itself changes no verdict, no exit code and no run
+status, and nothing in the engine reads it to decide anything. The leg it
+belongs to can still change its exit: a Ctrl-C during its *after* snapshot
+ends the leg interrupted (exit 1), below.
 
 **Timing: two snapshots per leg.** `run`, `auto` and `resume` take a *before*
 snapshot of the **invocation repository** (the one the command was started
@@ -1115,7 +1117,11 @@ but recorded with both parts unavailable, reason `interrupted`. During the
 already wrote to `state.json` and `run_finished` stands, so a leg whose
 nodes ended at a gate stays paused there and resumable, with its
 `resume <run-id> --approve|--reject <gate>` hint still printed, and a leg
-that passed stays `passed`.
+that passed stays `passed`. This is the one case where a single-run
+invocation's exit code and its run's status disagree, exit 1 with `PAUSED`
+or `PASS`: an exception to ADR 0023 §2.6's exit 2 ↔ `PAUSED`, exit 1 ↔
+`FAIL`, exit 0 ↔ `PASS`, pinned by
+`TestExitCode_DoesNotAgreeWithStatusWhenAnInterruptLandsOnTheAfterSnapshot`.
 
 **Entries.** The diff of two snapshots gives `remote_added`,
 `remote_removed`, `remote_url_changed`, `branch_created`, `branch_moved`
