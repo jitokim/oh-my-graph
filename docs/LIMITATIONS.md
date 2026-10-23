@@ -568,6 +568,13 @@ has no open issue behind it.
   included, and a failed `git remote -v` makes both parts so. An unavailable
   part is never compared, so a change behind it goes unseen; the record
   prints a `not compared:` line naming it rather than "none observed".
+  <br>**The network, on every run.** The snapshot runs `ls-remote` per
+  remote at the start and at the end of each leg, each bounded by the git
+  timeout (30 s), so an unreachable remote can add up to 30 s per remote at
+  each of those points. ssh remotes run in BatchMode unless you chose an ssh
+  command (`GIT_SSH_COMMAND`, `GIT_SSH` or `core.sshCommand`): an unknown
+  host key or an encrypted key without an agent makes that part
+  `unavailable` instead of prompting.
 
 See [Deferred](#deferred-not-implemented) below for the full out-of-scope list.
 

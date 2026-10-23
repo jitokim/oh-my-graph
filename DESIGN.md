@@ -1103,7 +1103,10 @@ the whole part is unavailable, every failing remote named, since a list
 missing one remote would compare as that remote's branches all deleted.
 Credentials in URLs and reasons are replaced with `***` before they are
 recorded. Reading never stops the run: a failure, a timeout or "not a git
-repository" becomes an unavailable part.
+repository" becomes an unavailable part. `ls-remote` reads the network on
+every run, each git command bounded by the 30 s git timeout, so one
+unreachable remote can add up to 30 s at the start and at the end of each
+leg.
 
 **Entries.** The diff of two snapshots gives `remote_added`,
 `remote_removed`, `remote_url_changed`, `branch_created`, `branch_moved`
@@ -1146,7 +1149,13 @@ compared, the line says `none observed in the parts compared` and a
 additive and optional, so the schema stays 3 and no event is added
 (docs/RUN-FEED.md). Every command runs on `worktree.GitManager`, through the
 `worktree.RemoteObserver` interface, with `GIT_TERMINAL_PROMPT=0` added to
-the scrubbed environment: this widens the third seam's scope from the `git
+the scrubbed environment. That stops only git's own prompt — ssh asks on
+`/dev/tty` itself for an unknown host key or a locked key — so `git remote
+-v` and `ls-remote` also get `GIT_SSH_COMMAND=ssh -o BatchMode=yes` unless
+the user chose an ssh command (`GIT_SSH_COMMAND` or `GIT_SSH` in the
+environment, or `core.sshCommand` in the repository), which is left
+untouched; an ssh prompt then fails at once into an unavailable part. This
+widens the third seam's scope from the `git
 worktree` commands to the git commands the engine issues against the
 invocation repository, and adds no spawner. Tests inject
 `worktree.FakeRemoteObserver`. What the record cannot see is listed in
