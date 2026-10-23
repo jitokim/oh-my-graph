@@ -2,6 +2,7 @@ package worktree
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -27,6 +28,14 @@ const gitTimeout = 30 * time.Second
 // and one of exactly four in the project (the others: runner.CLIRunner,
 // verify.ShellVerifier and browser.ExecOpener) — see docs/adr/0005 and
 // docs/adr/0006.
+//
+// Its scope is the git commands the engine itself issues against the
+// invocation repository: worktrees, and the remote snapshot (#410). The
+// snapshot's reads — Remotes, LsRemoteHeads and the local CommitAttributable
+// check — go through the same m.git helper, so they inherit the
+// one exec.Command, the env scrub and gitTimeout, and add only
+// GIT_TERMINAL_PROMPT=0. That widens ADR 0005's "the git worktree commands
+// behind a node's worktree:" to cover them; it adds no spawner.
 //
 // Construct it in cmd/oh-my-graph and inject it; the Scheduler never builds
 // one, so no test picks up a real spawn by accident.
@@ -336,12 +345,23 @@ func (m *GitManager) cleanupOne(ctx context.Context, name string, wt *managedWor
 // carries that output in the error, because git explains itself on
 // stderr and an exit status alone ("exit status 128") diagnoses nothing.
 func (m *GitManager) git(ctx context.Context, args ...string) (string, error) {
+	return m.gitEnv(ctx, nil, args...)
+}
+
+// gitEnv is git with extra variables appended after the scrub — the remote
+// snapshot's noPromptEnv. It is the one place the timeout and the error
+// shape live, so the worktree and the remote-snapshot commands cannot drift
+// apart on either.
+func (m *GitManager) gitEnv(ctx context.Context, extraEnv []string, args ...string) (string, error) {
 	cmdCtx, cancel := context.WithTimeout(ctx, gitTimeout)
 	defer cancel()
 
-	out, err := m.gitCmd(cmdCtx, args...).CombinedOutput()
+	out, err := m.gitCmd(cmdCtx, extraEnv, args...).CombinedOutput()
 	output := strings.TrimSpace(string(out))
 	if err != nil {
+		if errors.Is(cmdCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			err = fmt.Errorf("timed out after %s: %w", gitTimeout, err)
+		}
 		if output != "" {
 			return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, output)
 		}
@@ -361,9 +381,176 @@ func (m *GitManager) git(ctx context.Context, args ...string) (string, error) {
 // hooks (post-checkout fires on `git worktree add`) are arbitrary user code
 // that may legitimately invoke claude, and an unscrubbed child would run it
 // on metered API billing.
-func (m *GitManager) gitCmd(ctx context.Context, args ...string) *exec.Cmd {
+//
+// extraEnv is appended AFTER the scrub, never instead of it, and nil for the
+// worktree commands. os/exec keeps the last value of a repeated key, so an
+// extra variable overrides the parent's own setting of it.
+func (m *GitManager) gitCmd(ctx context.Context, extraEnv []string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = m.repoDir
 	cmd.Env = childenv.Scrub(m.environ())
+	cmd.Env = append(cmd.Env, extraEnv...)
 	return cmd
+}
+
+// noPromptEnv is appended to every remote-snapshot command (ADR 0046 §2.3).
+// `git ls-remote` reaches the network, and a credential helper asking for a
+// password would otherwise hold the snapshot until gitTimeout; with the
+// variable set, git fails at once and the part is recorded unavailable.
+var noPromptEnv = []string{"GIT_TERMINAL_PROMPT=0"}
+
+var _ RemoteObserver = (*GitManager)(nil)
+
+// Remotes runs `git remote -v` in the invocation repository. A repository
+// with no remotes returns an empty list and no error; one that is not a
+// repository at all returns git's own diagnosis.
+func (m *GitManager) Remotes(ctx context.Context) ([]Remote, error) {
+	out, err := m.gitEnv(ctx, noPromptEnv, "remote", "-v")
+	if err != nil {
+		return nil, err
+	}
+	return parseRemotes(out)
+}
+
+// parseRemotes reads `git remote -v` lines: "<name>\t<url> (fetch)" and
+// "<name>\t<url> (push)". The output is combined stdout+stderr, so a line of
+// any other shape — a git warning riding along — is skipped; a remote listed
+// with no fetch line is an error rather than a remote with an empty URL.
+func parseRemotes(out string) ([]Remote, error) {
+	byName := map[string]*Remote{}
+	var pushes = map[string][]string{}
+	for _, line := range strings.Split(out, "\n") {
+		name, rest, ok := strings.Cut(strings.TrimRight(line, "\r"), "\t")
+		if !ok || name == "" {
+			continue
+		}
+		var url, kind string
+		switch {
+		case strings.HasSuffix(rest, " (fetch)"):
+			url, kind = strings.TrimSuffix(rest, " (fetch)"), "fetch"
+		case strings.HasSuffix(rest, " (push)"):
+			url, kind = strings.TrimSuffix(rest, " (push)"), "push"
+		default:
+			continue
+		}
+		r, seen := byName[name]
+		if !seen {
+			r = &Remote{Name: name}
+			byName[name] = r
+		}
+		if kind == "fetch" {
+			r.FetchURL = url
+		} else {
+			pushes[name] = append(pushes[name], url)
+		}
+	}
+	remotes := make([]Remote, 0, len(byName))
+	for name, r := range byName {
+		if r.FetchURL == "" {
+			return nil, fmt.Errorf("git remote -v: remote %q has no fetch URL", name)
+		}
+		r.PushURL = strings.Join(pushes[name], ", ")
+		if r.PushURL == "" {
+			r.PushURL = r.FetchURL
+		}
+		remotes = append(remotes, *r)
+	}
+	sort.Slice(remotes, func(i, j int) bool { return remotes[i].Name < remotes[j].Name })
+	return remotes, nil
+}
+
+// LsRemoteHeads runs `git ls-remote --heads <remote>` in the invocation
+// repository. It reaches the network, under gitTimeout and with prompting
+// off. A remote name starting with "-" is refused without running anything:
+// the name comes from the repository's config, and git would read it as an
+// option (--upload-pack= names a program to run).
+func (m *GitManager) LsRemoteHeads(ctx context.Context, remote string) ([]RemoteHead, error) {
+	if remote == "" || strings.HasPrefix(remote, "-") {
+		return nil, fmt.Errorf("refusing to ls-remote remote %q: not a usable remote name", remote)
+	}
+	out, err := m.gitEnv(ctx, noPromptEnv, "ls-remote", "--heads", remote)
+	if err != nil {
+		return nil, err
+	}
+	return parseLsRemoteHeads(out), nil
+}
+
+// parseLsRemoteHeads reads "<sha>\trefs/heads/<branch>" lines. A line that is
+// not a full object name followed by a refs/heads/ ref is not a head — the
+// output is combined, so it may be a warning — and is skipped. The sha comes
+// from the remote, so isFullSHA is also what keeps it safe to hand back to
+// git as an argument later.
+func parseLsRemoteHeads(out string) []RemoteHead {
+	heads := make([]RemoteHead, 0)
+	for _, line := range strings.Split(out, "\n") {
+		sha, ref, ok := strings.Cut(strings.TrimRight(line, "\r"), "\t")
+		if !ok || !isFullSHA(sha) {
+			continue
+		}
+		branch, ok := strings.CutPrefix(ref, "refs/heads/")
+		if !ok || branch == "" {
+			continue
+		}
+		heads = append(heads, RemoteHead{Branch: branch, SHA: strings.ToLower(sha)})
+	}
+	sort.Slice(heads, func(i, j int) bool { return heads[i].Branch < heads[j].Branch })
+	return heads
+}
+
+// CommitAttributable runs ADR 0046 §5.1's check for sha against baseSHA, the
+// run's base commit (run_base_sha), in this order:
+//
+//  1. `git cat-file -e <sha>^{commit}`: sha must be a commit in the invocation
+//     repository's object store, which the run's worktrees share;
+//  2. `git merge-base --is-ancestor <sha> <base>` must fail with exit 1, so a
+//     commit already in the history the run started from (base itself
+//     included) never counts;
+//  3. `git merge-base --is-ancestor <sha> <ref>` must succeed for some ref
+//     `git for-each-ref refs/heads/omg/<run-id>/` lists — the run's own
+//     branches.
+//
+// Every command is local; none reaches the network. Anything that cannot be
+// proven reads as false: a sha or base that is not a full object name (a run
+// with no recorded run_base_sha cannot pass), a manager built without a run
+// id, and any git failure other than merge-base's "not an ancestor". Passing
+// means only that the commit is reachable from the run's branches and not
+// from the base, never that the run moved a ref.
+func (m *GitManager) CommitAttributable(ctx context.Context, sha, baseSHA string) bool {
+	if !isFullSHA(sha) || !isFullSHA(baseSHA) || m.branchPrefix == "omg/" {
+		return false
+	}
+	if _, err := m.gitEnv(ctx, noPromptEnv, "cat-file", "-e", sha+"^{commit}"); err != nil {
+		return false
+	}
+	if ancestor, err := m.isAncestor(ctx, sha, baseSHA); err != nil || ancestor {
+		return false
+	}
+	out, err := m.gitEnv(ctx, noPromptEnv, "for-each-ref", "--format=%(refname)", "refs/heads/"+m.branchPrefix+"/")
+	if err != nil {
+		return false
+	}
+	for _, ref := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(ref, "refs/heads/"+m.branchPrefix+"/") {
+			continue
+		}
+		if ancestor, err := m.isAncestor(ctx, sha, ref); err == nil && ancestor {
+			return true
+		}
+	}
+	return false
+}
+
+// isAncestor runs `git merge-base --is-ancestor a b`. Exit 0 is true and
+// exit 1 is false; any other outcome (a bad object, a timeout) is an error,
+// so a broken check is never read as "not an ancestor".
+func (m *GitManager) isAncestor(ctx context.Context, a, b string) (bool, error) {
+	_, err := m.gitEnv(ctx, noPromptEnv, "merge-base", "--is-ancestor", a, b)
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
 }
