@@ -142,10 +142,12 @@ Rules:
   It runs only the tests for what it changed (for Go, the changed packages,
   e.g. "go test ./internal/x/..."), with the matching Bash pattern in its
   allowed_tools.
-- If the goal's done list names a whole-suite command ("make local", "make
-  test", "make check", "go test ./..." or similar) that is NOT the verify
+- If the goal's done list names any command that is NOT the verify
   command shown above, character for character, the engine's run does not
-  cover it. A planned node can declare only these Bash patterns:
+  cover it. That holds for every such command, not only a whole suite
+  ("make local", "go test ./..."): a script ("sh check.sh"), a linter
+  ("go vet ./...") and a single-package test ("go test ./internal/x/...")
+  count too. A planned node can declare only these Bash patterns:
       Bash(git *), Bash(go *), Bash(make *), Bash(ls *), Bash(cat *), Bash(grep *), Bash(gh pr *)
   If one of them covers it, the FINAL check node runs that command once,
   declares that pattern in its allowed_tools, and its PASS requires that
@@ -153,7 +155,10 @@ Rules:
   test", "pytest" and the like — no planned node can run it, so the final
   check node does NOT try to: it replies FAIL and states that this done
   item could not be run by any planned node, naming the command. Never a
-  PASS over a done item nothing ran.
+  PASS over a done item nothing ran. A different command that checks the
+  same thing — a stand-in, a re-implementation, a test that covers the
+  same rule — never satisfies a done item: the done item names a command,
+  and only that command running counts.
   If the named command IS that verify command, the same
   exact text, no node runs it — the engine's run covers it.
 - If the goal involves creating a branch or committing on one, the final

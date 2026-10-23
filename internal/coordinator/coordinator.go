@@ -2203,11 +2203,13 @@ func plannerPrompt(goal string, inputKeys []string, verifyCommand string, offere
 // command exists, and a reply carrying anything besides the verdict fails it.
 //
 // The with-command spelling also carries the verify command's exact text and
-// tells the planner (#392): no node runs that command (the engine already
-// does, once, after the final node), a node that changes code runs only the
-// tests for what it changed and never the whole suite, and a whole-suite
-// command the goal's done list names that is NOT the verify command is run
-// once by the final check node, whose PASS then requires it to exit 0. The
+// tells the planner (#392): no node runs that command (the engine runs it at
+// each sink node, which with the single final check node is once, after that
+// node), a node that changes code runs only the tests for what it changed and
+// never the whole suite, and any command the goal's done list names that is
+// NOT the verify command (#333: a script, a linter or a single-package test as
+// much as a whole suite) is run once by the final check node, whose PASS then
+// requires it to exit 0. The
 // verify command is not assumed to be the whole suite: a narrow one ("sh
 // v.sh", "go test ./internal/x/...") would otherwise leave a done-list
 // "make local" run by nobody.
@@ -2252,9 +2254,9 @@ func finalCheckWithoutVerifyCommand() string {
 // plannerPrompt hands the verdict pattern and the reporting pointer to.
 // It requires a single sink, the final check node, because the engine runs
 // the verify command at every sink (attachVerifyCommand, #396).
-// The final check node runs a done-list suite only when one of
-// plannedBashPatterns covers it, and otherwise replies FAIL naming it — the
-// rule doneListCommandRule spells for both paragraphs.
+// The final check node runs a done-list command of any kind (#333) only
+// when one of plannedBashPatterns covers it, and otherwise replies FAIL
+// naming it — the rule doneListCommandRule spells for both paragraphs.
 func finalCheckWithVerifyCommand(command string) string {
 	quoted := strings.ReplaceAll(strconv.Quote(command), "%", "%%")
 	return `- oh-my-graph itself runs an independent build verification after the final
@@ -2278,10 +2280,12 @@ func finalCheckWithVerifyCommand(command string) string {
   It runs only the tests for what it changed (for Go, the changed packages,
   e.g. "go test ./internal/x/..."), with the matching Bash pattern in its
   allowed_tools.
-- If the goal's done list names a whole-suite command ("make local", "make
-  test", "make check", "go test ./..." or similar) that is NOT the verify
+- If the goal's done list names any command that is NOT the verify
   command shown above, character for character, the engine's run does not
-  cover it.` + doneListCommandRule() + `  If the named command IS that verify command, the same
+  cover it. That holds for every such command, not only a whole suite
+  ("make local", "go test ./..."): a script ("sh check.sh"), a linter
+  ("go vet ./...") and a single-package test ("go test ./internal/x/...")
+  count too.` + doneListCommandRule() + `  If the named command IS that verify command, the same
   exact text, no node runs it — the engine's run covers it.
 ` + branchEvidenceRule
 }
@@ -2303,7 +2307,10 @@ func doneListCommandRule() string {
   test", "pytest" and the like — no planned node can run it, so the final
   check node does NOT try to: it replies FAIL and states that this done
   item could not be run by any planned node, naming the command. Never a
-  PASS over a done item nothing ran.
+  PASS over a done item nothing ran. A different command that checks the
+  same thing — a stand-in, a re-implementation, a test that covers the
+  same rule — never satisfies a done item: the done item names a command,
+  and only that command running counts.
 `
 }
 

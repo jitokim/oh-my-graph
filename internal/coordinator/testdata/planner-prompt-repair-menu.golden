@@ -261,7 +261,10 @@ Rules:
   test", "pytest" and the like — no planned node can run it, so the final
   check node does NOT try to: it replies FAIL and states that this done
   item could not be run by any planned node, naming the command. Never a
-  PASS over a done item nothing ran.
+  PASS over a done item nothing ran. A different command that checks the
+  same thing — a stand-in, a re-implementation, a test that covers the
+  same rule — never satisfies a done item: the done item names a command,
+  and only that command running counts.
 - Beyond that, a check node's prompt must only assert things it can
   actually observe with the tools it declared, and must never be written
   as though its PASS meant the code works: even when that PASS requires a

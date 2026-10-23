@@ -560,8 +560,9 @@ func TestPlannerPromptAsksForASingleSinkWhenTheEngineRunsTheVerifyCommand(t *tes
 	}
 }
 
-// doneListSuiteRule is the with-command rule that hands a done-list whole-suite
-// command the verify command is not to the final check node (#392).
+// doneListSuiteRule is the with-command rule that hands a done-list command
+// the verify command is not to the final check node (#392; any such command
+// since #333, not only a whole suite).
 const doneListSuiteRule = "that is NOT the verify\n  command shown above, character for character"
 
 // TestPlannerPromptCarriesTheVerifyCommandText pins #392's second half through
@@ -648,6 +649,43 @@ func TestPlannerPromptFailsADoneListSuiteNoAllowedPatternCovers(t *testing.T) {
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("with a done-list \"npm test\", the planner prompt lacks %q", want)
+		}
+	}
+}
+
+// TestPlannerPromptSendsAnyDoneListCommandToTheFinalCheck is #333's bug: with
+// --verify-cmd the done-list rule named only whole-suite commands, so a
+// done-list script slipped past it, the planner wrote a stand-in check and the
+// goal looped "not met". The rule now covers every done-list command that is
+// not the verify command.
+func TestPlannerPromptSendsAnyDoneListCommandToTheFinalCheck(t *testing.T) {
+	prompt := plannerPromptNoMenu(t, "build it; done when sh check.sh passes", "make local")
+	for _, want := range []string{
+		"If the goal's done list names any command that is NOT the verify\n  command shown above",
+		"That holds for every such command, not only a whole suite",
+		"a script (\"sh check.sh\"), a linter\n  (\"go vet ./...\") and a single-package test",
+		"the FINAL check node runs that command once",
+		"check node does NOT try to: it replies FAIL",
+		"could not be run by any planned node, naming the command",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("with --verify-cmd \"make local\" and a done-list \"sh check.sh\", the planner prompt lacks %q", want)
+		}
+	}
+	if strings.Contains(prompt, "names a whole-suite command") {
+		t.Error("the with-command done-list rule is still restricted to whole-suite commands")
+	}
+}
+
+// TestPlannerPromptRefusesAStandInForADoneListCommand is #333's second half,
+// carried by doneListCommandRule into both spellings: a different command that
+// checks the same thing never satisfies a done item that names a command.
+func TestPlannerPromptRefusesAStandInForADoneListCommand(t *testing.T) {
+	const want = "A different command that checks the\n  same thing — a stand-in, a re-implementation, a test that covers the\n  same rule — never satisfies a done item: the done item names a command,\n  and only that command running counts."
+	for _, verifyCmd := range []string{"make local", ""} {
+		prompt := plannerPromptNoMenu(t, "build it; done when sh check.sh passes", verifyCmd)
+		if !strings.Contains(prompt, want) {
+			t.Errorf("verify-cmd %q: the planner prompt lacks the no-stand-in rule %q", verifyCmd, want)
 		}
 	}
 }
