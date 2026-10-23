@@ -665,6 +665,8 @@ func TestPlannerPromptSendsAnyDoneListCommandToTheFinalCheck(t *testing.T) {
 		"That holds for every such command, not only a whole suite",
 		"a script (\"sh check.sh\"), a linter\n  (\"go vet ./...\") and a single-package test",
 		"the FINAL check node runs that command once",
+		"check node does NOT try to: it replies FAIL",
+		"could not be run by any planned node, naming the command",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("with --verify-cmd \"make local\" and a done-list \"sh check.sh\", the planner prompt lacks %q", want)
