@@ -38,7 +38,9 @@ const gitWaitDelay = time.Second
 // snapshot's reads — Remotes, LsRemoteHeads and the local CommitAttributable
 // check — go through the same m.gitEnv/gitCmd path that m.git uses, so they
 // inherit the one exec.Command, the env scrub and the timeout, and add only
-// GIT_TERMINAL_PROMPT=0. That widens ADR 0005's "the git worktree commands
+// GIT_TERMINAL_PROMPT=0 — plus, for Remotes and LsRemoteHeads, GIT_SSH_COMMAND
+// running ssh in BatchMode unless the user chose an ssh command (see
+// snapshotEnv). That widens ADR 0005's "the git worktree commands
 // behind a node's worktree:" to cover them; it adds no spawner.
 //
 // Construct it in cmd/oh-my-graph and inject it; the Scheduler never builds
@@ -357,7 +359,7 @@ func (m *GitManager) git(ctx context.Context, args ...string) (string, error) {
 }
 
 // gitEnv is git with extra variables appended after the scrub — the remote
-// snapshot's noPromptEnv. It is the one place the timeout and the error
+// snapshot's noPromptEnv or snapshotEnv. It is the one place the timeout and the error
 // shape live, so the worktree and the remote-snapshot commands cannot drift
 // apart on either.
 func (m *GitManager) gitEnv(ctx context.Context, extraEnv []string, args ...string) (string, error) {
@@ -408,10 +410,35 @@ func (m *GitManager) gitCmd(ctx context.Context, extraEnv []string, args ...stri
 }
 
 // noPromptEnv is appended to every remote-snapshot command (ADR 0046 §2.3).
-// `git ls-remote` reaches the network, and a credential helper asking for a
-// password would otherwise hold the snapshot until gitTimeout; with the
-// variable set, git fails at once and the part is recorded unavailable.
+// `git ls-remote` reaches the network, and git asking for a password would
+// otherwise hold the snapshot until gitTimeout; with the variable set, git
+// fails at once and the part is recorded unavailable. It stops only git's
+// own prompt: ssh asks on /dev/tty by itself, which snapshotEnv covers.
 var noPromptEnv = []string{"GIT_TERMINAL_PROMPT=0"}
+
+// batchSSH is the ssh command snapshotEnv adds: BatchMode makes ssh fail at
+// once on an unknown host key or a passphrase-protected key with no agent,
+// instead of asking on /dev/tty until gitTimeout and reading what is typed.
+const batchSSH = "GIT_SSH_COMMAND=ssh -o BatchMode=yes"
+
+// snapshotEnv is the extra env of Remotes and LsRemoteHeads: noPromptEnv,
+// plus batchSSH unless the user chose an ssh command — GIT_SSH_COMMAND or
+// GIT_SSH in the environment the git child receives (the scrubbed environ),
+// or a non-empty core.sshCommand in the invocation repository's config. A
+// user's choice is left untouched. `git config` exits non-zero for a key that
+// is not set, and any failure to read it reads as unset: the safe direction
+// is never to prompt.
+func (m *GitManager) snapshotEnv(ctx context.Context) []string {
+	for _, kv := range childenv.Scrub(m.environ()) {
+		if k, _, _ := strings.Cut(kv, "="); k == "GIT_SSH_COMMAND" || k == "GIT_SSH" {
+			return noPromptEnv
+		}
+	}
+	if cmd, err := m.gitEnv(ctx, noPromptEnv, "config", "core.sshCommand"); err == nil && cmd != "" {
+		return noPromptEnv
+	}
+	return append(append([]string(nil), noPromptEnv...), batchSSH)
+}
 
 var _ RemoteObserver = (*GitManager)(nil)
 
@@ -419,7 +446,7 @@ var _ RemoteObserver = (*GitManager)(nil)
 // with no remotes returns an empty list and no error; one that is not a
 // repository at all returns git's own diagnosis.
 func (m *GitManager) Remotes(ctx context.Context) ([]Remote, error) {
-	out, err := m.gitEnv(ctx, noPromptEnv, "remote", "-v")
+	out, err := m.gitEnv(ctx, m.snapshotEnv(ctx), "remote", "-v")
 	if err != nil {
 		return nil, err
 	}
@@ -475,14 +502,14 @@ func parseRemotes(out string) ([]Remote, error) {
 
 // LsRemoteHeads runs `git ls-remote --heads <remote>` in the invocation
 // repository. It reaches the network, under gitTimeout and with prompting
-// off. A remote name starting with "-" is refused without running anything:
+// off — git's own and, unless the user chose an ssh command, ssh's. A remote name starting with "-" is refused without running anything:
 // the name comes from the repository's config, and git would read it as an
 // option (--upload-pack= names a program to run).
 func (m *GitManager) LsRemoteHeads(ctx context.Context, remote string) ([]RemoteHead, error) {
 	if remote == "" || strings.HasPrefix(remote, "-") {
 		return nil, fmt.Errorf("refusing to ls-remote remote %q: not a usable remote name", remote)
 	}
-	out, err := m.gitEnv(ctx, noPromptEnv, "ls-remote", "--heads", remote)
+	out, err := m.gitEnv(ctx, m.snapshotEnv(ctx), "ls-remote", "--heads", remote)
 	if err != nil {
 		return nil, err
 	}

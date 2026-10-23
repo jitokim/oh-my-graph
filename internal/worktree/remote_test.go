@@ -227,6 +227,150 @@ func TestGitManager_LsRemoteHeadsChildSeesScrubbedNoPromptEnv(t *testing.T) {
 	}
 }
 
+// envWithoutSSHChoice is the test process's environment minus any ssh
+// command the developer running the tests chose, so the cases below start
+// from "nothing set" and add only what they test.
+func envWithoutSSHChoice(extra ...string) func() []string {
+	return func() []string {
+		var env []string
+		for _, kv := range os.Environ() {
+			if k, _, _ := strings.Cut(kv, "="); k != "GIT_SSH_COMMAND" && k != "GIT_SSH" {
+				env = append(env, kv)
+			}
+		}
+		return append(env, extra...)
+	}
+}
+
+// probeLsRemoteEnv runs the real LsRemoteHeads against an ext:: remote whose
+// transport dumps the environment it inherited, and returns that env.
+func probeLsRemoteEnv(t *testing.T, m *GitManager, repo string) []string {
+	t.Helper()
+	dump := filepath.Join(t.TempDir(), "env.txt")
+	gitIn(t, repo, "config", "protocol.ext.allow", "always")
+	gitIn(t, repo, "remote", "add", "probe", "ext::sh -c env>"+dump)
+	if _, err := m.LsRemoteHeads(context.Background(), "probe"); err == nil {
+		t.Fatal("the probe transport speaks no protocol; ls-remote should have failed")
+	}
+	data, err := os.ReadFile(dump)
+	if err != nil {
+		t.Fatalf("the probe never ran: %v", err)
+	}
+	return strings.Split(strings.TrimSpace(string(data)), "\n")
+}
+
+// hasKey reports whether env carries key at all, whatever its value.
+func hasKey(env []string, key string) bool {
+	for _, kv := range env {
+		if k, _, _ := strings.Cut(kv, "="); k == key {
+			return true
+		}
+	}
+	return false
+}
+
+// TestGitManager_LsRemoteHeadsRunsSSHInBatchMode: with no ssh command chosen
+// anywhere, ls-remote's child runs ssh in BatchMode, so an unknown host key or
+// a locked key fails at once instead of asking on /dev/tty — and git's own
+// prompt stays off beside it.
+func TestGitManager_LsRemoteHeadsRunsSSHInBatchMode(t *testing.T) {
+	isolateGitConfig(t, "")
+	m, repo := newTestManager(t)
+	m.environ = envWithoutSSHChoice()
+
+	env := probeLsRemoteEnv(t, m, repo)
+	if got := lastValue(env, "GIT_SSH_COMMAND"); got != "ssh -o BatchMode=yes" {
+		t.Errorf("GIT_SSH_COMMAND = %q in ls-remote's child, want ssh -o BatchMode=yes", got)
+	}
+	if got := lastValue(env, "GIT_TERMINAL_PROMPT"); got != "0" {
+		t.Errorf("GIT_TERMINAL_PROMPT = %q in ls-remote's child, want 0", got)
+	}
+}
+
+// TestGitManager_LsRemoteHeadsKeepsTheUsersSSHChoice: a GIT_SSH_COMMAND or
+// GIT_SSH in the environment, or a core.sshCommand in the repository, is the
+// user's choice of ssh, and the snapshot adds no GIT_SSH_COMMAND over it.
+func TestGitManager_LsRemoteHeadsKeepsTheUsersSSHChoice(t *testing.T) {
+	t.Run("GIT_SSH_COMMAND set", func(t *testing.T) {
+		isolateGitConfig(t, "")
+		m, repo := newTestManager(t)
+		m.environ = envWithoutSSHChoice("GIT_SSH_COMMAND=ssh -i /keys/deploy")
+		env := probeLsRemoteEnv(t, m, repo)
+		if got := lastValue(env, "GIT_SSH_COMMAND"); got != "ssh -i /keys/deploy" {
+			t.Errorf("GIT_SSH_COMMAND = %q in ls-remote's child, want the user's own unchanged", got)
+		}
+	})
+	t.Run("GIT_SSH set", func(t *testing.T) {
+		isolateGitConfig(t, "")
+		m, repo := newTestManager(t)
+		m.environ = envWithoutSSHChoice("GIT_SSH=/usr/local/bin/my-ssh")
+		env := probeLsRemoteEnv(t, m, repo)
+		if hasKey(env, "GIT_SSH_COMMAND") {
+			t.Errorf("GIT_SSH_COMMAND = %q added over the user's GIT_SSH", lastValue(env, "GIT_SSH_COMMAND"))
+		}
+		if got := lastValue(env, "GIT_SSH"); got != "/usr/local/bin/my-ssh" {
+			t.Errorf("GIT_SSH = %q in ls-remote's child, want the user's own unchanged", got)
+		}
+	})
+	t.Run("core.sshCommand configured", func(t *testing.T) {
+		isolateGitConfig(t, "")
+		m, repo := newTestManager(t)
+		m.environ = envWithoutSSHChoice()
+		gitIn(t, repo, "config", "core.sshCommand", "ssh -i /keys/deploy")
+		env := probeLsRemoteEnv(t, m, repo)
+		if hasKey(env, "GIT_SSH_COMMAND") {
+			t.Errorf("GIT_SSH_COMMAND = %q added over the repository's core.sshCommand", lastValue(env, "GIT_SSH_COMMAND"))
+		}
+	})
+}
+
+// TestGitManager_RemotesRunsSSHInBatchMode pins that Remotes shares the
+// snapshot env, and that the decision is read from the scrubbed environ.
+func TestGitManager_RemotesRunsSSHInBatchMode(t *testing.T) {
+	isolateGitConfig(t, "")
+	m, repo := newTestManager(t)
+	m.environ = envWithoutSSHChoice()
+	if got := lastValue(m.snapshotEnv(context.Background()), "GIT_SSH_COMMAND"); got != "ssh -o BatchMode=yes" {
+		t.Errorf("snapshotEnv GIT_SSH_COMMAND = %q, want ssh -o BatchMode=yes", got)
+	}
+	gitIn(t, repo, "config", "core.sshCommand", "")
+	if got := lastValue(m.snapshotEnv(context.Background()), "GIT_SSH_COMMAND"); got != "ssh -o BatchMode=yes" {
+		t.Errorf("an empty core.sshCommand counts as unset: GIT_SSH_COMMAND = %q, want ssh -o BatchMode=yes", got)
+	}
+	if _, err := m.Remotes(context.Background()); err != nil {
+		t.Fatalf("Remotes: %v", err)
+	}
+}
+
+// TestGitManager_WorktreeCommandsGetNoSSHCommand: the BatchMode env is the
+// snapshot's alone. A post-checkout hook — a real child of Acquire's
+// `git worktree add` — dumps its env, which carries no GIT_SSH_COMMAND.
+func TestGitManager_WorktreeCommandsGetNoSSHCommand(t *testing.T) {
+	isolateGitConfig(t, "")
+	m, repo := newTestManager(t)
+	m.environ = envWithoutSSHChoice()
+	dump := filepath.Join(t.TempDir(), "env.txt")
+	hook := filepath.Join(repo, ".git", "hooks", "post-checkout")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nenv > '"+dump+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := m.Acquire(context.Background(), "lane"); err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	data, err := os.ReadFile(dump)
+	if err != nil {
+		t.Fatalf("the post-checkout hook never ran: %v", err)
+	}
+	env := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if hasKey(env, "GIT_SSH_COMMAND") {
+		t.Errorf("a worktree command's env gained GIT_SSH_COMMAND = %q", lastValue(env, "GIT_SSH_COMMAND"))
+	}
+	if hasKey(m.gitCmd(context.Background(), nil, "status").Env, "GIT_SSH_COMMAND") {
+		t.Error("gitCmd with no extra env added GIT_SSH_COMMAND")
+	}
+}
+
 // TestGitManager_TimeoutIsNamedOnlyWhenItsOwn pins the error gitEnv returns
 // when a git command outlives the manager's own deadline: "timed out after",
 // the reason the snapshot records. A deadline the caller's context carried
