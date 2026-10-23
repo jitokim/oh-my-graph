@@ -2298,8 +2298,10 @@ func finalCheckWithVerifyCommand(command string) string {
 // failed/<node-id>.out (NodeEvidence.FailedReply, which neither the assessor
 // nor any other node ever sees), never an artifact: a command no planned node
 // can run cannot be fixed by another cycle, so the loop stops with
-// StopUnrunnableDoneItem.
-const unrunnableDoneItemMarker = "UNRUNNABLE:"
+// StopUnrunnableDoneItem. The spelling is handoff.UnrunnableDoneItemMarker's,
+// because handoff.PersistFailure copies these lines to the front of that file
+// and must match the same text the prompt asks for and the scan looks for.
+const unrunnableDoneItemMarker = handoff.UnrunnableDoneItemMarker
 
 // doneListCommandRule is the done-list half both final-check spellings share
 // (#392, #399): it names plannedBashPatterns — never a retyped list — and says
