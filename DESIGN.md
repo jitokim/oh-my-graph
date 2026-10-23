@@ -1106,10 +1106,12 @@ recorded. Reading never stops the run: a failure, a timeout or "not a git
 repository" becomes an unavailable part. `ls-remote` reads the network on
 every run, each git command bounded by the 30 s git timeout, so one
 unreachable remote can add up to 30 s at the start and at the end of each
-leg. Ctrl-C cuts that short: an interrupt during the *before* snapshot ends
-the leg there, before any node starts (exit 1, as any interrupt before the
-first node), and once a leg is interrupted its *after* snapshot is not taken
-but recorded with both parts unavailable, reason `interrupted`.
+leg. Ctrl-C cuts that short: an interrupt during either snapshot, *before*
+or *after*, ends the leg as interrupted (exit 1, as any interrupt, even
+when its nodes ended at a gate); one during the *before* snapshot ends the
+leg there, before any node starts, and once a leg is interrupted its *after*
+snapshot is not taken, or cut short, but recorded with both parts
+unavailable, reason `interrupted`.
 
 **Entries.** The diff of two snapshots gives `remote_added`,
 `remote_removed`, `remote_url_changed`, `branch_created`, `branch_moved`
