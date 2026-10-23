@@ -52,12 +52,29 @@ func beginRemoteLeg(ctx context.Context, runID string, recorder *runstate.Snapsh
 }
 
 // end takes the leg's after snapshot, diffs it against the before with the
-// §5.1 check, and records it. It runs on a fresh context: the leg's own may
-// be cancelled (halt-on-fail, Ctrl-C), and the leg still ended.
-func (l *remoteLeg) end() {
+// §5.1 check, and records it. runCtx is the leg's own context: once the user
+// has interrupted the run (Ctrl-C, SIGTERM) the after snapshot is not taken
+// — an unreachable remote would hold the exit for the git timeout — and both
+// parts are recorded unavailable, "interrupted", so the record never reads
+// "no change". Otherwise it runs on a fresh context, since a halt-on-fail
+// cancels only the scheduler's own, and the leg still ended.
+func (l *remoteLeg) end(runCtx context.Context) {
 	ctx := context.Background()
-	l.changes.EndLeg(worktree.TakeRemoteSnapshot(ctx, l.obs), worktree.RunCommitCheck(ctx, l.obs, l.baseSHA))
+	after := interruptedRemoteSnapshot
+	if runCtx.Err() == nil {
+		after = worktree.TakeRemoteSnapshot(ctx, l.obs)
+	}
+	l.changes.EndLeg(after, worktree.RunCommitCheck(ctx, l.obs, l.baseSHA))
 	l.record()
+}
+
+// remoteSnapshotInterrupted is the reason of an after snapshot not taken
+// because the run was interrupted.
+const remoteSnapshotInterrupted = "interrupted"
+
+var interruptedRemoteSnapshot = runstate.RemoteSnapshot{
+	Remotes:  runstate.RemotesSnapshot{Status: runstate.RemotePartUnavailable, Reason: remoteSnapshotInterrupted},
+	Branches: runstate.BranchesSnapshot{Status: runstate.RemotePartUnavailable, Reason: remoteSnapshotInterrupted},
 }
 
 func (l *remoteLeg) record() {

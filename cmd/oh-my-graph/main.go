@@ -1285,8 +1285,18 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	// The leg's remote record brackets the scheduler (ADR 0046 §2.1): a
 	// report only, so a remote it cannot read never stops the leg.
 	remote := beginRemoteLeg(ctx, runID, recorder, baseSHA, nil)
+	// An interrupt during the before snapshot ends the leg here, as one before
+	// any node started: the scheduler is never entered, the after snapshot is
+	// recorded interrupted, and the leg closes failed — an auto run's planning
+	// run_started is already on the stream, and the empty close above would
+	// leave it open.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		remote.end(ctx)
+		closeLeg(leg, runfeed.OutcomeFailed)
+		return ctxErr
+	}
 	runErr := scheduler.Run(ctx, g, h, led)
-	remote.end()
+	remote.end(ctx)
 	// Cleanup runs on a fresh context: the run's own may already be cancelled
 	// (halt-on-fail, Ctrl-C), and a halted run is exactly when leftover
 	// worktrees still need tearing down.

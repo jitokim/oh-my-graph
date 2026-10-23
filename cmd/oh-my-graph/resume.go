@@ -819,8 +819,14 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// changed while the run was stopped is recorded between the legs and
 	// never attributed.
 	remote := beginRemoteLeg(ctx, runID, recorder, snap.RunBaseSHA, snap.RemoteChanges)
+	// An interrupt during the before snapshot ends the leg before any node
+	// starts, as in executeGraph.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		remote.end(ctx)
+		return ctxErr
+	}
 	runErr := scheduler.Run(ctx, g, h, led)
-	remote.end()
+	remote.end(ctx)
 	reportWorktreeCleanup(os.Stderr, worktrees.Cleanup(context.Background()))
 
 	fmt.Fprintln(os.Stdout)
