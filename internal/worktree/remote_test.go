@@ -3,6 +3,7 @@ package worktree
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -324,22 +325,72 @@ func TestGitManager_LsRemoteHeadsKeepsTheUsersSSHChoice(t *testing.T) {
 	})
 }
 
-// TestGitManager_RemotesRunsSSHInBatchMode pins that Remotes shares the
-// snapshot env, and that the decision is read from the scrubbed environ.
-func TestGitManager_RemotesRunsSSHInBatchMode(t *testing.T) {
-	isolateGitConfig(t, "")
-	m, repo := newTestManager(t)
-	m.environ = envWithoutSSHChoice()
-	if got := lastValue(m.snapshotEnv(context.Background()), "GIT_SSH_COMMAND"); got != "ssh -o BatchMode=yes" {
-		t.Errorf("snapshotEnv GIT_SSH_COMMAND = %q, want ssh -o BatchMode=yes", got)
+// probeRemotesEnv runs the real Remotes with a git on PATH that dumps the
+// environment `git remote -v` was started with before handing over to the
+// real git, and returns that env. `git remote -v` spawns nothing of its own,
+// so the git process itself is the child to observe; os/exec resolves "git"
+// against the test process's PATH, not cmd.Env, which is what lets the
+// wrapper in.
+func probeRemotesEnv(t *testing.T, m *GitManager) []string {
+	t.Helper()
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("no git on PATH: %v", err)
 	}
-	gitIn(t, repo, "config", "core.sshCommand", "")
-	if got := lastValue(m.snapshotEnv(context.Background()), "GIT_SSH_COMMAND"); got != "ssh -o BatchMode=yes" {
-		t.Errorf("an empty core.sshCommand counts as unset: GIT_SSH_COMMAND = %q, want ssh -o BatchMode=yes", got)
+	bin := t.TempDir()
+	dump := filepath.Join(t.TempDir(), "env.txt")
+	script := "#!/bin/sh\nif [ \"$1\" = remote ]; then env > '" + dump + "'; fi\nexec '" + realGit + "' \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
 	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
 	if _, err := m.Remotes(context.Background()); err != nil {
 		t.Fatalf("Remotes: %v", err)
 	}
+	data, err := os.ReadFile(dump)
+	if err != nil {
+		t.Fatalf("the git wrapper never saw `git remote`: %v", err)
+	}
+	return strings.Split(strings.TrimSpace(string(data)), "\n")
+}
+
+// TestGitManager_RemotesRunsSSHInBatchMode: `git remote -v` runs with the
+// same env as ls-remote — BatchMode ssh and git's prompt off when no ssh
+// command is chosen (an empty core.sshCommand counts as unset), and no
+// GIT_SSH_COMMAND over a GIT_SSH that only the injected environ carries.
+func TestGitManager_RemotesRunsSSHInBatchMode(t *testing.T) {
+	t.Run("nothing set", func(t *testing.T) {
+		isolateGitConfig(t, "")
+		m, _ := newTestManager(t)
+		m.environ = envWithoutSSHChoice()
+		env := probeRemotesEnv(t, m)
+		if got := lastValue(env, "GIT_SSH_COMMAND"); got != "ssh -o BatchMode=yes" {
+			t.Errorf("GIT_SSH_COMMAND = %q in git remote's env, want ssh -o BatchMode=yes", got)
+		}
+		if got := lastValue(env, "GIT_TERMINAL_PROMPT"); got != "0" {
+			t.Errorf("GIT_TERMINAL_PROMPT = %q in git remote's env, want 0", got)
+		}
+	})
+	t.Run("empty core.sshCommand", func(t *testing.T) {
+		isolateGitConfig(t, "")
+		m, repo := newTestManager(t)
+		m.environ = envWithoutSSHChoice()
+		gitIn(t, repo, "config", "core.sshCommand", "")
+		env := probeRemotesEnv(t, m)
+		if got := lastValue(env, "GIT_SSH_COMMAND"); got != "ssh -o BatchMode=yes" {
+			t.Errorf("an empty core.sshCommand counts as unset: GIT_SSH_COMMAND = %q, want ssh -o BatchMode=yes", got)
+		}
+	})
+	t.Run("GIT_SSH in the injected environ", func(t *testing.T) {
+		isolateGitConfig(t, "")
+		m, _ := newTestManager(t)
+		m.environ = envWithoutSSHChoice("GIT_SSH=/usr/local/bin/my-ssh")
+		env := probeRemotesEnv(t, m)
+		if hasKey(env, "GIT_SSH_COMMAND") {
+			t.Errorf("GIT_SSH_COMMAND = %q added over the user's GIT_SSH", lastValue(env, "GIT_SSH_COMMAND"))
+		}
+	})
 }
 
 // TestGitManager_WorktreeCommandsGetNoSSHCommand: the BatchMode env is the

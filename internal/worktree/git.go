@@ -359,9 +359,9 @@ func (m *GitManager) git(ctx context.Context, args ...string) (string, error) {
 }
 
 // gitEnv is git with extra variables appended after the scrub — the remote
-// snapshot's noPromptEnv or snapshotEnv. It is the one place the timeout and the error
-// shape live, so the worktree and the remote-snapshot commands cannot drift
-// apart on either.
+// snapshot's noPromptEnv or snapshotEnv. It is the one place the timeout and
+// the error shape live, so the worktree and the remote-snapshot commands
+// cannot drift apart on either.
 func (m *GitManager) gitEnv(ctx context.Context, extraEnv []string, args ...string) (string, error) {
 	cmdCtx, cancel := context.WithTimeout(ctx, m.timeout)
 	defer cancel()
@@ -502,9 +502,10 @@ func parseRemotes(out string) ([]Remote, error) {
 
 // LsRemoteHeads runs `git ls-remote --heads <remote>` in the invocation
 // repository. It reaches the network, under gitTimeout and with prompting
-// off — git's own and, unless the user chose an ssh command, ssh's. A remote name starting with "-" is refused without running anything:
-// the name comes from the repository's config, and git would read it as an
-// option (--upload-pack= names a program to run).
+// off — git's own and, unless the user chose an ssh command, ssh's. A remote
+// name starting with "-" is refused without running anything: the name comes
+// from the repository's config, and git would read it as an option
+// (--upload-pack= names a program to run).
 func (m *GitManager) LsRemoteHeads(ctx context.Context, remote string) ([]RemoteHead, error) {
 	if remote == "" || strings.HasPrefix(remote, "-") {
 		return nil, fmt.Errorf("refusing to ls-remote remote %q: not a usable remote name", remote)
