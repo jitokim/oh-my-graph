@@ -820,9 +820,10 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// never attributed.
 	remote := beginRemoteLeg(ctx, runID, recorder, snap.RunBaseSHA, snap.RemoteChanges)
 	// An interrupt during the before snapshot ends the leg before any node
-	// starts, as in executeGraph.
+	// starts, its record printed, as in executeGraph.
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		remote.end(ctx)
+		remote.print(os.Stdout)
 		return ctxErr
 	}
 	runErr := scheduler.Run(ctx, g, h, led)

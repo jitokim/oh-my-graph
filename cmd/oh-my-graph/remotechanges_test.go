@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -488,6 +489,7 @@ func TestRunGraph_AnInterruptDuringTheRemoteSnapshotStartsNoNode(t *testing.T) {
 			if obs.remotesCalls != 1 {
 				t.Errorf("Remotes ran %d times, want once: the after snapshot must not be taken", obs.remotesCalls)
 			}
+			assertInterruptedRecordPrinted(t, out)
 
 			rc := remoteRunSnapshot(t, "run-1").RemoteChanges
 			if rc == nil || len(rc.Legs) != 1 || rc.Legs[0].After == nil {
@@ -503,6 +505,21 @@ func TestRunGraph_AnInterruptDuringTheRemoteSnapshotStartsNoNode(t *testing.T) {
 				t.Errorf("changes = %+v, want both parts not compared, never none observed", d)
 			}
 		})
+	}
+}
+
+// assertInterruptedRecordPrinted checks that a leg ended by an interrupt
+// during its before snapshot printed its record, as the normal path does
+// after the ledger: no part compared, and each part's line saying why.
+func assertInterruptedRecordPrinted(t *testing.T, out string) {
+	t.Helper()
+	if !strings.Contains(out, "\nRemote changes: none observed in the parts compared (observed: none)\n") {
+		t.Errorf("the early exit did not print its remote record:\n%s", out)
+	}
+	for _, part := range []string{"remotes", "branches"} {
+		if !regexp.MustCompile(`(?m)^  not compared: ` + part + `: .*after(: | \()interrupted\)?$`).MatchString(out) {
+			t.Errorf("the early exit printed no not-compared line for %s, reason interrupted:\n%s", part, out)
+		}
 	}
 }
 
@@ -545,7 +562,7 @@ func TestResume_AnInterruptDuringTheRemoteSnapshotStartsNoNode(t *testing.T) {
 
 			obs := &interruptingObserver{FakeRemoteObserver: originObserver(), interrupt: sigint(t), during: tc.during}
 			useRemoteObserver(t, obs, remoteBaseSHA)
-			captureStdout(t, func() {
+			out := captureStdout(t, func() {
 				err = executeResume(parseResumeFlags(t, []string{"run-1", "--approve", "approve"}), fake, nil)
 			})
 			if !errors.Is(err, context.Canceled) || err.Error() != "context canceled" {
@@ -560,6 +577,7 @@ func TestResume_AnInterruptDuringTheRemoteSnapshotStartsNoNode(t *testing.T) {
 			if obs.remotesCalls != 1 {
 				t.Errorf("Remotes ran %d times on the resumed leg, want once: the after snapshot must not be taken", obs.remotesCalls)
 			}
+			assertInterruptedRecordPrinted(t, out)
 
 			rc := remoteRunSnapshot(t, "run-1").RemoteChanges
 			if rc == nil || len(rc.Legs) != 2 || rc.Legs[1].After == nil {

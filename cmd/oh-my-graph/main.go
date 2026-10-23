@@ -1287,11 +1287,13 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	remote := beginRemoteLeg(ctx, runID, recorder, baseSHA, nil)
 	// An interrupt during the before snapshot ends the leg here, as one before
 	// any node started: the scheduler is never entered, the after snapshot is
-	// recorded interrupted, and the leg closes failed — an auto run's planning
-	// run_started is already on the stream, and the empty close above would
-	// leave it open.
+	// recorded interrupted and the record printed as on the normal path, so
+	// the user sees why nothing was compared, and the leg closes failed — an
+	// auto run's planning run_started is already on the stream, and the empty
+	// close above would leave it open.
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		remote.end(ctx)
+		remote.print(os.Stdout)
 		closeLeg(leg, runfeed.OutcomeFailed)
 		return ctxErr
 	}
