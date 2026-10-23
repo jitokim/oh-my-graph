@@ -637,15 +637,16 @@ func TestRunGoal_FailedRunStillIteratesAndReportsHonestly(t *testing.T) {
 }
 
 // unrunnableEvidence is a failed cycle whose final check, the sink, replied
-// FAIL with the given artifact, beside a non-sink work node.
-func unrunnableEvidence(runID, sinkArtifact string) CycleEvidence {
+// FAIL with the given reply — carried as FailedReply, since a failed node
+// registers no artifact — beside a non-sink work node.
+func unrunnableEvidence(runID, sinkReply string) CycleEvidence {
 	return CycleEvidence{
 		RunID:      runID,
 		RunPassed:  false,
 		RunCostUSD: 0.1,
 		Nodes: []NodeEvidence{
 			{ID: "work", Verdict: "PASS", Artifact: "did the work"},
-			{ID: "final-check", Verdict: "FAIL", Sink: true, Artifact: sinkArtifact},
+			{ID: "final-check", Verdict: "FAIL", Sink: true, FailedReply: sinkReply},
 		},
 	}
 }
@@ -739,15 +740,18 @@ func TestRunGoal_UnrunnableInProseDoesNotStopTheLoop(t *testing.T) {
 	}
 }
 
-// With no node marked a sink (evidence built without Sink set) every artifact
-// is scanned.
-func TestRunGoal_UnrunnableWithoutSinksScansEveryArtifact(t *testing.T) {
+// With no node marked a sink (evidence built without Sink set) every FAILed
+// node's reply is scanned.
+func TestRunGoal_UnrunnableWithoutSinksScansEveryFailedReply(t *testing.T) {
 	fake := newGoalFake(map[string]runner.NodeOutcome{
 		"plan-1":   {Result: validSpec},
 		"assess-1": {Result: assessNotMetReply},
 	})
 	evidence := passingEvidence("r1", 0.1)
-	evidence.Nodes[0].Artifact = "FAIL\nUNRUNNABLE: npm test\n"
+	evidence.RunPassed = false
+	evidence.Nodes[0].Verdict = "FAIL"
+	evidence.Nodes[0].Artifact = ""
+	evidence.Nodes[0].FailedReply = "FAIL\nUNRUNNABLE: npm test\n"
 	executor := &fakeExecutor{evidence: map[int]CycleEvidence{1: evidence}}
 
 	result, err := New(fake).RunGoal(context.Background(), "make the tests green", GoalOptions{MaxCycles: 3}, executor.execute)
@@ -767,7 +771,6 @@ func TestRunGoal_MetGoalStopsAsGoalMetDespiteTheMarker(t *testing.T) {
 		"assess-1": {Result: assessMetReply},
 	})
 	evidence := unrunnableEvidence("r1", "UNRUNNABLE: sh scripts/x.sh\n")
-	evidence.RunPassed = true
 	executor := &fakeExecutor{evidence: map[int]CycleEvidence{1: evidence}}
 
 	result, err := New(fake).RunGoal(context.Background(), "make the tests green", GoalOptions{MaxCycles: 3}, executor.execute)
@@ -780,4 +783,62 @@ func TestRunGoal_MetGoalStopsAsGoalMetDespiteTheMarker(t *testing.T) {
 	if len(result.UnrunnableCommands) != 0 {
 		t.Errorf("unrunnable commands = %q, want none on a met goal", result.UnrunnableCommands)
 	}
+}
+
+// assertUnrunnableDidNotStop runs a goal whose cycle 1 carries evidence, with
+// a next cycle that meets the goal, and checks the marker did not end the loop
+// after cycle 1: a second cycle ran and no unrunnable command is recorded.
+func assertUnrunnableDidNotStop(t *testing.T, evidence CycleEvidence) {
+	t.Helper()
+	fake := newGoalFake(map[string]runner.NodeOutcome{
+		"plan-1":   {Result: validSpec},
+		"assess-1": {Result: assessNotMetReply},
+		"plan-2":   {Result: validSpec},
+		"assess-2": {Result: assessMetReply},
+	})
+	executor := &fakeExecutor{evidence: map[int]CycleEvidence{
+		1: evidence,
+		2: passingEvidence("r2", 0.1),
+	}}
+
+	result, err := New(fake).RunGoal(context.Background(), "make the tests green", GoalOptions{MaxCycles: 3}, executor.execute)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Stop == StopUnrunnableDoneItem {
+		t.Errorf("stop = %q, want the loop to run on", result.Stop)
+	}
+	if len(executor.plans) <= 1 || len(result.Cycles) <= 1 {
+		t.Errorf("%d cycles planned, %d reported, want more than 1", len(executor.plans), len(result.Cycles))
+	}
+	if len(result.UnrunnableCommands) != 0 {
+		t.Errorf("unrunnable commands = %q, want none", result.UnrunnableCommands)
+	}
+}
+
+// A doing node's artifact belongs to a node that PASSED: a marker line in it
+// (a model mistake, or the brief quoted back) stops nothing, even beside a
+// sink check that FAILed for another reason (#333).
+func TestRunGoal_UnrunnableInADoingNodeArtifactDoesNotStopTheLoop(t *testing.T) {
+	evidence := unrunnableEvidence("r1", "FAIL\nthe tests are still red\n")
+	evidence.Nodes[0].Artifact = "did the work\nUNRUNNABLE: sh x.sh\n"
+	assertUnrunnableDidNotStop(t, evidence)
+}
+
+// A FAILed sink check whose reply mentions UNRUNNABLE only inside a sentence,
+// never at the start of a line in the marker form, stops nothing (#333).
+func TestRunGoal_UnrunnableInAFailedReplySentenceDoesNotStopTheLoop(t *testing.T) {
+	evidence := unrunnableEvidence("r1", "FAIL\nnothing here is UNRUNNABLE: sh x.sh ran and failed\n")
+	assertUnrunnableDidNotStop(t, evidence)
+}
+
+// A sink check that PASSED is not a check that failed on an unrunnable
+// command: a marker line in its artifact stops nothing while the goal is
+// still unmet (#333).
+func TestRunGoal_UnrunnableInAPassedSinkArtifactDoesNotStopTheLoop(t *testing.T) {
+	evidence := unrunnableEvidence("r1", "")
+	evidence.RunPassed = true
+	evidence.Nodes[1].Verdict = "PASS"
+	evidence.Nodes[1].Artifact = "PASS\nUNRUNNABLE: sh x.sh\n"
+	assertUnrunnableDidNotStop(t, evidence)
 }

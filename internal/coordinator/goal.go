@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/jitokim/oh-my-graph/internal/runner"
+	"github.com/jitokim/oh-my-graph/internal/runstate"
 )
 
 // ErrPlanDeclined is the sentinel an ExecuteCycle callback returns when a
@@ -283,12 +284,15 @@ func (c *Coordinator) RunGoal(ctx context.Context, goal string, opts GoalOptions
 // that starts with it (after trimming), in first-seen order, empty values
 // skipped and duplicates dropped. Only sinks are read — the final check node
 // is the plan's sink — unless no node is marked a sink (evidence built without
-// Sink set), in which case every node is. Each considered node's Artifact AND
-// FailedReply are scanned: a check that names an unrunnable command has
-// usually FAILED, and a failed node leaves no artifact — its reply lives only
-// in failed/<node-id>.out, which this scan reads and nothing renders. The
-// marker must open the line, so a reply that only mentions it in prose stops
-// nothing.
+// Sink set), in which case every node is. Only a considered node whose Verdict
+// is FAIL counts, and only its FailedReply is scanned, never an Artifact: the
+// marker means something only in the reply of a final check that FAILED
+// because a done-list command cannot be run. A failed node leaves no artifact
+// — its reply lives only in failed/<node-id>.out, which this scan reads and
+// nothing renders — and an artifact belongs to a node that PASSED, so a marker
+// line a passing node wrote (a model mistake, or a doing node quoting the
+// brief) stops nothing. The marker must open the line, so a reply that only
+// mentions it in prose stops nothing either.
 func unrunnableCommands(nodes []NodeEvidence) []string {
 	anySink := false
 	for _, node := range nodes {
@@ -303,7 +307,10 @@ func unrunnableCommands(nodes []NodeEvidence) []string {
 		if anySink && !node.Sink {
 			continue
 		}
-		for _, line := range strings.Split(node.Artifact+"\n"+node.FailedReply, "\n") {
+		if node.Verdict != string(runstate.VerdictFail) {
+			continue
+		}
+		for _, line := range strings.Split(node.FailedReply, "\n") {
 			rest, ok := strings.CutPrefix(strings.TrimSpace(line), unrunnableDoneItemMarker)
 			if !ok {
 				continue
