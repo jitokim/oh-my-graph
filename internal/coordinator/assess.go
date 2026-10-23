@@ -165,6 +165,12 @@ type NodeEvidence struct {
 	// Sink is true for a node no other node in the plan depends on — the
 	// plan's final checks, whose artifacts the assessor budgets first (#408).
 	Sink bool
+	// FailedReply holds a FAILED node's own reply, read from the run's
+	// failed/<node-id>.out (a failed node registers no artifact, so Artifact
+	// stays ""). It is used only to find the UNRUNNABLE: marker a failed final
+	// check writes (#333): the assessor never renders it, and it never reaches
+	// another node's prompt.
+	FailedReply string
 	// Verification is the engine's own record of the node's
 	// success_check.verify command, as the snapshot holds it (#332); nil for
 	// a node that declares no verify or whose kept attempt never reached it.

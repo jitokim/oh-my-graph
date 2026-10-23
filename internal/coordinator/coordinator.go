@@ -2184,6 +2184,7 @@ func plannerPrompt(goal string, inputKeys []string, verifyCommand string, offere
 		finalCheck,
 		strings.Join(plannerRetryCauses, ", "),
 		menu,
+		strconv.Quote(plannedReviewGatingPattern),
 	)
 	if startCommit != "" {
 		prompt += fmt.Sprintf(plannerStartCommitTemplate, startCommit)
@@ -2290,6 +2291,18 @@ func finalCheckWithVerifyCommand(command string) string {
 ` + branchEvidenceRule
 }
 
+// unrunnableDoneItemMarker opens each line of a final check node's FAIL reply
+// that names a done-list command no plannedBashPatterns entry covers (#333).
+// doneListCommandRule renders it into the prompt, and RunGoal scans the sinks
+// for it — only a sink whose verdict is FAIL, and only the reply it left in
+// failed/<node-id>.out (NodeEvidence.FailedReply, which neither the assessor
+// nor any other node ever sees), never an artifact: a command no planned node
+// can run cannot be fixed by another cycle, so the loop stops with
+// StopUnrunnableDoneItem. The spelling is handoff.UnrunnableDoneItemMarker's,
+// because handoff.PersistFailure copies these lines to the front of that file
+// and must match the same text the prompt asks for and the scan looks for.
+const unrunnableDoneItemMarker = handoff.UnrunnableDoneItemMarker
+
 // doneListCommandRule is the done-list half both final-check spellings share
 // (#392, #399): it names plannedBashPatterns — never a retyped list — and says
 // what the final check node does with a done-list command one of them covers
@@ -2311,6 +2324,13 @@ func doneListCommandRule() string {
   same thing — a stand-in, a re-implementation, a test that covers the
   same rule — never satisfies a done item: the done item names a command,
   and only that command running counts.
+  When the final check node replies FAIL because a done item names a
+  command none of those patterns covers, its reply also carries one line
+  per such command, at the start of the line and with no markdown, in
+  exactly this form:
+      ` + unrunnableDoneItemMarker + ` <the command as the goal wrote it>
+  The engine reads those lines and stops the goal loop: no new cycle can
+  run a command the planned patterns do not cover.
 `
 }
 
@@ -2542,6 +2562,17 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
 // get right, and Quote gets it right.
 const plannedVerdictPattern = "^[*_`\\s]*PASS[*_`\\s]*$"
 
+// plannedReviewGatingPattern is the verdict regex the planner is told to give a
+// node that declares a feedback arc: the GATING pattern the shipped review
+// fragments document (ADR 0043, graphs/fragments/review-style.yaml), which
+// accepts CLEAN and MINOR: and fails only FINDINGS:, so a cosmetic finding is
+// recorded instead of buying a whole round (#288). It is a prefix pattern, not
+// a whole-reply pin, because the reply goes on to list its items.
+// TestPlannedReviewGatingPatternMatchesReviewFragments holds it byte-identical
+// to the fragments' spelling. Like plannedVerdictPattern it reaches the
+// planner through strconv.Quote.
+const plannedReviewGatingPattern = "^[*_`\\s]*(MINOR[*_`\\s]*:|CLEAN\\b)"
+
 const plannerPromptTemplate = `You are the planning coordinator for oh-my-graph, an orchestrator that runs
 each node of a DAG through its selected model CLI.
 
@@ -2620,7 +2651,24 @@ prose before or after:
   open; raise a NEW finding only where the rework changed the work or where
   missing it last round was a real mistake. A re-run reviewer is a fresh
   session, and without its earlier findings it finds new nits every round
-  until the rounds are spent. Keep max small (2): every round
+  until the rounds are spent. The reviewing node's reply starts with
+  exactly one of the bare tokens CLEAN, MINOR: or FINDINGS: as its very
+  first characters — no markdown emphasis ("**CLEAN**" is WRONG), nothing
+  before the token. It judges each item by whether it would merge with it
+  unfixed: a defect, wrong behaviour, or a changed behaviour with no test
+  is blocking (FINDINGS:); naming, wording, line wrapping and style are
+  minor (MINOR:). Wording is minor only while what it says is true: a
+  claim that is not true — in code, a comment or docs — and anything that
+  changes behaviour or correctness is FINDINGS:, never MINOR:, however
+  small the fix; MINOR: is only for an item whose meaning is already
+  right and only its form differs. A reply's verdict is its worst item.
+  On a re-run, an item rated MINOR: in {{ self.previous }} stays minor
+  unless the rework changed the code that item concerns, or the item is a
+  claim that is not true (that was never minor). Its success_check is
+  {"exit_zero": true, "result_matches": %[7]s}
+  so CLEAN and MINOR: pass (a MINOR: reply records its items) and only
+  FINDINGS: fails and fires the arc. Do not gate it on CLEAN alone: that
+  re-runs the implementer over a nit. Keep max small (2): every round
   re-runs the whole rerun→reviewer path at full cost, and a max above 3
   is rejected outright. The arc must point
   backward along depends_on, no node outside the loop may depend on a

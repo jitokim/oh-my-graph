@@ -690,6 +690,20 @@ func TestPlannerPromptRefusesAStandInForADoneListCommand(t *testing.T) {
 	}
 }
 
+// TestPlannerPromptCarriesTheUnrunnableDoneItemMarker is #333's engine half:
+// both spellings tell the final check node to name an uncovered done-list
+// command on a line opened by unrunnableDoneItemMarker, the line RunGoal
+// scans for to stop the loop.
+func TestPlannerPromptCarriesTheUnrunnableDoneItemMarker(t *testing.T) {
+	want := "\n      " + unrunnableDoneItemMarker + " <the command as the goal wrote it>\n"
+	for _, verifyCmd := range []string{"make local", ""} {
+		prompt := plannerPromptNoMenu(t, "build it; done when npm test passes", verifyCmd)
+		if !strings.Contains(prompt, want) {
+			t.Errorf("verify-cmd %q: the planner prompt lacks the marker line %q", verifyCmd, want)
+		}
+	}
+}
+
 // TestPlannerPromptWithoutVerifyCommandNamesTheAllowedBashPatterns is #399:
 // with no --verify-cmd the planner is still told exactly which Bash patterns a
 // planned node may declare, rendered from plannedBashPatterns().
