@@ -178,7 +178,7 @@ its own injected interface:
 |---|---|---|
 | `internal/runner.CLIRunner` | a node's model CLI subprocess (`claude -p` or `codex exec`) | `runner.NodeRunner` |
 | `internal/verify.ShellVerifier` | a node's `success_check.verify` command | `verify.Verifier` |
-| `internal/worktree.GitManager` | the `git worktree` commands behind a node's `worktree:` | `worktree.Provider` |
+| `internal/worktree.GitManager` | the `git` commands the engine issues against the invocation repository: the `git worktree` commands behind a node's `worktree:`, and the remote snapshot's reads (ADR 0005 scope amendment, [#410](https://github.com/jitokim/oh-my-graph/issues/410)) | `worktree.Provider`, `worktree.RemoteObserver` |
 | `internal/browser.ExecOpener` | the `open`/`xdg-open` launch of the `serve` URL | `browser.Opener` |
 
 ```go
@@ -201,7 +201,8 @@ type Opener interface {
 
 Every other package — the scheduler, the CLI, handoff, ledger, coordinator —
 depends only on those interfaces. That is what keeps the entire engine testable
-via `FakeRunner`, `FakeVerifier`, `worktree.FakeManager` and
+via `FakeRunner`, `FakeVerifier`, `worktree.FakeManager` (with
+`worktree.FakeRemoteObserver` for the remote snapshot) and
 `browser.FakeOpener` with zero real spawns, and it keeps the
 subscription-auth env scrub (`internal/childenv`) to exactly one call site
 per spawner.

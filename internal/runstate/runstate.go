@@ -755,6 +755,25 @@ type Snapshot struct {
 	// without --verify-cmd, so such a snapshot is byte for byte what it was
 	// before. See VerifyPin.
 	VerifyPins []VerifyPin `json:"verify_pins,omitempty"`
+	// RunBaseSHA is the invocation repository's HEAD read at the start of
+	// the run's first leg (ADR 0046 §5.1): the base commit B that the remote
+	// change record's attribution check excludes, so a commit already in the
+	// history the run started from never counts as the run's. Carried across
+	// resume, so every leg checks against the same B. Absent — and then no
+	// entry can be attributed — on a run that predates it or that started
+	// outside a repository.
+	RunBaseSHA string `json:"run_base_sha,omitempty"`
+	// RemoteChanges is the remote change record (ADR 0046 §2.2): each leg's
+	// before and after snapshot of the invocation repository's remotes and
+	// remote branch refs, their entries, and the between-legs entries. nil —
+	// and absent — on a run that took no snapshot, so such a snapshot is byte
+	// for byte what it was before.
+	//
+	// Additive and optional, so Schema stays 3, by the rule
+	// SchemaWithConventions states: it is a report. An older binary that
+	// drops it loses the report and runs the rest of the run exactly as this
+	// one does. RunBaseSHA is the same: nothing but this record reads it.
+	RemoteChanges *RemoteChanges `json:"remote_changes,omitempty"`
 
 	// Nodes is the per-node completion record, keyed by node id. Every node that
 	// has reached a terminal verdict on any leg so far appears here; CompletedNodes

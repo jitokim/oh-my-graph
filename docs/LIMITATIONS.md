@@ -541,6 +541,42 @@ has no open issue behind it.
   refused at preflight instead of failing at once. The refusal itself is
   unchanged.
   ([#298](https://github.com/jitokim/oh-my-graph/issues/298))
+- **The remote change record sees two snapshots of one repository, and
+  only reports.** `run`, `auto` and `resume` record what changed on the
+  invocation repository's remotes between a snapshot before each leg's first
+  node and one after its last (`remote_changes` in `state.json`, printed after
+  the ledger table). It changes no verdict and no exit code: a push the goal
+  forbade still exits 0. What it does not see:
+  <br>**Other repositories.** A node that pushes from a clone under `/tmp`
+  changes nothing the snapshot reads.
+  <br>**A change reverted before the leg ends.** A branch pushed and deleted
+  within one leg leaves the two snapshots equal.
+  <br>**Who made a change.** A human who pushes or adds a remote while the run
+  runs looks the same as a node doing it. The `run_commit` label says only
+  that the new sha is reachable from one of the run's own `omg/<run-id>/`
+  branches and not from `run_base_sha`. A node that fetches and merges
+  `origin/main` makes a maintainer's commit pass that check, so `main` moving
+  to it reads "points at a commit this run made".
+  <br>**A run commit reachable only from another branch.** A commit a node made
+  on a branch it renamed, or with no `worktree:` on the invocation
+  repository's own branch, is labelled `not_attributable`.
+  <br>**Anything outside configured remotes and remote branch heads:** pull
+  requests, tags, releases, comments and CI state. Pull requests are not
+  observed at all; the `gh` half of the design is not built.
+  <br>**A remote that cannot be read.** One failed `ls-remote` makes the whole
+  branches part `unavailable` for that snapshot, every remote's refs
+  included, and a failed `git remote -v` makes both parts so. An unavailable
+  part is never compared, so a change behind it goes unseen; the record
+  prints a `not compared:` line naming it rather than "none observed".
+  <br>**The network, on every run.** The snapshot runs `ls-remote` per
+  remote at the start and at the end of each leg, each bounded by the git
+  timeout (30 s), so an unreachable remote can add up to 30 s per remote at
+  each of those points. Ctrl-C during the start snapshot ends the leg
+  before any node starts, and an interrupted leg records its end snapshot
+  as `unavailable` ("interrupted") instead of waiting for it. ssh remotes
+  run in BatchMode unless you chose an ssh command (`GIT_SSH_COMMAND`,
+  `GIT_SSH` or `core.sshCommand`): an unknown host key or an encrypted key
+  without an agent makes that part `unavailable` instead of prompting.
 
 See [Deferred](#deferred-not-implemented) below for the full out-of-scope list.
 

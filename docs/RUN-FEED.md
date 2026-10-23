@@ -183,6 +183,7 @@ runs only — see "Goal cycles" below), `build_evidence` (auto-mode launches onl
 — see below), `baseline` (`auto --no-baseline` launches only — see below),
 `conventions` (`auto --conventions` launches only — see below),
 `verify_pins` (`auto --verify-cmd` launches only — see below),
+`run_base_sha` and `remote_changes` (the remote change record — see below),
 `nodes` (map of node id →
 terminal record: `verdict`, `session_id`, `cost_usd`, `cost_unknown`, `usage`
 (`input_tokens`, `cached_input_tokens`, `output_tokens`,
@@ -349,6 +350,55 @@ run as it resumes any of its own, pinning nothing — it cannot misread the
 record, only not enforce it — and drops the key if it rewrites the snapshot, so
 a later leg of this build has no pins to check either. No event carries it; the
 feed schema is unchanged.
+
+`remote_changes` is the remote change record
+([#410](https://github.com/jitokim/oh-my-graph/issues/410)): what the engine
+observed changing on the invocation repository's remotes while the run ran.
+It is a report: nothing reads it to decide anything, and no exit code or
+verdict depends on it. `run`, `auto` and `resume` write it on every leg; it is
+absent only on a run that predates it. It holds:
+
+- `legs`, one per leg in order, each with `before` (a snapshot taken before
+  the leg's first node), `after` (taken when its last node ended; absent on a
+  leg that has not ended) and `changes` (the diff of the two; absent with
+  `after`).
+- `between_legs` (omitted when empty), one per resumed leg: `from_leg` and
+  `to_leg` (1-based indexes into `legs`) and `changes`, the diff of the
+  earlier leg's `after` against the later leg's `before` — what changed while
+  no leg ran. Its entries are always `not_attributable`. The indexes count
+  recorded legs, not the run's: resuming a run whose `state.json` predates
+  the record starts `legs` at that resumed leg, so its "leg 1" is the first
+  leg recorded, and the printed "between leg 1 and leg 2" counts the same way.
+
+A snapshot has two parts, each with `status` `"observed"` or `"unavailable"`
+and, when unavailable, `reason`: `remotes` (`configured`: `name`,
+`fetch_url`, `push_url` from `git remote -v`) and `branches` (`refs`:
+`remote`, `branch`, `sha` from `git ls-remote --heads` per remote). An empty
+observed list is an observed "none"; an unavailable part is never treated as
+empty. `branches` is unavailable as a whole when any one remote's
+`ls-remote` failed, with every failing remote in the reason. Credentials in
+a URL, and in a reason that quotes one, are replaced with `***`.
+
+A `changes` object always spells out three arrays: `observed` (the parts
+compared, i.e. observed on both sides), `entries` and `not_compared` (`part`,
+`remote` when it names one remote's refs, `reason`). An entry has `kind` —
+`remote_added`, `remote_removed`, `remote_url_changed`, `branch_created`,
+`branch_moved` or `branch_deleted` — `remote`, and as the kind needs
+`branch`, `old_sha`/`new_sha` and `old_fetch_url`/`new_fetch_url`/
+`old_push_url`/`new_push_url`. Its `attribution` is `run_commit` when a
+`branch_created` or `branch_moved` entry's new sha is a commit reachable from
+one of the run's own `omg/<run-id>/` branches and not from `run_base_sha`,
+and `not_attributable` otherwise. `run_commit` says the sha is the run's, not
+that the run moved the ref.
+
+`run_base_sha` is the invocation repository's `HEAD` when the run's first leg
+started: the commit that attribution excludes, carried unchanged by `resume`.
+It is absent when the run started outside a repository, and then no entry is
+attributed.
+
+Both are **additive optional fields and the schema stays 3**: an older binary
+that ignores them loses the report and runs the rest of the run as this one
+does. No event carries them; the feed schema is unchanged.
 
 `conventions` records the operator's `auto --conventions` files (ADR 0041):
 `staged_sha256`, the SHA-256 of the run directory's `conventions.md` — the

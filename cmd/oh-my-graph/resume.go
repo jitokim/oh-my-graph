@@ -700,7 +700,13 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// rather than taking new ones, and dropping them here would let the
 		// first settling node erase what the next resume must check.
 		VerifyPins: snap.VerifyPins,
-		Nodes:      records,
+		// And the remote change record (ADR 0046 §3.1) with the base commit
+		// its attribution excludes: this leg appends its own leg to the
+		// earlier ones, and checks against the base the first leg read —
+		// never a new one, so an old run with none attributes nothing.
+		RunBaseSHA:    snap.RunBaseSHA,
+		RemoteChanges: snap.RemoteChanges,
+		Nodes:         records,
 		// PausedAt starts empty: the run is actively continuing, not paused,
 		// until (if at all) this leg pauses again at a later gate.
 		Gate: runstate.GateState{Decisions: decisions},
@@ -809,11 +815,23 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		defer startLiveView(ctx, web, runID)()
 	}
 
+	// A resumed leg takes its own before snapshot (ADR 0046 §3.1): what
+	// changed while the run was stopped is recorded between the legs and
+	// never attributed.
+	remote := beginRemoteLeg(ctx, runID, recorder, snap.RunBaseSHA, snap.RemoteChanges)
+	// An interrupt during the before snapshot ends the leg before any node
+	// starts, as in executeGraph.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		remote.end(ctx)
+		return ctxErr
+	}
 	runErr := scheduler.Run(ctx, g, h, led)
+	remote.end(ctx)
 	reportWorktreeCleanup(os.Stderr, worktrees.Cleanup(context.Background()))
 
 	fmt.Fprintln(os.Stdout)
 	led.Print(os.Stdout)
+	remote.print(os.Stdout)
 	// The next leg needs the pair re-supplied exactly as this one did: the
 	// snapshot this leg rewrites carries snap.Graph forward verbatim — the
 	// verification stays on disk and stays untrusted — so the hint repeats the

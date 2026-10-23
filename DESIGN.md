@@ -1077,6 +1077,92 @@ path stays spawn-free in CI). Cleanup is deliberately not on the interface:
 the Scheduler only asks where a node runs; teardown is the CLI's job against
 the concrete `GitManager`. See ADR 0005.
 
+## Remote change record — what changed on the remote during a run (#410)
+
+A node holding `Bash(git *)` can push a branch or add a remote, and no check
+node is asked to notice. The engine records it itself, outside any model, as
+a report: the record changes no verdict, no exit code and no run status, and
+nothing in the engine reads it to decide anything.
+
+**Timing: two snapshots per leg.** `run`, `auto` and `resume` take a *before*
+snapshot of the **invocation repository** (the one the command was started
+in, where worktrees come from) after the leg's `state.json` exists and
+before `scheduler.Run` starts its first node, and an *after* snapshot when
+`scheduler.Run` returns — whatever it returned, a pause or a halt included,
+on a fresh context — before worktree cleanup. Every leg takes its own
+*before*, a resumed one included. A resumed leg also diffs the previous leg's
+*after* against its own *before* into the `between_legs` set: what changed
+while no leg ran, recorded and never attributed.
+
+**A snapshot** has two parts, each `observed` or `unavailable` with the
+reason: the configured **remotes** (`git remote -v`: name, fetch and push
+URL) and the remote **branches** (`git ls-remote --heads` per remote: branch
+and sha). An unavailable part is never treated as empty and never compared.
+The branches part is all or nothing: if any one remote's `ls-remote` fails,
+the whole part is unavailable, every failing remote named, since a list
+missing one remote would compare as that remote's branches all deleted.
+Credentials in URLs and reasons are replaced with `***` before they are
+recorded. Reading never stops the run: a failure, a timeout or "not a git
+repository" becomes an unavailable part. `ls-remote` reads the network on
+every run, each git command bounded by the 30 s git timeout, so one
+unreachable remote can add up to 30 s at the start and at the end of each
+leg. Ctrl-C cuts that short: an interrupt during the *before* snapshot ends
+the leg there, before any node starts (exit 1, as any interrupt before the
+first node), and once a leg is interrupted its *after* snapshot is not taken
+but recorded with both parts unavailable, reason `interrupted`.
+
+**Entries.** The diff of two snapshots gives `remote_added`,
+`remote_removed`, `remote_url_changed`, `branch_created`, `branch_moved`
+(old and new sha) and `branch_deleted`. Branch refs are compared only for a
+remote both sides list with the same fetch URL; an added, removed or
+re-pointed remote gets a `not_compared` item for its branches instead. A
+part unavailable on either side gives a `not_compared` item with the reason,
+so "no change" and "could not see" never read the same.
+
+**Attribution.** A `branch_created` or `branch_moved` entry in a leg is
+`run_commit` when its new sha passes a local check, all through
+`GitManager.CommitAttributable`: the sha is a commit in the invocation
+repository, it is not an ancestor of `run_base_sha` (the invocation
+repository's `HEAD` when the run's first leg started, carried by `resume`),
+and it is an ancestor of one of the run's own `refs/heads/omg/<run-id>/`
+branches. Every other entry — the no-sha kinds, a sha that fails the check,
+every between-legs entry, and every entry of a run with no `run_base_sha` —
+is `not_attributable`. The check proves where a commit came from, never who
+moved the ref.
+
+**Printing.** After the ledger table, `run`, `auto` and `resume` print the
+leg's record (a resumed leg first prints its between-legs set):
+
+```
+Remote changes (observed: remotes, branches):
+  branch_created origin/feat/x at 333333333333 — observed during the run; points at a commit this run made
+  remote_added mirror https://example.com/m.git — observed, not attributable
+  not compared: branches of mirror: remote added: it has no before refs to compare
+```
+
+`run_commit` reads "observed during the run; points at a commit this run
+made"; `not_attributable` reads "observed, not attributable". No entry and
+nothing uncompared prints one line, `Remote changes: none observed
+(observed: remotes, branches)`. With nothing changed but a part not
+compared, the line says `none observed in the parts compared` and a
+`not compared:` line follows for each such part.
+
+**Storage.** `state.json` carries `run_base_sha` and `remote_changes`
+(`legs`, each with `before`, `after` and `changes`, and `between_legs`),
+additive and optional, so the schema stays 3 and no event is added
+(docs/RUN-FEED.md). Every command runs on `worktree.GitManager`, through the
+`worktree.RemoteObserver` interface, with `GIT_TERMINAL_PROMPT=0` added to
+the scrubbed environment. That stops only git's own prompt — ssh asks on
+`/dev/tty` itself for an unknown host key or a locked key — so `git remote
+-v` and `ls-remote` also get `GIT_SSH_COMMAND=ssh -o BatchMode=yes` unless
+the user chose an ssh command (`GIT_SSH_COMMAND` or `GIT_SSH` in the
+environment, or `core.sshCommand` in the repository), which is left
+untouched; an ssh prompt then fails at once into an unavailable part. This
+widens the third seam's scope from the `git worktree` commands to the git
+commands the engine issues against the invocation repository, and adds no
+spawner. Tests inject `worktree.FakeRemoteObserver`. What the record cannot
+see is listed in docs/LIMITATIONS.md.
+
 ## Execution engine
 Scheduler = Kahn on `depends_on`, but maintains a **ready set** run concurrently:
 1. Validate on load: all depends_on ids exist; no cycles (DFS colour); fail fast
