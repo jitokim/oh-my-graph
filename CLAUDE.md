@@ -43,8 +43,8 @@ let them drift apart.
 - **The four exec seams.** Exactly four objects may spawn a process:
   `runner.CLIRunner` (a node's model CLI subprocess, claude or codex),
   `verify.ShellVerifier` (a node's evidence command),
-  `worktree.GitManager` (the git commands the engine issues against the
-  invocation repository: worktrees and the remote snapshot) and `browser.ExecOpener` (the `open`/`xdg-open` launch of the
+  `worktree.GitManager` (the `git worktree` commands behind a node's
+  `worktree:`) and `browser.ExecOpener` (the `open`/`xdg-open` launch of the
   `serve` URL) — see `docs/adr/0002-verification-is-a-second-exec-seam.md`,
   `docs/adr/0005-worktree-provisioning-is-a-third-exec-seam.md` and
   `docs/adr/0006-browser-open-is-a-fourth-exec-seam.md`.
