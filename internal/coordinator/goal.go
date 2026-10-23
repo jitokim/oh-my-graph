@@ -281,10 +281,14 @@ func (c *Coordinator) RunGoal(ctx context.Context, goal string, opts GoalOptions
 // unrunnableCommands collects the done-list commands a cycle's final check
 // named as unrunnable: the text after unrunnableDoneItemMarker on every line
 // that starts with it (after trimming), in first-seen order, empty values
-// skipped and duplicates dropped. Only sink artifacts are read — the final
-// check node is the plan's sink — unless no node is marked a sink (evidence
-// built without Sink set), in which case every artifact is. The marker must
-// open the line, so a reply that only mentions it in prose stops nothing.
+// skipped and duplicates dropped. Only sinks are read — the final check node
+// is the plan's sink — unless no node is marked a sink (evidence built without
+// Sink set), in which case every node is. Each considered node's Artifact AND
+// FailedReply are scanned: a check that names an unrunnable command has
+// usually FAILED, and a failed node leaves no artifact — its reply lives only
+// in failed/<node-id>.out, which this scan reads and nothing renders. The
+// marker must open the line, so a reply that only mentions it in prose stops
+// nothing.
 func unrunnableCommands(nodes []NodeEvidence) []string {
 	anySink := false
 	for _, node := range nodes {
@@ -299,7 +303,7 @@ func unrunnableCommands(nodes []NodeEvidence) []string {
 		if anySink && !node.Sink {
 			continue
 		}
-		for _, line := range strings.Split(node.Artifact, "\n") {
+		for _, line := range strings.Split(node.Artifact+"\n"+node.FailedReply, "\n") {
 			rest, ok := strings.CutPrefix(strings.TrimSpace(line), unrunnableDoneItemMarker)
 			if !ok {
 				continue

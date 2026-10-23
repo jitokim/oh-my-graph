@@ -227,6 +227,28 @@ func TestAssessMaterial_UnknownCostIsNeverPresentedAsZero(t *testing.T) {
 	}
 }
 
+// A FAILED node's reply rides on NodeEvidence only so the goal loop can find
+// the UNRUNNABLE: marker in it (#333). It is not assessor material: a failed
+// reply reaches a human, never a model's prompt, so assessMaterial must not
+// render it — not even when it is the only text the node left.
+func TestAssessMaterial_NeverRendersAFailedReply(t *testing.T) {
+	const sentinel = "FAILED-REPLY-SENTINEL-7f3a9c"
+	got := assessMaterial(CycleEvidence{
+		RunID: "r1",
+		Nodes: []NodeEvidence{
+			{ID: "work", Verdict: "PASS", Artifact: "did the work"},
+			{ID: "check", Verdict: "FAIL", Detail: "check failed", Sink: true,
+				FailedReply: "FAIL\n" + sentinel + "\nUNRUNNABLE: sh scripts/x.sh\n"},
+		},
+	}, "nonce")
+	if strings.Contains(got, sentinel) || strings.Contains(got, "UNRUNNABLE:") {
+		t.Errorf("the failed reply reached the assessor's material:\n%s", got)
+	}
+	if !strings.Contains(got, "check failed") {
+		t.Errorf("the failed node's verdict detail is missing from the material:\n%s", got)
+	}
+}
+
 // The prompt is the whole feed: goal, run outcome, per-node verdicts with
 // detail and cost, artifact excerpts marked as data, and the previous cycle's
 // remaining — and nothing else reaches the assessor.

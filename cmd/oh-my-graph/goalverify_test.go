@@ -8,6 +8,7 @@ import (
 
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/graph"
+	"github.com/jitokim/oh-my-graph/internal/handoff"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/verify"
@@ -59,6 +60,52 @@ func TestCycleEvidence_CarriesTheEngineVerificationRecord(t *testing.T) {
 		got.ExpectedExitCode != want.ExpectedExitCode || got.Status != string(want.Status) || got.OutputTail != want.OutputTail ||
 		got.OutputTruncated != want.OutputTruncated {
 		t.Errorf("verification = %+v (exit %v), want %+v (exit %d)", *got, got.ExitCode, want, exit)
+	}
+}
+
+// #333: a final check that names an unrunnable command has FAILED, so it left
+// no artifact — its reply is in failed/<node-id>.out, where
+// handoff.PersistFailure wrote it. cycleEvidence must carry that reply as
+// FailedReply (so the goal loop can find the UNRUNNABLE: line) and leave
+// Artifact empty; a PASS node with a stray failed/ file carries none.
+func TestCycleEvidence_CarriesAFailedNodesReplyForTheUnrunnableScan(t *testing.T) {
+	t.Setenv("OMG_HOME", t.TempDir())
+	const runID = "run-unrunnable"
+	runDir := runDirFor(runID)
+	if err := runstate.Write(filepath.Join(runDir, stateFileName), runstate.Snapshot{
+		RunID: runID,
+		Nodes: map[string]runstate.NodeRecord{
+			"check": {Verdict: runstate.VerdictFail, Detail: "check failed"},
+			"work":  {Verdict: runstate.VerdictPass},
+		},
+	}); err != nil {
+		t.Fatalf("write fixture snapshot: %v", err)
+	}
+	const line = "UNRUNNABLE: sh scripts/x.sh"
+	h := handoff.New(runDir, nil)
+	for id, reply := range map[string]string{"check": "FAIL\n" + line + "\n", "work": "stale reply\n"} {
+		if _, err := h.PersistFailure(id, reply); err != nil {
+			t.Fatalf("write fixture failed reply for %s: %v", id, err)
+		}
+	}
+	plan := coordinator.Plan{Graph: &graph.Graph{Nodes: []graph.Node{{ID: "work"}, {ID: "check", DependsOn: []string{"work"}}}}}
+
+	evidence, err := cycleEvidence(runID, plan, false)
+	if err != nil {
+		t.Fatalf("cycleEvidence: %v", err)
+	}
+	if len(evidence.Nodes) != 2 {
+		t.Fatalf("got %d nodes, want 2: %+v", len(evidence.Nodes), evidence.Nodes)
+	}
+	if work := evidence.Nodes[0]; work.FailedReply != "" {
+		t.Errorf("a PASS node carries a failed reply: %q", work.FailedReply)
+	}
+	check := evidence.Nodes[1]
+	if !strings.Contains(check.FailedReply, line) {
+		t.Errorf("FailedReply = %q, want it to contain %q", check.FailedReply, line)
+	}
+	if check.Artifact != "" {
+		t.Errorf("Artifact = %q, want empty: a failed node registers no artifact", check.Artifact)
 	}
 }
 

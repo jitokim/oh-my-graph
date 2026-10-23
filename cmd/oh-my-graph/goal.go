@@ -12,6 +12,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/browser"
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/fence"
+	"github.com/jitokim/oh-my-graph/internal/handoff"
 	"github.com/jitokim/oh-my-graph/internal/interview"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
@@ -235,7 +236,12 @@ func isRunFailure(err error) bool {
 // cannot be read back contributes its verdict without content rather than
 // failing the assessment. A node's engine verification record (#332) is
 // carried across as-is, so the assessor can see what the engine itself
-// observed of the node's success_check.verify.
+// observed of the node's success_check.verify. A FAILED node registers no
+// artifact, so its own reply — handoff.PersistFailure's failed/<node-id>.out,
+// located by the same handoff.FailedOutputPath that wrote it — is read, with
+// the same bound, into FailedReply, used only to find the UNRUNNABLE: marker a
+// failed final check writes (#333); the assessor never renders it, and it
+// never reaches another node.
 func cycleEvidence(runID string, plan coordinator.Plan, runPassed bool) (coordinator.CycleEvidence, error) {
 	snap, err := runstate.Load(filepath.Join(runDirFor(runID), stateFileName))
 	if err != nil {
@@ -289,6 +295,11 @@ func cycleEvidence(runID string, plan coordinator.Plan, runPassed bool) (coordin
 		if rec.ArtifactPath != "" {
 			if content, readErr := readArtifactBounded(rec.ArtifactPath); readErr == nil {
 				nodeEvidence.Artifact = content
+			}
+		}
+		if rec.Verdict == runstate.VerdictFail {
+			if reply, readErr := readArtifactBounded(handoff.FailedOutputPath(runDirFor(runID), node.ID)); readErr == nil {
+				nodeEvidence.FailedReply = reply
 			}
 		}
 		evidence.Nodes = append(evidence.Nodes, nodeEvidence)
