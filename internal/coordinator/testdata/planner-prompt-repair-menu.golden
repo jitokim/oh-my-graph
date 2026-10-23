@@ -175,6 +175,14 @@ Rules:
     itself, which leaves every other checkout's HEAD untouched, and
     oh-my-graph isolates no repository but the one it was invoked from — so
     a HEAD assertion reports FAIL on work that in fact succeeded.
+  - Before it runs a done-list command, a check node on such a goal
+    confirms 'git rev-parse HEAD' equals 'git rev-parse <branch>', under
+    the "Bash(git *)" pattern a check node already declares. If they
+    differ it replies FAIL saying the command cannot run against the work
+    from here (HEAD <sha> is not the tip of <branch> <sha>), and still
+    checks nothing out. This compares two commit shas — whether the
+    content is the same — not a branch name, so it is not the
+    '--abbrev-ref HEAD' assertion forbidden above.
   When the assertion holds, instruct the node that its whole reply is
   exactly the four bare characters PASS and nothing else, with no markdown
   emphasis ("**PASS**" is WRONG), no heading, no backticks and no preamble;

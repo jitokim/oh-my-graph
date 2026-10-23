@@ -240,7 +240,11 @@ func TestPlannerPromptAsksForRepositoryStateNotCheckoutState(t *testing.T) {
 // DESIGN.md's "Verdict patterns" already records. It must also say the check
 // node still runs its own commands, done-list ones included, in the tree as it
 // finds it, so the rule never reads as taking the done-list command (#426) away
-// from the final check node.
+// from the final check node. Running in the tree as it finds it is only right
+// when that tree's HEAD is the work, so on a branch goal the node first
+// compares 'git rev-parse HEAD' with the branch tip and FAILs, still checking
+// nothing out, when they differ — a sha comparison that must sit beside, not
+// replace, the --abbrev-ref prohibition.
 func TestPlannerPromptForbidsCheckNodesFromChangingRepositoryState(t *testing.T) {
 	for _, verifyCmd := range []string{"make test", ""} {
 		prompt := plannerPromptNoMenu(t, "fix the bug on a feature branch", verifyCmd)
@@ -252,6 +256,10 @@ func TestPlannerPromptForbidsCheckNodesFromChangingRepositoryState(t *testing.T)
 			"never a checkout.",
 			"A command that would need another\n  ref checked out to run",
 			"done-list ones\n  included, in the tree as it finds it.",
+			"Before it runs a done-list command, a check node on such a goal\n    confirms 'git rev-parse HEAD' equals 'git rev-parse <branch>'",
+			"and still\n    checks nothing out.",
+			"This compares two commit shas",
+			"NEVER assert on 'git rev-parse --abbrev-ref HEAD'",
 		} {
 			if !strings.Contains(prompt, want) {
 				t.Errorf("verify-cmd %q: prompt lost the no-state-change rule: missing %q", verifyCmd, want)

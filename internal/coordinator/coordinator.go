@@ -2365,6 +2365,13 @@ func plannedBashPatterns() []string {
 // once told a final check node to 'git checkout' a branch, which moves HEAD in
 // a checkout other people or runs may be using; the rule names the read-only
 // spellings ('git show <ref>:<path>', 'git diff <a>..<b>') it uses instead.
+// Running in the tree as it finds it is only right when that tree's HEAD IS
+// the work: a doing node in its own worktree, or one that switched back to
+// main, leaves a done-list command PASSing on main's tree. So on a branch goal
+// the check node first compares 'git rev-parse HEAD' with
+// 'git rev-parse <branch>' — two commit shas, not the branch-name assertion
+// forbidden above — and replies FAIL, still checking nothing out, if they
+// differ.
 //
 // Its closing rule names WHICH node may carry the whole-reply pin, which every
 // earlier spelling assumed and never said. The paragraph speaks of "the final
@@ -2411,6 +2418,14 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
     itself, which leaves every other checkout's HEAD untouched, and
     oh-my-graph isolates no repository but the one it was invoked from — so
     a HEAD assertion reports FAIL on work that in fact succeeded.
+  - Before it runs a done-list command, a check node on such a goal
+    confirms 'git rev-parse HEAD' equals 'git rev-parse <branch>', under
+    the "Bash(git *)" pattern a check node already declares. If they
+    differ it replies FAIL saying the command cannot run against the work
+    from here (HEAD <sha> is not the tip of <branch> <sha>), and still
+    checks nothing out. This compares two commit shas — whether the
+    content is the same — not a branch name, so it is not the
+    '--abbrev-ref HEAD' assertion forbidden above.
   When the assertion holds, instruct the node that its whole reply is
   exactly the four bare characters PASS and nothing else, with no markdown
   emphasis ("**PASS**" is WRONG), no heading, no backticks and no preamble;

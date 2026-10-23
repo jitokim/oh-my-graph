@@ -1569,7 +1569,12 @@ So a verdict pattern is written in two halves, and both are load-bearing:
   another ref with `git show <ref>:<path>` or `git diff <a>..<b>`. A command
   that would need another ref checked out to run belongs to the node that
   made the work, or to `--verify-cmd`; a check node runs its own commands,
-  done-list ones included, in the tree as it finds it (#427). The pattern itself is unchanged — the caveat found a home in the
+  done-list ones included, in the tree as it finds it (#427). On a branch goal
+  it first confirms `git rev-parse HEAD` equals `git rev-parse <branch>` and
+  replies `FAIL`, still checking nothing out, if they differ; that compares
+  whether the CONTENT is the same (two commit shas), not the branch NAME, so it
+  does not conflict with the rule that a check node asserts repository state,
+  not checkout state, and never asserts on `--abbrev-ref HEAD`. The pattern itself is unchanged — the caveat found a home in the
   prompt, not in a relaxed anchor (#264). Every `success_check` that prompt
   hands out with a `result_matches` — this whole-reply pin, the prefix
   verdict a report node may take instead, and the alternative it names to a
