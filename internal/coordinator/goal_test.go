@@ -691,7 +691,7 @@ func TestRunGoal_UnrunnableInAFailedReplyStopsTheLoop(t *testing.T) {
 		"assess-1": {Result: assessNotMetReply},
 	})
 	evidence := unrunnableEvidence("r1", "")
-	evidence.Nodes[1].FailedReply = "FAIL\nno planned node may run the done item\nUNRUNNABLE: sh scripts/x.sh\n"
+	evidence.Nodes[1].FailedReply = "FAIL\nno planned node may run the done item\nUNRUNNABLE: sh x.sh\n"
 	executor := &fakeExecutor{evidence: map[int]CycleEvidence{1: evidence}}
 
 	result, err := New(fake).RunGoal(context.Background(), "make the tests green", GoalOptions{MaxCycles: 3}, executor.execute)
@@ -707,7 +707,7 @@ func TestRunGoal_UnrunnableInAFailedReplyStopsTheLoop(t *testing.T) {
 	if got := fake.InvocationCount("plan-2"); got != 0 {
 		t.Errorf("a second plan was made after an unrunnable done item: %d calls", got)
 	}
-	if got, want := result.UnrunnableCommands, []string{"sh scripts/x.sh"}; !slices.Equal(got, want) {
+	if got, want := result.UnrunnableCommands, []string{"sh x.sh"}; !slices.Equal(got, want) {
 		t.Errorf("unrunnable commands = %q, want %q", got, want)
 	}
 }
@@ -764,13 +764,18 @@ func TestRunGoal_UnrunnableWithoutSinksScansEveryFailedReply(t *testing.T) {
 }
 
 // A met goal stops as goal_met even when the marker is present: the scan runs
-// only when the goal is not met.
+// only when the goal is not met. The marker sits where it counts — a FAILed
+// sink check's reply — so only the met assessment keeps it from stopping the
+// loop; GoalMet is the assessor's alone, so the run outcome plays no part.
 func TestRunGoal_MetGoalStopsAsGoalMetDespiteTheMarker(t *testing.T) {
 	fake := newGoalFake(map[string]runner.NodeOutcome{
 		"plan-1":   {Result: validSpec},
 		"assess-1": {Result: assessMetReply},
 	})
-	evidence := unrunnableEvidence("r1", "UNRUNNABLE: sh scripts/x.sh\n")
+	evidence := unrunnableEvidence("r1", "FAIL\nUNRUNNABLE: sh scripts/x.sh\n")
+	if got := unrunnableCommands(evidence.Nodes); len(got) == 0 {
+		t.Fatalf("the evidence carries no counted marker, so the test proves nothing")
+	}
 	executor := &fakeExecutor{evidence: map[int]CycleEvidence{1: evidence}}
 
 	result, err := New(fake).RunGoal(context.Background(), "make the tests green", GoalOptions{MaxCycles: 3}, executor.execute)

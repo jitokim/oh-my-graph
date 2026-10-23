@@ -2293,10 +2293,10 @@ func finalCheckWithVerifyCommand(command string) string {
 // unrunnableDoneItemMarker opens each line of a final check node's FAIL reply
 // that names a done-list command no plannedBashPatterns entry covers (#333).
 // doneListCommandRule renders it into the prompt, and RunGoal scans the sinks
-// for it — their artifacts and, since that check node FAILED and so left no
-// artifact, the reply it left in failed/<node-id>.out (NodeEvidence.FailedReply,
-// which neither the assessor nor any other node ever sees): a command no planned
-// node can run cannot be fixed by another cycle, so the loop stops with
+// for it — only a sink whose verdict is FAIL, and only the reply it left in
+// failed/<node-id>.out (NodeEvidence.FailedReply, which neither the assessor
+// nor any other node ever sees), never an artifact: a command no planned node
+// can run cannot be fixed by another cycle, so the loop stops with
 // StopUnrunnableDoneItem.
 const unrunnableDoneItemMarker = "UNRUNNABLE:"
 
