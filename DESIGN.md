@@ -1107,11 +1107,15 @@ repository" becomes an unavailable part. `ls-remote` reads the network on
 every run, each git command bounded by the 30 s git timeout, so one
 unreachable remote can add up to 30 s at the start and at the end of each
 leg. Ctrl-C cuts that short: an interrupt during either snapshot, *before*
-or *after*, ends the leg as interrupted (exit 1, as any interrupt, even
-when its nodes ended at a gate); one during the *before* snapshot ends the
-leg there, before any node starts, and once a leg is interrupted its *after*
-snapshot is not taken, or cut short, but recorded with both parts
-unavailable, reason `interrupted`.
+or *after*, ends the leg as interrupted (exit 1, as any interrupt); one
+during the *before* snapshot ends the leg there, before any node starts, and
+once a leg is interrupted its *after* snapshot is not taken, or cut short,
+but recorded with both parts unavailable, reason `interrupted`. During the
+*after* snapshot only the exit code changes: the outcome the scheduler
+already wrote to `state.json` and `run_finished` stands, so a leg whose
+nodes ended at a gate stays paused there and resumable, with its
+`resume <run-id> --approve|--reject <gate>` hint still printed, and a leg
+that passed stays `passed`.
 
 **Entries.** The diff of two snapshots gives `remote_added`,
 `remote_removed`, `remote_url_changed`, `branch_created`, `branch_moved`

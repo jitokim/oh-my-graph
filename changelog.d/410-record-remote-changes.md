@@ -10,5 +10,8 @@
   during either snapshot, start or end, ends the leg as interrupted (exit
   1); during the start snapshot it ends the run before any node starts, and
   an interrupted run records its end snapshot as `unavailable`
-  ("interrupted").
+  ("interrupted"). During the end snapshot only the exit code changes: the
+  outcome in `state.json` and `run_finished` stays the one the nodes
+  reached, so a leg that reached a gate stays paused and resumable with
+  `resume <run-id> --approve|--reject <gate>`, and that hint still prints.
   ([#410](https://github.com/jitokim/oh-my-graph/issues/410))

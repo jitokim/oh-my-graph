@@ -574,7 +574,10 @@ has no open issue behind it.
   each of those points. Ctrl-C during either snapshot, start or end, ends
   the leg as interrupted (exit 1); during the start snapshot it ends the
   leg before any node starts, and an interrupted leg records its end
-  snapshot as `unavailable` ("interrupted") instead of waiting for it. ssh
+  snapshot as `unavailable` ("interrupted") instead of waiting for it.
+  During the end snapshot only the exit code changes: `state.json` and the
+  run feed keep the outcome the nodes reached, so a leg that reached a gate
+  stays paused and resumable, and its resume hint still prints. ssh
   remotes run in BatchMode unless you chose an ssh command
   (`GIT_SSH_COMMAND`, `GIT_SSH` or `core.sshCommand`): an unknown host key or
   an encrypted key without an agent makes that part `unavailable` instead of
