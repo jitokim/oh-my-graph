@@ -361,6 +361,41 @@ func TestPlanAndExecute_UnrunnableDoneItemStopsWithAdvice(t *testing.T) {
 	}
 }
 
+// TestPlanAndExecute_UnrunnableLineMidLongReplyStillStops is #333 through
+// both cuts the failed reply meets: handoff.PersistFailure's 256 KiB
+// head+tail write and cycleEvidence's 64 KiB head+tail read. A ~200 KiB reply
+// passes the write whole and loses its middle at the read; a ~400 KiB reply
+// loses its middle at the write already. Either way the UNRUNNABLE: line sits
+// in the middle, and only its copy at the front of failed/<node-id>.out
+// reaches the scan — the loop must still stop and name the command.
+func TestPlanAndExecute_UnrunnableLineMidLongReplyStillStops(t *testing.T) {
+	for _, size := range []int{200 << 10, 400 << 10} {
+		t.Run(fmt.Sprintf("%dKiB", size>>10), func(t *testing.T) {
+			isolateRunHome(t)
+			half := strings.Repeat(strings.Repeat("p", 79)+"\n", size/2/80)
+			reply := "FAIL\n" + half + "UNRUNNABLE: npm test\n" + half + "FAIL\n"
+			fake := newCycleFake(map[string]runner.NodeOutcome{
+				"plan-1":   {Result: cycleSpec},
+				"work-1":   {SessionID: "s-1", Result: reply, ExitCode: 1, FailureCause: "a done-list command no planned node can run"},
+				"assess-1": {Result: cycleAssessNotMet},
+			})
+
+			out, err := runPlanAndExecute(t, fake, goalCycleOptions{maxCycles: 3}, nil)
+			if err == nil || !strings.Contains(err.Error(), "goal not met") {
+				t.Fatalf("an unrunnable done item must be the unmet-goal exit; got %v", err)
+			}
+			for _, want := range []string{"stopped: unrunnable_done_item", "    unrunnable: npm test\n"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("the goal summary is missing %q", want)
+				}
+			}
+			if got := fake.InvocationCount("plan-2"); got != 0 {
+				t.Errorf("a second cycle was planned after an unrunnable done item: %d calls", got)
+			}
+		})
+	}
+}
+
 // TestFinalRemaining_IsSanitised_349: the unmet-goal exit error quotes the
 // final cycle's remaining, which is the assessor's own text. A CSI sequence
 // and U+202E in it never reach the error, the words around them do; a
