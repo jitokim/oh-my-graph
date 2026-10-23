@@ -11,6 +11,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/graph"
 )
 
@@ -471,5 +472,118 @@ func TestPersistFailure_RegistersNothing_PriorReplyIsNotAnArtifact(t *testing.T)
 	}
 	if path, ok := h.ArtifactPath("dev"); ok {
 		t.Errorf("ArtifactPath(dev) = %q; a kept failure reply is not an artifact path", path)
+	}
+}
+
+// persistAndRead runs PersistFailure on reply and returns the file it wrote.
+func persistAndRead(t *testing.T, reply string) string {
+	t.Helper()
+	h := New(t.TempDir(), nil)
+	path, err := h.PersistFailure("check", reply)
+	if err != nil {
+		t.Fatalf("PersistFailure: %v", err)
+	}
+	onDisk, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed reply not persisted: %v", err)
+	}
+	return string(onDisk)
+}
+
+// paddedLines is n bytes of ordinary reply text in 80-byte lines, none of
+// them a marker line.
+func paddedLines(n int) string {
+	line := strings.Repeat("p", 79) + "\n"
+	return strings.Repeat(line, n/len(line))
+}
+
+// TestPersistFailure_CopiesUnrunnableLinesToTheFront (#333): the file is cut
+// twice — head and tail at this write, and head and tail again at 64 KiB when
+// the goal loop reads it back — so a marker line in the middle of a long reply
+// falls in the gap of one cut or the other. Copied to the front, it survives
+// both. 200 KiB is under the write bound but over the read bound; 400 KiB is
+// over both.
+func TestPersistFailure_CopiesUnrunnableLinesToTheFront(t *testing.T) {
+	markerLine := UnrunnableDoneItemMarker + " npm test"
+	for _, size := range []int{200 << 10, 400 << 10} {
+		t.Run(strconv.Itoa(size>>10)+"KiB", func(t *testing.T) {
+			half := paddedLines(size / 2)
+			reply := "FAIL\n" + half + "  " + markerLine + "\n" + half + "FAIL\n"
+			onDisk := persistAndRead(t, reply)
+			if !strings.HasPrefix(onDisk, "  "+markerLine+"\n") {
+				t.Errorf("the file does not open with the marker line; it opens %q", onDisk[:min(len(onDisk), 120)])
+			}
+			if len(onDisk) > maxFailedReplyBytes {
+				t.Errorf("persisted %d bytes, over the %d-byte cap", len(onDisk), maxFailedReplyBytes)
+			}
+			if size < maxFailedReplyBytes && !strings.Contains(onDisk, unrunnableFrontNote+reply) {
+				t.Error("a reply under the cap with a front block no longer follows it whole")
+			}
+		})
+	}
+}
+
+// TestPersistFailure_FrontCopySurvivesAVeryLongFirstLine: the reply is split in
+// memory with strings, not a bufio.Scanner, whose 64 KiB token limit would stop
+// on a long first line before ever reaching the marker line after it.
+func TestPersistFailure_FrontCopySurvivesAVeryLongFirstLine(t *testing.T) {
+	markerLine := UnrunnableDoneItemMarker + " ./gradlew test"
+	reply := strings.Repeat("y", 70<<10) + "\n" + markerLine + "\nFAIL\n"
+	onDisk := persistAndRead(t, reply)
+	if !strings.HasPrefix(onDisk, markerLine+"\n") {
+		t.Errorf("the file does not open with the marker line; it opens %q", onDisk[:min(len(onDisk), 120)])
+	}
+}
+
+// TestPersistFailure_NoMarkerWritesTodaysBytes: a reply with no marker line has
+// no front block, so the file is exactly what it was before the block existed —
+// the reply whole under the cap, and over it the head+tail cut computed as it
+// always was.
+func TestPersistFailure_NoMarkerWritesTodaysBytes(t *testing.T) {
+	small := "FAIL: the lock predates flock.\n  mentions UNRUNNABLE: only in prose\n"
+	if got := persistAndRead(t, small); got != small {
+		t.Errorf("a small reply with no marker line was not written as-is: %q", got)
+	}
+
+	big := "OPENING\n" + paddedLines(3*maxFailedReplyBytes) + "CONCLUSION\n"
+	reserve := len(fmt.Sprintf(failedExcerptMarker, len(big), maxFailedReplyBytes))
+	head, tail := fence.HeadAndTail(big, maxFailedReplyBytes-reserve)
+	want := head + fmt.Sprintf(failedExcerptMarker, len(big)-len(head)-len(tail), maxFailedReplyBytes) + tail
+	if got := persistAndRead(t, big); got != want {
+		t.Errorf("an over-cap reply with no marker line changed bytes: got %d bytes, want %d", len(got), len(want))
+	}
+}
+
+// TestPersistFailure_FrontBlockIsCapped: marker lines are model-written, so a
+// reply made of nothing else must not fill the file with copies of them. The
+// block holds whole lines only, at most maxUnrunnableFrontBytes, and the file
+// as a whole stays inside the cap.
+func TestPersistFailure_FrontBlockIsCapped(t *testing.T) {
+	var b strings.Builder
+	for i := 0; b.Len() < 2*maxFailedReplyBytes; i++ {
+		fmt.Fprintf(&b, "%s cmd-%d\n", UnrunnableDoneItemMarker, i)
+	}
+	reply := b.String()
+	onDisk := persistAndRead(t, reply)
+
+	if len(onDisk) > maxFailedReplyBytes {
+		t.Errorf("persisted %d bytes, over the %d-byte cap", len(onDisk), maxFailedReplyBytes)
+	}
+	front, _, ok := strings.Cut(onDisk, unrunnableFrontNote)
+	if !ok {
+		t.Fatal("the file has no front block for a reply made of marker lines")
+	}
+	if len(front) > maxUnrunnableFrontBytes {
+		t.Errorf("front block is %d bytes, over its %d-byte cap", len(front), maxUnrunnableFrontBytes)
+	}
+	if len(front) < maxUnrunnableFrontBytes/2 {
+		t.Errorf("front block is only %d bytes; the cap is %d", len(front), maxUnrunnableFrontBytes)
+	}
+	if !strings.HasSuffix(front, "\n") || !strings.HasPrefix(reply, front) {
+		t.Error("the front block is not a run of whole marker lines from the reply")
+	}
+	// The block leaves the reply's own budget at the cap less the block.
+	if len(onDisk) < maxFailedReplyBytes-maxUnrunnableFrontBytes {
+		t.Errorf("persisted only %d bytes of a %d-byte reply", len(onDisk), len(reply))
 	}
 }
