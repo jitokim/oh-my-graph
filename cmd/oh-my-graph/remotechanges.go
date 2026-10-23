@@ -79,7 +79,10 @@ func (l *remoteLeg) end(runCtx context.Context) (interrupted bool) {
 	if interrupted {
 		after = interruptedRemoteSnapshot
 	}
-	l.changes.EndLeg(after, worktree.RunCommitCheck(ctx, l.obs, l.baseSHA))
+	// The commit check is local and bounded: it runs on a context of its
+	// own, so an interrupt that lands after the read above cannot fail it
+	// and record a run commit not_attributable.
+	l.changes.EndLeg(after, worktree.RunCommitCheck(context.Background(), l.obs, l.baseSHA))
 	l.record()
 	return interrupted
 }
