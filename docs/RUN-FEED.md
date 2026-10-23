@@ -365,7 +365,10 @@ absent only on a run that predates it. It holds:
 - `between_legs` (omitted when empty), one per resumed leg: `from_leg` and
   `to_leg` (1-based indexes into `legs`) and `changes`, the diff of the
   earlier leg's `after` against the later leg's `before` — what changed while
-  no leg ran. Its entries are always `not_attributable`.
+  no leg ran. Its entries are always `not_attributable`. The indexes count
+  recorded legs, not the run's: resuming a run whose `state.json` predates
+  the record starts `legs` at that resumed leg, so its "leg 1" is the first
+  leg recorded, and the printed "between leg 1 and leg 2" counts the same way.
 
 A snapshot has two parts, each with `status` `"observed"` or `"unavailable"`
 and, when unavailable, `reason`: `remotes` (`configured`: `name`,

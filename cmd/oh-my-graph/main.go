@@ -1222,7 +1222,9 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	// repo's HEAD (repoDir "" = the process cwd), and whatever was created is
 	// torn down after the run with committed work retained on its branch
 	// (internal/worktree, ADR 0005). A graph with no worktree nodes never
-	// spawns git at all.
+	// acquires a worktree; the leg's remote snapshot (remotechanges.go, #410)
+	// still runs `git remote -v` and `git ls-remote` through a GitManager of
+	// its own.
 	worktrees := worktreeManagerFor(runID)
 
 	// The embedded live view (serve's own listener/handler/lifecycle on an
