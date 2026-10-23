@@ -788,7 +788,9 @@ func TestPlanAndExecuteCycles_EveryCyclesPlanningPhaseIsVisible(t *testing.T) {
 // invariant, and the NARROW version is the whole invariant. An exit code is the
 // writer's answer about the process it just ran; a status is a reader's answer
 // about a directory on disk. Where they can be made to agree, the agreement is
-// asserted rather than assumed — and where they cannot, the next test says so.
+// asserted rather than assumed — and where they cannot, the next two tests say
+// so: the goal loop, and the one single-run exception, an interrupt during the
+// after remote snapshot (#410).
 func TestExitCode_AgreesWithTheStatusForASingleRunInvocation(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -889,6 +891,61 @@ func TestExitCode_DoesNotAgreeWithStatusForTheGoalLoop(t *testing.T) {
 		if status != runstatus.Pass {
 			t.Errorf("cycle run %s = %v, want %v — every cycle's WORK passed", name, status, runstatus.Pass)
 		}
+	}
+}
+
+// TestExitCode_DoesNotAgreeWithStatusWhenAnInterruptLandsOnTheAfterSnapshot
+// is the one single-run case where the exit code and the status disagree, on
+// purpose: an exception to ADR 0023 §2.6 (#410). A Ctrl-C during the after
+// remote snapshot ends the leg interrupted (exit 1), but the outcome the
+// scheduler already wrote stands, so the run reads PAUSED or PASS. Pinned
+// here, next to the agreement test, so the invariant and the exception cannot
+// silently contradict each other.
+func TestExitCode_DoesNotAgreeWithStatusWhenAnInterruptLandsOnTheAfterSnapshot(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		graph      string
+		wantStatus runstatus.Status
+	}{
+		{
+			name:       "a gate paused it",
+			graph:      `{"name":"g","nodes":[{"id":"a","prompt":"a"},{"id":"approve","type":"gate","depends_on":["a"]}]}`,
+			wantStatus: runstatus.Paused,
+		},
+		{
+			name:       "every node passed",
+			graph:      `{"name":"g","nodes":[{"id":"a","prompt":"a"}]}`,
+			wantStatus: runstatus.Pass,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateRunHome(t)
+			runID := "run-exit"
+			fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{"a": {SessionID: "s", Result: "PASS", ExitCode: 0}})
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			obs := &afterSnapshotInterrupter{FakeRemoteObserver: originObserver(), interrupt: cancel}
+			useRemoteObserver(t, obs, remoteBaseSHA)
+
+			var runErr error
+			captureStdout(t, func() {
+				runErr = executeGraph(ctx, runID, mustParse(t, tc.graph), fake,
+					commonRunFlags{inputs: inputFlag{}}, nil, 0, "g.yaml", []byte(tc.graph), false, nil, nil, nil)
+			})
+			if obs.remotesCalls != 2 {
+				t.Fatalf("Remotes ran %d times, want twice: the interrupt must land on the after snapshot", obs.remotesCalls)
+			}
+			if got := exitCodeForError(runErr); got != 1 {
+				t.Errorf("exit code = %d, want 1, an interrupted leg's (error %v)", got, runErr)
+			}
+			status, err := runstatus.Of(runDirFor(runID))
+			if err != nil {
+				t.Fatalf("runstatus.Of: %v", err)
+			}
+			if status != tc.wantStatus {
+				t.Errorf("status = %v, want %v: the interrupt changes only the exit", status, tc.wantStatus)
+			}
+		})
 	}
 }
 
