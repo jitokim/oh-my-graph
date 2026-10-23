@@ -2360,7 +2360,11 @@ func plannedBashPatterns() []string {
 // carries the scope rule every planned check node shares — it asserts only
 // what this run's own nodes produce, never the absence of what the goal only
 // forbids creating — and the verdict clause says a forbidden action is the
-// operator's next step, never a reason to reply FAIL.
+// operator's next step, never a reason to reply FAIL. Beside it sits the
+// write-side rule (#427): a check node changes no repository state. A planner
+// once told a final check node to 'git checkout' a branch, which moves HEAD in
+// a checkout other people or runs may be using; the rule names the read-only
+// spellings ('git show <ref>:<path>', 'git diff <a>..<b>') it uses instead.
 //
 // Its closing rule names WHICH node may carry the whole-reply pin, which every
 // earlier spelling assumed and never said. The paragraph speaks of "the final
@@ -2440,6 +2444,17 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
   the run to change, and it never asserts the ABSENCE of something the goal
   only forbids creating — a remote that already existed is not a violation
   of "do not create a remote".
+- Every planned check node, final or not, observes and judges; it never
+  changes repository state. It runs no 'git checkout', 'git switch',
+  'git reset', 'git restore', 'git stash', 'git commit', 'git merge' or
+  'git rebase', creates or deletes no branch, and creates no tag: a
+  checked-out HEAD belongs to one directory, which other people or runs
+  may be using, and switching it is the write-side form of asserting on
+  it. It runs its commands in the tree as it finds it. To read content on
+  another ref it uses 'git show <ref>:<path>' or 'git diff <a>..<b>',
+  never a checkout. A command that must run against the work (a build, a
+  test, a linter) belongs to the node that made the work, or to
+  --verify-cmd, not to a checkout inside the check node.
 - That whole-reply pin belongs ONLY on a node whose entire job is to
   ASSERT: it observes, it judges, and its reply IS the verdict, because
   nothing else it produced is needed afterwards. Being the LAST node of the

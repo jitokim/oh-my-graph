@@ -231,6 +231,30 @@ func TestPlannerPromptAsksForRepositoryStateNotCheckoutState(t *testing.T) {
 	}
 }
 
+// TestPlannerPromptForbidsCheckNodesFromChangingRepositoryState pins the
+// write-side twin of the repository-state rule, in BOTH spellings of the
+// final-check paragraph (#427). A planner told a final check node to
+// 'git checkout' a branch; that moves HEAD in a checkout other people or runs
+// may be using. The rule must forbid the checkout by name and offer the
+// read-only spelling instead, since a prohibition with no offer is the shape
+// DESIGN.md's "Verdict patterns" already records.
+func TestPlannerPromptForbidsCheckNodesFromChangingRepositoryState(t *testing.T) {
+	for _, verifyCmd := range []string{"make test", ""} {
+		prompt := plannerPromptNoMenu(t, "fix the bug on a feature branch", verifyCmd)
+
+		for _, want := range []string{
+			"it never\n  changes repository state.",
+			"'git checkout'",
+			"'git show <ref>:<path>'",
+			"never a checkout.",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("verify-cmd %q: prompt lost the no-state-change rule: missing %q", verifyCmd, want)
+			}
+		}
+	}
+}
+
 // TestPlannerPromptReservesTheWholeReplyPinForAssertingNodes pins the rule that
 // decides WHICH node may carry the whole-reply PASS pin, in BOTH spellings of
 // the final-check paragraph — it is one prompt, and a rule that holds only when
