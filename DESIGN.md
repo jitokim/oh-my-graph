@@ -1626,10 +1626,21 @@ loop by something other than the reviewer's silence.
 The severity floor shipped second (ADR 0043): the review fragments answer in
 three values, below, and the shipped gates (`gated-lane`'s `review`,
 `self-dev`'s `review-verdict`) accept `MINOR:` and fail only `FINDINGS:`, so
-a nit rides into the PR body and only a blocking finding fires the arc. A
+a nit rides into the PR body and only a blocking finding fires the arc.
+**Planned** review nodes now use the same gating verdict: the planner prompt's
+feedback-arc rule tells the node declaring `feedback` to open with one of the
+three bare tokens, graded the same way — a claim that is not true (code,
+comment or docs) or a change to behaviour or correctness is `FINDINGS:`, never
+`MINOR:`, which is only for form when the meaning is already right — and hands it
+`{"exit_zero": true, "result_matches": <the gating pattern>}`, rendered from
+`coordinator.plannedReviewGatingPattern`, which
+`TestPlannedReviewGatingPatternMatchesReviewFragments` holds byte-identical to
+the fragments' spelling. Only that node gets it; the planned final check keeps
+its whole-reply `PASS` pin (`branchEvidenceRule`). A
 re-run reviewer is also told that an item it rated minor stays minor unless
-the rework changed the code it is about, so a nit cannot be promoted into a
-new round over code nobody touched. Neither half is a convergence proof —
+the rework changed the code it is about — a claim that is not true was never
+minor, so it is the exception — so a nit cannot be promoted into a new round
+over code nobody touched. Neither half is a convergence proof —
 whether #288's first half, `{{ self.previous }}`, made the shipped loops
 converge is still unmeasured, and #288 stays open for that measurement and
 for the ledger, which does not tell a `MINOR:` pass from a `CLEAN` one.
