@@ -4,8 +4,9 @@
 //
 // It is a dependency-free leaf package because there are FOUR spawners —
 // runner.CLIRunner (a model node, claude or codex), verify.ShellVerifier (a
-// success_check.verify command), worktree.GitManager (the git worktree
-// commands behind a node's worktree:) and browser.ExecOpener (the open/xdg-open
+// success_check.verify command), worktree.GitManager (the git commands the
+// engine issues against the invocation repository: worktrees and the remote
+// snapshot) and browser.ExecOpener (the open/xdg-open
 // launch of the serve URL) — and they must not be able to disagree about the
 // rule. Each of the last three can reach claude without meaning to: a
 // verification command may legitimately BE a claude invocation
