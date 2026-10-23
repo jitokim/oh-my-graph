@@ -88,10 +88,12 @@ func (l *remoteLeg) end(runCtx context.Context) (interrupted bool) {
 }
 
 // interruptedRunErr is the error a leg whose after snapshot was interrupted
-// ends with: an interrupt there ends the leg as interrupted (exit 1), like
-// one during any node, rather than as the pause or the pass the scheduler
-// returned. A failure the scheduler already returned is kept — its exit is
-// 1 already and it says more.
+// ends with: an interrupt there exits as interrupted (exit 1), like one
+// during any node, rather than as the pause or the pass the scheduler
+// returned. Only the exit changes: the outcome the scheduler already wrote to
+// state.json and run_finished stands, so a gate pause stays resumable. A
+// failure the scheduler already returned is kept — its exit is 1 already and
+// it says more.
 func interruptedRunErr(runCtx context.Context, runErr error) error {
 	var paused *schedule.PausedError
 	var limited *schedule.LimitPausedError

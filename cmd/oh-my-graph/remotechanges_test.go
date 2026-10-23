@@ -629,17 +629,19 @@ func (o *afterSnapshotInterrupter) Remotes(ctx context.Context) ([]worktree.Remo
 // snapshot waited out the git timeout and the leg ended paused at its gate
 // (exit 2). The interrupt now reaches the snapshot's git: the leg ends
 // promptly, as interrupted (exit 1), with both after parts recorded
-// unavailable, "interrupted".
+// unavailable, "interrupted". Only the exit changes: a leg whose nodes reached
+// the gate stays paused there in state.json, so its resume hint still prints.
 func TestRunGraph_AnInterruptDuringTheAfterSnapshotEndsTheLegInterrupted(t *testing.T) {
 	gateGraph := `{"name":"gate-flow","nodes":[
 		{"id":"a","prompt":"a"},
 		{"id":"approve","type":"gate","depends_on":["a"]},
 		{"id":"ship","prompt":"ship","depends_on":["approve"]}]}`
 	for _, tc := range []struct {
-		name string
-		leg  func(t *testing.T, fake *runner.FakeRunner, obs *afterSnapshotInterrupter) (string, error)
+		name     string
+		pausedAt string
+		leg      func(t *testing.T, fake *runner.FakeRunner, obs *afterSnapshotInterrupter) (string, error)
 	}{
-		{"a first leg", func(t *testing.T, fake *runner.FakeRunner, obs *afterSnapshotInterrupter) (string, error) {
+		{"a first leg", "approve", func(t *testing.T, fake *runner.FakeRunner, obs *afterSnapshotInterrupter) (string, error) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			obs.interrupt = cancel
@@ -650,7 +652,7 @@ func TestRunGraph_AnInterruptDuringTheAfterSnapshotEndsTheLegInterrupted(t *test
 			})
 			return out, err
 		}},
-		{"a resumed leg", func(t *testing.T, fake *runner.FakeRunner, obs *afterSnapshotInterrupter) (string, error) {
+		{"a resumed leg", "", func(t *testing.T, fake *runner.FakeRunner, obs *afterSnapshotInterrupter) (string, error) {
 			useRemoteObserver(t, originObserver(), remoteBaseSHA)
 			var err error
 			captureStdout(t, func() {
@@ -691,11 +693,18 @@ func TestRunGraph_AnInterruptDuringTheAfterSnapshotEndsTheLegInterrupted(t *test
 			if code := exitCodeForError(err); code != 1 {
 				t.Errorf("exit code = %d, want 1, an ordinary Ctrl-C's", code)
 			}
-			if strings.Contains(out, "Paused at gate") {
-				t.Errorf("an interrupted leg printed the pause hint:\n%s", out)
+			snap := remoteRunSnapshot(t, "run-1")
+			if snap.Gate.PausedAt != tc.pausedAt {
+				t.Errorf("state.json paused_at = %q, want %q: the interrupt changes only the exit", snap.Gate.PausedAt, tc.pausedAt)
+			}
+			if hinted := strings.Contains(out, "Paused at gate"); hinted != (tc.pausedAt != "") {
+				t.Errorf("pause hint printed = %v, want %v, the leg paused at %q:\n%s", hinted, !hinted, tc.pausedAt, out)
+			}
+			if tc.pausedAt != "" && !strings.Contains(out, "oh-my-graph resume run-1 --approve "+tc.pausedAt) {
+				t.Errorf("the hint does not name the resume of the still-paused gate:\n%s", out)
 			}
 
-			rc := remoteRunSnapshot(t, "run-1").RemoteChanges
+			rc := snap.RemoteChanges
 			if rc == nil || len(rc.Legs) == 0 || rc.Legs[len(rc.Legs)-1].After == nil {
 				t.Fatalf("remote_changes = %+v, want the leg with an after", rc)
 			}

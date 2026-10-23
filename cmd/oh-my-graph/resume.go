@@ -826,9 +826,13 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		remote.print(os.Stdout)
 		return ctxErr
 	}
-	runErr := scheduler.Run(ctx, g, h, led)
+	// schedErr is what the scheduler recorded; an interrupt during the after
+	// snapshot changes only the exit (runErr), so a leg that reached a gate
+	// is still paused in state.json and its resume hint still prints.
+	schedErr := scheduler.Run(ctx, g, h, led)
+	runErr := schedErr
 	if remote.end(ctx) {
-		runErr = interruptedRunErr(ctx, runErr)
+		runErr = interruptedRunErr(ctx, schedErr)
 	}
 	reportWorktreeCleanup(os.Stderr, worktrees.Cleanup(context.Background()))
 
@@ -839,11 +843,11 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// snapshot this leg rewrites carries snap.Graph forward verbatim — the
 	// verification stays on disk and stays untrusted — so the hint repeats the
 	// flags rather than promising a bare resume that would be refused.
-	description, err := pausedGateDescription(runID, runErr, g, h)
+	description, err := pausedGateDescription(runID, schedErr, g, h)
 	if err != nil {
 		return err
 	}
-	printDescribedPauseHint(os.Stdout, runID, runErr, verifyCmd, description, recordedLimitPause(runID, runErr))
+	printDescribedPauseHint(os.Stdout, runID, schedErr, verifyCmd, description, recordedLimitPause(runID, schedErr))
 
 	return runErr
 }

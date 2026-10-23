@@ -1297,9 +1297,13 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 		closeLeg(leg, runfeed.OutcomeFailed)
 		return ctxErr
 	}
-	runErr := scheduler.Run(ctx, g, h, led)
+	// schedErr is what the scheduler recorded; an interrupt during the after
+	// snapshot changes only the exit (runErr), so a leg that reached a gate
+	// is still paused in state.json and its resume hint still prints.
+	schedErr := scheduler.Run(ctx, g, h, led)
+	runErr := schedErr
 	if remote.end(ctx) {
-		runErr = interruptedRunErr(ctx, runErr)
+		runErr = interruptedRunErr(ctx, schedErr)
 	}
 	// Cleanup runs on a fresh context: the run's own may already be cancelled
 	// (halt-on-fail, Ctrl-C), and a halted run is exactly when leftover
@@ -1316,11 +1320,11 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	// verification (what ReattachVerifyCommand refuses to take from a run
 	// directory). That pair is ADR 0016 §4's refusal, so the hint prints the
 	// command WITH --verify-cmd rather than a bare one that would be refused.
-	description, err := pausedGateDescription(runID, runErr, g, h)
+	description, err := pausedGateDescription(runID, schedErr, g, h)
 	if err != nil {
 		return err
 	}
-	printDescribedPauseHint(os.Stdout, runID, runErr, resumeVerifyCmd, description, recordedLimitPause(runID, runErr))
+	printDescribedPauseHint(os.Stdout, runID, schedErr, resumeVerifyCmd, description, recordedLimitPause(runID, schedErr))
 
 	return runErr
 }
