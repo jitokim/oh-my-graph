@@ -1192,7 +1192,11 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	// One stamp for the leg, so its state.json and its run_started name the
 	// same build (#373).
 	engine := currentEngine()
-	recorder, err := newRunRecorder(runID, graphSourcePath, rawSource, g, fragmentsResolved, flags, toolPolicies, planningCostUSD, goal, engine)
+	// The base commit the remote change record's attribution excludes (ADR
+	// 0046 §5.1), read once, before any node can commit, and carried across
+	// resume in state.json.
+	baseSHA := runBaseCommit()
+	recorder, err := newRunRecorder(runID, graphSourcePath, rawSource, g, fragmentsResolved, flags, toolPolicies, planningCostUSD, goal, engine, baseSHA)
 	if err != nil {
 		return fmt.Errorf("prepare run snapshot: %w", err)
 	}
@@ -1276,7 +1280,11 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	})
 
 	fmt.Fprintf(os.Stdout, "Running graph %q (run %s)\n\n", g.Name, runID)
+	// The leg's remote record brackets the scheduler (ADR 0046 §2.1): a
+	// report only, so a remote it cannot read never stops the leg.
+	remote := beginRemoteLeg(ctx, runID, recorder, baseSHA, nil)
 	runErr := scheduler.Run(ctx, g, h, led)
+	remote.end()
 	// Cleanup runs on a fresh context: the run's own may already be cancelled
 	// (halt-on-fail, Ctrl-C), and a halted run is exactly when leftover
 	// worktrees still need tearing down.
@@ -1284,6 +1292,7 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 
 	fmt.Fprintln(os.Stdout)
 	led.Print(os.Stdout)
+	remote.print(os.Stdout)
 	// serializedVerify is also the discriminator for what a resume of this run
 	// needs, and not by coincidence: it is non-nil exactly when the tool ceiling
 	// is non-empty (what `resume` reads off snap.ToolPolicies to tell an auto
@@ -1322,7 +1331,7 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 // unresolved-fragment backstop. The rawSource-verbatim shortcut is only legal
 // for a document resolution never touched; with that, resume works on
 // fragment-free material by construction.
-func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Graph, fragmentsResolved bool, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, planningCostUSD float64, goal *runstate.GoalRef, engine runfeed.Engine) (*runstate.SnapshotRecorder, error) {
+func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Graph, fragmentsResolved bool, flags commonRunFlags, toolPolicies map[string]runner.ToolPolicy, planningCostUSD float64, goal *runstate.GoalRef, engine runfeed.Engine, runBaseSHA string) (*runstate.SnapshotRecorder, error) {
 	graphJSON := rawSource
 	if fragmentsResolved || !json.Valid(rawSource) {
 		marshaled, err := json.Marshal(g)
@@ -1362,6 +1371,7 @@ func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Gr
 		Interview:             flags.interviewRecord,
 		Baseline:              baselineRecord(flags.baselineSkipped),
 		VerifyPins:            flags.verifyPins.record(),
+		RunBaseSHA:            runBaseSHA,
 	}
 	return runstate.NewSnapshotRecorder(statePath, base), nil
 }
