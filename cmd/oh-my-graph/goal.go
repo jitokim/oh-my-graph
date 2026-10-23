@@ -241,7 +241,11 @@ func isRunFailure(err error) bool {
 // located by the same handoff.FailedOutputPath that wrote it — is read, with
 // the same bound, into FailedReply, used only to find the UNRUNNABLE: marker a
 // failed final check writes (#333); the assessor never renders it, and it
-// never reaches another node.
+// never reaches another node. The read's head+tail cut can drop the middle of
+// a long reply, and the write's own 256 KiB cut can too, so a marker line in
+// the middle would be lost to one or the other — PersistFailure copies every
+// marker line to the front of the file, whose first bytes survive both cuts,
+// and this read stays as it is.
 func cycleEvidence(runID string, plan coordinator.Plan, runPassed bool) (coordinator.CycleEvidence, error) {
 	snap, err := runstate.Load(filepath.Join(runDirFor(runID), stateFileName))
 	if err != nil {

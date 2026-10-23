@@ -87,8 +87,14 @@ artifact: a feedback arc's payload is written to
 down (ADR 0010, ADR 0020). Artifacts are the flat ones.
 
 `failed/<node-id>.out` holds the words of a node that failed, bounded at
-256 KiB with any cut announced in the file, and is part of this contract:
-`Handoff.FailedOutputPath` computes it, a `resume --retry-failed` leg re-reads
+256 KiB with any cut announced in the file, and is part of this contract.
+When the reply has lines opening with `UNRUNNABLE:` (a final check naming a
+done-list command no planned node can run, #333), copies of those lines —
+whole lines, at most 4 KiB — come first in the file, followed by a
+`… oh-my-graph copied the lines above from the reply below …` line and then
+the reply itself, so the copies survive any cut; they count toward the
+256 KiB, and a reply with none has no such block.
+`Handoff.FailedOutputPath` computes the path, a `resume --retry-failed` leg re-reads
 it to quote a `judged` failure back into the retry, and a consumer may read it
 for the analysis the ledger's capped `detail` does not carry. Its existence is
 a claim about *this* node's *last* outcome and is kept true in both directions:

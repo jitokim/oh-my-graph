@@ -3138,10 +3138,11 @@ node runs it once and its PASS requires it to exit 0; if none does (`npm test`,
 `pytest`), it replies FAIL naming the command — never a PASS over a done item
 nothing ran. That FAIL also carries one line per such command, at the start of
 the line and without markdown, `UNRUNNABLE: <the command as the goal wrote
-it>`; the marker is one constant, `unrunnableDoneItemMarker`, rendered into
-the prompt, and the goal loop reads those lines — from the failed node's reply
-file, `failed/<node-id>.out`, since a FAIL registers no artifact — to stop
-(below, "Goal cycles"). A different command that checks the same thing — a stand-in, a
+it>`; the marker is one constant, `handoff.UnrunnableDoneItemMarker` (in
+`internal/handoff`, because the coordinator imports handoff and the write
+needs it too), rendered into the prompt, and the goal loop reads those lines
+— from the failed node's reply file, `failed/<node-id>.out`, since a FAIL
+registers no artifact — to stop (below, "Goal cycles"). A different command that checks the same thing — a stand-in, a
 re-implementation, a test covering the same rule — never satisfies a done item:
 the item names a command, and only that command running counts. That half is
 one string, `doneListCommandRule`, shared verbatim with the without-command
@@ -4137,7 +4138,16 @@ quoting the brief) stops nothing. A failed node
 registers no artifact — `handoff.PersistFailure` writes its reply only to
 `failed/<node-id>.out`. `cycleEvidence` reads that file back, bounded like an
 artifact and located by the same `handoff.FailedOutputPath` that wrote it,
-into `NodeEvidence.FailedReply`, which exists for this scan alone: it is never
+into `NodeEvidence.FailedReply`. The file is cut twice — head and tail at the
+256 KiB write bound, and head and tail again at the 64 KiB read bound — so a
+marker line in the middle of a long reply would fall in one gap or the other;
+`PersistFailure` therefore copies every line opening with the marker (after
+leading whitespace) to the FRONT of the file before the reply, so they survive
+both cuts. The copied block holds whole lines only, at most 4 KiB of them, and
+counts toward the 256 KiB bound (the reply's excerpt budget shrinks by it); a
+reply with no marker line is written exactly as before, and the duplicate
+lines are harmless because the scan de-duplicates. `NodeEvidence.FailedReply`
+exists for this scan alone: it is never
 shown to the assessor and never reaches another node, so a failed reply still
 reaches a human, never a prompt. Another cycle cannot fix it — the planned node
 allowlist is fixed — so the loop plans none, whatever `--max-cycles` is. The
