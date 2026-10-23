@@ -39,6 +39,7 @@ func NewSnapshotRecorder(path string, base Snapshot) *SnapshotRecorder {
 		nodes[id] = rec
 	}
 	base.Nodes = nodes
+	base.RemoteChanges = base.RemoteChanges.clone()
 	return &SnapshotRecorder{path: path, snap: base}
 }
 
@@ -143,6 +144,18 @@ func (r *SnapshotRecorder) RecordLimitPause(pause LimitPause) error {
 	defer r.mu.Unlock()
 	pause.NodeIDs = slices.Sorted(slices.Values(pause.NodeIDs))
 	r.snap.LimitPause = &pause
+	return Write(r.path, r.snap)
+}
+
+// RecordRemoteChanges stores the run's remote change record (ADR 0046 §2.2)
+// and persists the snapshot in one write. The record is deep-copied, so the
+// caller may go on beginning and ending legs on its own value without
+// touching what the recorder writes next. Nodes, Gate and LimitPause are
+// untouched.
+func (r *SnapshotRecorder) RecordRemoteChanges(changes RemoteChanges) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.snap.RemoteChanges = changes.clone()
 	return Write(r.path, r.snap)
 }
 
