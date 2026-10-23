@@ -1565,11 +1565,11 @@ So a verdict pattern is written in two halves, and both are load-bearing:
   judges and never changes repository state: no `git checkout`, `switch`,
   `reset`, `restore`, `stash`, `commit`, `merge` or `rebase`, no branch
   created or deleted and no tag. A checked-out HEAD belongs to one directory,
-  so switching it is the write-side form of asserting on it. The node runs its
-  commands in the tree as it finds it, reads another ref with
-  `git show <ref>:<path>` or `git diff <a>..<b>`, and leaves a build, test or
-  linter that must run against the work to the node that made it or to
-  `--verify-cmd` (#427). The pattern itself is unchanged — the caveat found a home in the
+  so switching it is the write-side form of asserting on it. The node reads
+  another ref with `git show <ref>:<path>` or `git diff <a>..<b>`. A command
+  that would need another ref checked out to run belongs to the node that
+  made the work, or to `--verify-cmd`; a check node runs its own commands,
+  done-list ones included, in the tree as it finds it (#427). The pattern itself is unchanged — the caveat found a home in the
   prompt, not in a relaxed anchor (#264). Every `success_check` that prompt
   hands out with a `result_matches` — this whole-reply pin, the prefix
   verdict a report node may take instead, and the alternative it names to a

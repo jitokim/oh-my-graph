@@ -237,7 +237,10 @@ func TestPlannerPromptAsksForRepositoryStateNotCheckoutState(t *testing.T) {
 // 'git checkout' a branch; that moves HEAD in a checkout other people or runs
 // may be using. The rule must forbid the checkout by name and offer the
 // read-only spelling instead, since a prohibition with no offer is the shape
-// DESIGN.md's "Verdict patterns" already records.
+// DESIGN.md's "Verdict patterns" already records. It must also say the check
+// node still runs its own commands, done-list ones included, in the tree as it
+// finds it, so the rule never reads as taking the done-list command (#426) away
+// from the final check node.
 func TestPlannerPromptForbidsCheckNodesFromChangingRepositoryState(t *testing.T) {
 	for _, verifyCmd := range []string{"make test", ""} {
 		prompt := plannerPromptNoMenu(t, "fix the bug on a feature branch", verifyCmd)
@@ -247,6 +250,8 @@ func TestPlannerPromptForbidsCheckNodesFromChangingRepositoryState(t *testing.T)
 			"'git checkout'",
 			"'git show <ref>:<path>'",
 			"never a checkout.",
+			"A command that would need another\n  ref checked out to run",
+			"done-list ones\n  included, in the tree as it finds it.",
 		} {
 			if !strings.Contains(prompt, want) {
 				t.Errorf("verify-cmd %q: prompt lost the no-state-change rule: missing %q", verifyCmd, want)

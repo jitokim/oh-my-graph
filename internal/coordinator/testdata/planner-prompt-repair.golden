@@ -186,11 +186,11 @@ Rules:
   'git rebase', creates or deletes no branch, and creates no tag: a
   checked-out HEAD belongs to one directory, which other people or runs
   may be using, and switching it is the write-side form of asserting on
-  it. It runs its commands in the tree as it finds it. To read content on
-  another ref it uses 'git show <ref>:<path>' or 'git diff <a>..<b>',
-  never a checkout. A command that must run against the work (a build, a
-  test, a linter) belongs to the node that made the work, or to
-  --verify-cmd, not to a checkout inside the check node.
+  it. To read content on another ref it uses 'git show <ref>:<path>' or
+  'git diff <a>..<b>', never a checkout. A command that would need another
+  ref checked out to run belongs to the node that made the work, or to
+  --verify-cmd; a check node runs its own commands, done-list ones
+  included, in the tree as it finds it.
 - That whole-reply pin belongs ONLY on a node whose entire job is to
   ASSERT: it observes, it judges, and its reply IS the verdict, because
   nothing else it produced is needed afterwards. Being the LAST node of the
