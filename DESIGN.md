@@ -1561,7 +1561,15 @@ So a verdict pattern is written in two halves, and both are load-bearing:
   `PASS`. Nor is an action the goal forbids the run to take — pushing,
   opening or editing a pull request, creating a remote: that is the
   operator's next step, not a qualification a reader would act on, so it is
-  never a reason to reply `FAIL` (#388). The pattern itself is unchanged — the caveat found a home in the
+  never a reason to reply `FAIL` (#388). The same check node observes and
+  judges and never changes repository state: no `git checkout`, `switch`,
+  `reset`, `restore`, `stash`, `commit`, `merge` or `rebase`, no branch
+  created or deleted and no tag. A checked-out HEAD belongs to one directory,
+  so switching it is the write-side form of asserting on it. The node runs its
+  commands in the tree as it finds it, reads another ref with
+  `git show <ref>:<path>` or `git diff <a>..<b>`, and leaves a build, test or
+  linter that must run against the work to the node that made it or to
+  `--verify-cmd` (#427). The pattern itself is unchanged — the caveat found a home in the
   prompt, not in a relaxed anchor (#264). Every `success_check` that prompt
   hands out with a `result_matches` — this whole-reply pin, the prefix
   verdict a report node may take instead, and the alternative it names to a
