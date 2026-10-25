@@ -2467,8 +2467,9 @@ incompatible snapshot is refused rather than misread:
   returned error. It is cleared the way `gate.paused_at` is: `continueRun`
   (`cmd/oh-my-graph/resume.go`) seeds the resumed leg's recorder with it as
   loaded, and `RecordLegGate` drops it once the leg's before remote snapshot
-  completes uninterrupted, and a limit the leg hits records its
-  own. Display only: `runs list` and the end-of-leg pause hint name the cause
+  completes uninterrupted (a failed write of that drop ends the leg before
+  any node starts, the run still paused and resumable by the same command),
+  and a limit the leg hits records its own. Display only: `runs list` and the end-of-leg pause hint name the cause
   from it, and `resume --approve/--reject` on such a run says it is paused on
   a limit rather than "not paused"; `runstatus` does not read it, nothing a
   resume re-launches depends on it, and its write is non-fatal, like a node's.
