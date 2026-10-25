@@ -17,12 +17,23 @@ var (
 
 var origin = RemoteConfig{Name: "origin", FetchURL: "/srv/origin.git", PushURL: "/srv/origin.git"}
 
-// observed builds a snapshot with both parts observed.
+// observed builds a snapshot with every part observed and no open PRs.
 func observed(remotes []RemoteConfig, refs ...RemoteBranchRef) RemoteSnapshot {
 	return RemoteSnapshot{
-		Remotes:  RemotesSnapshot{Status: RemotePartObserved, Configured: remotes},
-		Branches: BranchesSnapshot{Status: RemotePartObserved, Refs: refs},
+		Remotes:      RemotesSnapshot{Status: RemotePartObserved, Configured: remotes},
+		Branches:     BranchesSnapshot{Status: RemotePartObserved, Refs: refs},
+		PullRequests: PullRequestsSnapshot{Status: RemotePartObserved},
 	}
+}
+
+// withPRs is snap with its PR part observed holding prs.
+func withPRs(snap RemoteSnapshot, prs ...OpenPullRequest) RemoteSnapshot {
+	snap.PullRequests = PullRequestsSnapshot{Status: RemotePartObserved, Open: prs}
+	return snap
+}
+
+func pr(number int, head, sha string) OpenPullRequest {
+	return OpenPullRequest{Number: number, HeadRefName: head, HeadRefOid: sha}
 }
 
 func ref(remote, branch, sha string) RemoteBranchRef {
@@ -45,7 +56,7 @@ func TestDiffRemoteSnapshots_NoChangeSaysWhatWasObserved(t *testing.T) {
 	snap := observed([]RemoteConfig{origin}, ref("origin", "main", shaBase))
 	got := DiffRemoteSnapshots(snap, snap, runCommitIs(shaBase))
 	want := RemoteDiff{
-		Observed:    []RemotePart{RemotePartRemotes, RemotePartBranches},
+		Observed:    []RemotePart{RemotePartRemotes, RemotePartBranches, RemotePartPullRequests},
 		Entries:     []RemoteChangeEntry{},
 		NotCompared: []RemoteNotCompared{},
 	}
@@ -56,7 +67,7 @@ func TestDiffRemoteSnapshots_NoChangeSaysWhatWasObserved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != `{"observed":["remotes","branches"],"entries":[],"not_compared":[]}` {
+	if string(data) != `{"observed":["remotes","branches","pull_requests"],"entries":[],"not_compared":[]}` {
 		t.Errorf("an empty diff encodes as %s; it must spell out all three lists", data)
 	}
 }
@@ -176,6 +187,8 @@ func TestDiffRemoteSnapshots_UnavailableIsNeverEmpty(t *testing.T) {
 	noRepo := RemoteSnapshot{
 		Remotes:  RemotesSnapshot{Status: RemotePartUnavailable, Reason: "fatal: not a git repository"},
 		Branches: BranchesSnapshot{Status: RemotePartUnavailable, Reason: "the remotes part is unavailable"},
+		// gh reads the GitHub repository, not git: it may see what git cannot.
+		PullRequests: PullRequestsSnapshot{Status: RemotePartObserved},
 	}
 
 	cases := []struct {
@@ -184,14 +197,14 @@ func TestDiffRemoteSnapshots_UnavailableIsNeverEmpty(t *testing.T) {
 		observed      []RemotePart
 		reasons       map[RemotePart]string
 	}{
-		{"branches unavailable after", full, lsFailed, []RemotePart{RemotePartRemotes},
+		{"branches unavailable after", full, lsFailed, []RemotePart{RemotePartRemotes, RemotePartPullRequests},
 			map[RemotePart]string{RemotePartBranches: "unavailable after: ls-remote origin: exit status 128"}},
-		{"branches unavailable before", lsFailed, full, []RemotePart{RemotePartRemotes},
+		{"branches unavailable before", lsFailed, full, []RemotePart{RemotePartRemotes, RemotePartPullRequests},
 			map[RemotePart]string{RemotePartBranches: "unavailable before: ls-remote origin"}},
-		{"everything unavailable on both sides", noRepo, noRepo, []RemotePart{},
+		{"the git parts unavailable on both sides", noRepo, noRepo, []RemotePart{RemotePartPullRequests},
 			map[RemotePart]string{RemotePartRemotes: "unavailable before (fatal: not a git repository) and after (fatal: not a git repository)",
 				RemotePartBranches: "unavailable before"}},
-		{"remotes unavailable after", full, noRepo, []RemotePart{},
+		{"remotes unavailable after", full, noRepo, []RemotePart{RemotePartPullRequests},
 			map[RemotePart]string{RemotePartRemotes: "unavailable after: fatal: not a git repository", RemotePartBranches: "unavailable after"}},
 	}
 	for _, tc := range cases {
@@ -272,8 +285,11 @@ func TestRemoteChanges_ALegWithNoAfterLeavesNothingToDiff(t *testing.T) {
 	rc.BeginLeg(observed([]RemoteConfig{origin}))
 
 	between := rc.BetweenLegs[0].Changes
-	if len(between.Entries) != 0 || len(between.Observed) != 0 || len(between.NotCompared) != 2 {
-		t.Fatalf("between = %+v, want no entries and both parts not compared", between)
+	if len(between.Entries) != 0 || len(between.Observed) != 0 || len(between.NotCompared) != 3 {
+		t.Fatalf("between = %+v, want no entries and every part not compared", between)
+	}
+	if between.NotCompared[2].Part != RemotePartPullRequests {
+		t.Errorf("not_compared = %+v, want the pull requests among them", between.NotCompared)
 	}
 	if between.NotCompared[0].Reason != "leg 1 recorded no after snapshot" {
 		t.Errorf("reason = %q", between.NotCompared[0].Reason)
@@ -607,4 +623,254 @@ func TestSnapshotRecorder_RecordLegGateKeepsTheLoadedRecordsWhenItsWriteFails_41
 	if !reflect.DeepEqual(snap.Nodes, base.Nodes) {
 		t.Errorf("the next record persisted nodes %+v, want the loaded records %+v", snap.Nodes, base.Nodes)
 	}
+}
+
+// TestDiffRemoteSnapshots_EachPRKind (ADR 0046 §8.2): one case per PR kind,
+// keyed on the PR number and its head sha. updatedAt, the title and the rest
+// are not collected, so a PR whose only change is one of them reads the same
+// on both sides and yields no entry — and neither does a renamed head branch
+// whose sha stayed put.
+func TestDiffRemoteSnapshots_EachPRKind(t *testing.T) {
+	base := observed([]RemoteConfig{origin})
+	cases := []struct {
+		name          string
+		before, after []OpenPullRequest
+		want          []RemoteChangeEntry
+	}{
+		{"pr_opened", nil, []OpenPullRequest{pr(12, "feat/x", shaRun)},
+			[]RemoteChangeEntry{{Kind: PROpened, PRNumber: 12, HeadRefName: "feat/x", NewSHA: shaRun, Attribution: AttributionRunCommit}}},
+		{"pr_updated", []OpenPullRequest{pr(12, "feat/x", shaThem)}, []OpenPullRequest{pr(12, "feat/x", shaRun)},
+			[]RemoteChangeEntry{{Kind: PRUpdated, PRNumber: 12, HeadRefName: "feat/x", OldSHA: shaThem, NewSHA: shaRun, Attribution: AttributionRunCommit}}},
+		{"pr_no_longer_open", []OpenPullRequest{pr(12, "feat/x", shaRun)}, nil,
+			[]RemoteChangeEntry{{Kind: PRNoLongerOpen, PRNumber: 12, HeadRefName: "feat/x", OldSHA: shaRun, Attribution: AttributionNotAttributable}}},
+		{"only updatedAt moved: the collected fields are equal", []OpenPullRequest{pr(12, "feat/x", shaThem)}, []OpenPullRequest{pr(12, "feat/x", shaThem)},
+			[]RemoteChangeEntry{}},
+		{"only the head branch name changed", []OpenPullRequest{pr(12, "feat/x", shaThem)}, []OpenPullRequest{pr(12, "feat/y", shaThem)},
+			[]RemoteChangeEntry{}},
+		{"sorted by number", []OpenPullRequest{pr(30, "c", shaThem), pr(4, "a", shaThem)}, []OpenPullRequest{pr(4, "a", shaRun), pr(21, "b", shaThem)},
+			[]RemoteChangeEntry{
+				{Kind: PRUpdated, PRNumber: 4, HeadRefName: "a", OldSHA: shaThem, NewSHA: shaRun, Attribution: AttributionRunCommit},
+				{Kind: PROpened, PRNumber: 21, HeadRefName: "b", NewSHA: shaThem, Attribution: AttributionNotAttributable},
+				{Kind: PRNoLongerOpen, PRNumber: 30, HeadRefName: "c", OldSHA: shaThem, Attribution: AttributionNotAttributable},
+			}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := DiffRemoteSnapshots(withPRs(base, tc.before...), withPRs(base, tc.after...), runCommitIs(shaRun))
+			if !reflect.DeepEqual(got.Entries, tc.want) {
+				t.Errorf("entries = %+v\nwant      %+v", got.Entries, tc.want)
+			}
+			if want := []RemotePart{RemotePartRemotes, RemotePartBranches, RemotePartPullRequests}; !reflect.DeepEqual(got.Observed, want) {
+				t.Errorf("observed = %v, want %v", got.Observed, want)
+			}
+			if len(got.NotCompared) != 0 {
+				t.Errorf("not_compared = %+v, want none", got.NotCompared)
+			}
+		})
+	}
+}
+
+// TestDiffRemoteSnapshots_PREntriesComeAfterTheGitOnes: one diff orders the
+// kinds remote, branch, PR; and a PR entry carries no remote.
+func TestDiffRemoteSnapshots_PREntriesComeAfterTheGitOnes(t *testing.T) {
+	before := withPRs(observed(nil))
+	after := withPRs(observed([]RemoteConfig{origin}), pr(1, "feat/x", shaRun))
+	got := DiffRemoteSnapshots(before, after, nil)
+	if len(got.Entries) != 2 || got.Entries[0].Kind != RemoteAdded || got.Entries[1].Kind != PROpened {
+		t.Fatalf("entries = %+v, want remote_added then pr_opened", got.Entries)
+	}
+	data, err := json.Marshal(got.Entries[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"kind":"pr_opened","pr_number":1,"head_ref_name":"feat/x","new_sha":"` + shaRun + `","attribution":"not_attributable"}`; string(data) != want {
+		t.Errorf("pr entry encodes as %s\nwant                 %s", data, want)
+	}
+}
+
+// TestDiffRemoteSnapshots_PRAttribution (ADR 0046 §2.2): pr_opened and
+// pr_updated are run_commit exactly when their head sha passes the check the
+// branch entries use; pr_no_longer_open never is, whatever its old sha.
+func TestDiffRemoteSnapshots_PRAttribution(t *testing.T) {
+	base := observed([]RemoteConfig{origin})
+	before := withPRs(base, pr(1, "a", shaBase), pr(2, "b", shaBase), pr(3, "gone", shaRun))
+	after := withPRs(base, pr(1, "a", shaRun), pr(2, "b", shaThem), pr(4, "mine", shaRun), pr(5, "theirs", shaThem))
+	got := DiffRemoteSnapshots(before, after, runCommitIs(shaRun))
+	want := map[int]RemoteAttribution{
+		1: AttributionRunCommit,       // pr_updated to the run's commit
+		2: AttributionNotAttributable, // pr_updated to someone else's
+		3: AttributionNotAttributable, // pr_no_longer_open, though its sha is the run's
+		4: AttributionRunCommit,       // pr_opened at the run's commit
+		5: AttributionNotAttributable, // pr_opened at someone else's
+	}
+	if len(got.Entries) != len(want) {
+		t.Fatalf("entries = %+v, want one per PR in %v", got.Entries, want)
+	}
+	for _, e := range got.Entries {
+		if e.Attribution != want[e.PRNumber] {
+			t.Errorf("PR #%d %s: attribution %s, want %s", e.PRNumber, e.Kind, e.Attribution, want[e.PRNumber])
+		}
+	}
+
+	// No check (the between-legs diff) attributes nothing.
+	for _, e := range DiffRemoteSnapshots(before, after, nil).Entries {
+		if e.Attribution != AttributionNotAttributable {
+			t.Errorf("PR #%d %s with no check: attribution %s", e.PRNumber, e.Kind, e.Attribution)
+		}
+	}
+}
+
+// TestRemoteChanges_PRsBetweenLegsAreNotAttributable (ADR 0046 §3.1): a PR
+// opened at the run's own commit while no leg ran is in between_legs,
+// not_attributable, and does not count against the next leg.
+func TestRemoteChanges_PRsBetweenLegsAreNotAttributable(t *testing.T) {
+	always := func(string) bool { return true }
+	start := withPRs(observed([]RemoteConfig{origin}))
+	paused := withPRs(start, pr(7, "omg/run/x", shaRun))
+
+	var rc RemoteChanges
+	rc.BeginLeg(start)
+	rc.EndLeg(start, always)
+	rc.BeginLeg(paused)
+	rc.EndLeg(paused, always)
+
+	between := rc.BetweenLegs[0].Changes.Entries
+	if len(between) != 1 || between[0].Kind != PROpened || between[0].Attribution != AttributionNotAttributable {
+		t.Errorf("between-legs entries = %+v, want pr_opened, not_attributable", between)
+	}
+	if got := rc.Legs[1].Changes.Entries; len(got) != 0 {
+		t.Errorf("leg 2 entries = %+v, want none: the PR opened during the pause", got)
+	}
+}
+
+// TestDiffRemoteSnapshots_PRsUnavailableAfterOnly (ADR 0046 §8.3): "not
+// authenticated" on the after only compares no PRs: no pr_no_longer_open for
+// the PRs the before listed, and a not_compared item naming the part.
+func TestDiffRemoteSnapshots_PRsUnavailableAfterOnly(t *testing.T) {
+	before := withPRs(observed([]RemoteConfig{origin}), pr(1, "a", shaBase), pr(2, "b", shaThem))
+	after := observed([]RemoteConfig{origin})
+	after.PullRequests = PullRequestsSnapshot{Status: RemotePartUnavailable, Reason: "not authenticated",
+		Detail: "To get started with GitHub CLI, please run: gh auth login"}
+
+	got := DiffRemoteSnapshots(before, after, func(string) bool { return true })
+	if len(got.Entries) != 0 {
+		t.Errorf("entries = %+v, want none: an unavailable list is not an empty one", got.Entries)
+	}
+	if want := []RemotePart{RemotePartRemotes, RemotePartBranches}; !reflect.DeepEqual(got.Observed, want) {
+		t.Errorf("observed = %v, want %v", got.Observed, want)
+	}
+	want := []RemoteNotCompared{{Part: RemotePartPullRequests, Reason: "unavailable after: not authenticated"}}
+	if !reflect.DeepEqual(got.NotCompared, want) {
+		t.Errorf("not_compared = %+v, want %+v", got.NotCompared, want)
+	}
+
+	// And the other way: unavailable before only yields no pr_opened.
+	got = DiffRemoteSnapshots(after, before, func(string) bool { return true })
+	if len(got.Entries) != 0 || len(got.NotCompared) != 1 || got.NotCompared[0].Reason != "unavailable before: not authenticated" {
+		t.Errorf("diff = %+v, want no entries and pull_requests unavailable before", got)
+	}
+}
+
+// TestRemoteChanges_AnInterruptedAfterComparesNothing: the after an
+// interrupted leg records has every part unavailable, "interrupted", the PR
+// part included, so the record never reads "no change".
+func TestRemoteChanges_AnInterruptedAfterComparesNothing(t *testing.T) {
+	var rc RemoteChanges
+	rc.BeginLeg(withPRs(observed([]RemoteConfig{origin}), pr(1, "a", shaBase)))
+	rc.EndLeg(UnavailableRemoteSnapshot("interrupted"), func(string) bool { return true })
+
+	d := rc.Legs[0].Changes
+	if len(d.Entries) != 0 || len(d.Observed) != 0 {
+		t.Fatalf("diff = %+v, want nothing compared", d)
+	}
+	want := []RemoteNotCompared{
+		{Part: RemotePartRemotes, Reason: "unavailable after: interrupted"},
+		{Part: RemotePartBranches, Reason: "unavailable after: interrupted"},
+		{Part: RemotePartPullRequests, Reason: "unavailable after: interrupted"},
+	}
+	if !reflect.DeepEqual(d.NotCompared, want) {
+		t.Errorf("not_compared = %+v\nwant          %+v", d.NotCompared, want)
+	}
+}
+
+// TestRemoteSnapshot_PullRequestsEncoding: an observed part with no PRs keeps
+// its status, so it stays distinct from an unavailable one; a part never
+// recorded has no key at all.
+func TestRemoteSnapshot_PullRequestsEncoding(t *testing.T) {
+	keys := func(s RemoteSnapshot) map[string]json.RawMessage {
+		t.Helper()
+		data, err := json.Marshal(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	if got := string(keys(observed(nil))["pull_requests"]); got != `{"status":"observed"}` {
+		t.Errorf("an observed empty PR part encodes as %s", got)
+	}
+	unseen := observed(nil)
+	unseen.PullRequests = PullRequestsSnapshot{}
+	if raw, ok := keys(unseen)["pull_requests"]; ok {
+		t.Errorf("a PR part never recorded encodes as %s, want no key", raw)
+	}
+}
+
+// TestLoad_RemoteChangesWithoutThePRPartLoads_410: a schema-3 state.json
+// whose record was written before the PR part existed loads with that part
+// zero ("not recorded"), compares nothing for it against a new snapshot,
+// and is written back without inventing the key.
+func TestLoad_RemoteChangesWithoutThePRPartLoads_410(t *testing.T) {
+	fixture := filepath.Join("testdata", "pre-pr-part-remote-changes-state.json")
+	if strings.Contains(string(mustReadFile(t, fixture)), "pull_requests") {
+		t.Fatal("the fixture must predate the PR part")
+	}
+	snap, err := Load(fixture)
+	if err != nil {
+		t.Fatalf("a pre-change schema-3 snapshot no longer loads: %v", err)
+	}
+	if snap.RemoteChanges == nil || len(snap.RemoteChanges.Legs) != 1 || snap.RemoteChanges.Legs[0].After == nil {
+		t.Fatalf("remote_changes = %+v, want the old leg", snap.RemoteChanges)
+	}
+	leg := snap.RemoteChanges.Legs[0]
+	if !reflect.DeepEqual(leg.Before.PullRequests, PullRequestsSnapshot{}) || !reflect.DeepEqual(leg.After.PullRequests, PullRequestsSnapshot{}) {
+		t.Errorf("an absent PR part loaded as %+v / %+v, want zero", leg.Before.PullRequests, leg.After.PullRequests)
+	}
+	if e := leg.Changes.Entries; len(e) != 1 || e[0].Kind != BranchCreated || e[0].Remote != "origin" {
+		t.Errorf("old entries = %+v", e)
+	}
+
+	// A resumed leg's before, taken by this build, against the old after.
+	rc := *snap.RemoteChanges.clone()
+	rc.BeginLeg(withPRs(*leg.After, pr(1, "a", shaRun)))
+	between := rc.BetweenLegs[0].Changes
+	if len(between.Entries) != 0 {
+		t.Errorf("between-legs entries = %+v, want no PR guessed from a part never recorded", between.Entries)
+	}
+	if want := []RemoteNotCompared{{Part: RemotePartPullRequests, Reason: "unavailable before: not recorded"}}; !reflect.DeepEqual(between.NotCompared, want) {
+		t.Errorf("not_compared = %+v, want %+v", between.NotCompared, want)
+	}
+
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := Write(path, snap); err != nil {
+		t.Fatal(err)
+	}
+	if got := rawSchema(t, path); got != 3 {
+		t.Errorf("stamped schema %d, want 3", got)
+	}
+	if strings.Contains(string(mustReadFile(t, path)), "pull_requests") {
+		t.Error("rewriting the old record invented a pull_requests key")
+	}
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }

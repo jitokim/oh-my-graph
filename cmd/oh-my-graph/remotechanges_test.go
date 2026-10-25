@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jitokim/oh-my-graph/internal/browser"
+	"github.com/jitokim/oh-my-graph/internal/remote"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
@@ -28,6 +29,7 @@ import (
 // A test about the record swaps in its own through useRemoteObserver.
 func TestMain(m *testing.M) {
 	remoteObserverFor = func(string) worktree.RemoteObserver { return worktree.NewFakeRemoteObserver() }
+	remotePRListerFor = func(string) remote.PRLister { return remote.NewFakePRLister() }
 	runBaseCommit = func() string { return "" }
 	os.Exit(m.Run())
 }
@@ -130,7 +132,7 @@ func TestRunGraph_ABranchPushedDuringTheLegIsRecordedAndPrintedWithItsAttributio
 		t.Fatalf("run: %v", err)
 	}
 	for _, want := range []string{
-		"Remote changes (observed: remotes, branches):",
+		"Remote changes (observed: remotes, branches, pull_requests):",
 		"  branch_created origin/feat/x at 333333333333 — observed during the run; points at a commit this run made\n",
 		"  branch_created origin/human at 444444444444 — observed, not attributable\n",
 	} {
@@ -196,12 +198,12 @@ func TestRunGraph_NothingChangedPrintsTheNoRemoteChangesLine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if !strings.Contains(out, "TOTAL COST: $0.0100\n\nRemote changes: none observed (observed: remotes, branches)\n") {
+	if !strings.Contains(out, "TOTAL COST: $0.0100\n\nRemote changes: none observed (observed: remotes, branches, pull_requests)\n") {
 		t.Errorf("stdout lacks the no-remote-changes line:\n%s", out)
 	}
 	d := lastLegChanges(t, remoteRunSnapshot(t, soleRunID(t)))
-	if len(d.Entries) != 0 || len(d.NotCompared) != 0 || len(d.Observed) != 2 {
-		t.Errorf("changes = %+v, want both parts observed and nothing else", d)
+	if len(d.Entries) != 0 || len(d.NotCompared) != 0 || len(d.Observed) != 3 {
+		t.Errorf("changes = %+v, want all three parts observed and nothing else", d)
 	}
 }
 
@@ -292,7 +294,7 @@ func TestRunGraph_AnUnreadableRemoteNeverChangesTheOutcome(t *testing.T) {
 			if a, b := exitCodeForError(quietErr), exitCodeForError(brokenErr); a != b {
 				t.Errorf("exit code with an unreadable remote = %d, without = %d", b, a)
 			}
-			if !strings.Contains(quietOut, "Remote changes: none observed (observed: remotes, branches)\n") {
+			if !strings.Contains(quietOut, "Remote changes: none observed (observed: remotes, branches, pull_requests)\n") {
 				t.Errorf("the readable run lacks the no-remote-changes line:\n%s", quietOut)
 			}
 			if len(quiet.NotCompared) != 0 {
@@ -302,11 +304,11 @@ func TestRunGraph_AnUnreadableRemoteNeverChangesTheOutcome(t *testing.T) {
 				!strings.Contains(broken.NotCompared[0].Reason, "ls-remote broken") {
 				t.Errorf("not_compared = %+v, want the branches part, naming the broken remote", broken.NotCompared)
 			}
-			if len(broken.Observed) != 1 || broken.Observed[0] != runstate.RemotePartRemotes {
-				t.Errorf("observed = %v, want only remotes", broken.Observed)
+			if want := []runstate.RemotePart{runstate.RemotePartRemotes, runstate.RemotePartPullRequests}; !slices.Equal(broken.Observed, want) {
+				t.Errorf("observed = %v, want %v", broken.Observed, want)
 			}
 			for _, want := range []string{
-				"Remote changes: none observed in the parts compared (observed: remotes)\n",
+				"Remote changes: none observed in the parts compared (observed: remotes, pull_requests)\n",
 				"  not compared: branches: unavailable before (ls-remote broken: ",
 			} {
 				if !strings.Contains(brokenOut, want) {
@@ -349,7 +351,7 @@ func TestResume_RecordsAndPrintsTheRemoteChanges(t *testing.T) {
 	if !errors.As(err, &paused) {
 		t.Fatalf("expected the first leg to pause, got %v", err)
 	}
-	if !strings.Contains(firstOut, "Remote changes: none observed (observed: remotes, branches)\n") {
+	if !strings.Contains(firstOut, "Remote changes: none observed (observed: remotes, branches, pull_requests)\n") {
 		t.Errorf("the first leg lacks its no-remote-changes line:\n%s", firstOut)
 	}
 
@@ -364,9 +366,9 @@ func TestResume_RecordsAndPrintsTheRemoteChanges(t *testing.T) {
 		t.Fatalf("resume: %v", err)
 	}
 	for _, want := range []string{
-		"Remote changes between leg 1 and leg 2, while no leg ran (observed: remotes, branches):\n" +
+		"Remote changes between leg 1 and leg 2, while no leg ran (observed: remotes, branches, pull_requests):\n" +
 			"  branch_created origin/paused at 333333333333 — observed, not attributable\n",
-		"Remote changes (observed: remotes, branches):\n" +
+		"Remote changes (observed: remotes, branches, pull_requests):\n" +
 			"  branch_created origin/shipped at 333333333333 — observed during the run; points at a commit this run made\n",
 	} {
 		if !strings.Contains(out, want) {
@@ -500,12 +502,13 @@ func TestRunGraph_AnInterruptDuringTheRemoteSnapshotStartsNoNode(t *testing.T) {
 			}
 			after := *rc.Legs[0].After
 			if after.Remotes.Status != runstate.RemotePartUnavailable || after.Remotes.Reason != "interrupted" ||
-				after.Branches.Status != runstate.RemotePartUnavailable || after.Branches.Reason != "interrupted" {
-				t.Errorf("after = %+v, want both parts unavailable, reason interrupted", after)
+				after.Branches.Status != runstate.RemotePartUnavailable || after.Branches.Reason != "interrupted" ||
+				after.PullRequests.Status != runstate.RemotePartUnavailable || after.PullRequests.Reason != "interrupted" {
+				t.Errorf("after = %+v, want all three parts unavailable, reason interrupted", after)
 			}
 			d := lastLegChanges(t, remoteRunSnapshot(t, "run-1"))
-			if len(d.Entries) != 0 || len(d.Observed) != 0 || len(d.NotCompared) != 2 {
-				t.Errorf("changes = %+v, want both parts not compared, never none observed", d)
+			if len(d.Entries) != 0 || len(d.Observed) != 0 || len(d.NotCompared) != 3 {
+				t.Errorf("changes = %+v, want all three parts not compared, never none observed", d)
 			}
 		})
 	}
@@ -519,7 +522,7 @@ func assertInterruptedRecordPrinted(t *testing.T, out string) {
 	if !strings.Contains(out, "\nRemote changes: none observed in the parts compared (observed: none)\n") {
 		t.Errorf("the early exit did not print its remote record:\n%s", out)
 	}
-	for _, part := range []string{"remotes", "branches"} {
+	for _, part := range []string{"remotes", "branches", "pull_requests"} {
 		if !regexp.MustCompile(`(?m)^  not compared: ` + part + `: .*after(: | \()interrupted\)?$`).MatchString(out) {
 			t.Errorf("the early exit printed no not-compared line for %s, reason interrupted:\n%s", part, out)
 		}
@@ -591,12 +594,13 @@ func TestResume_AnInterruptDuringTheRemoteSnapshotStartsNoNode(t *testing.T) {
 			}
 			after := *rc.Legs[1].After
 			if after.Remotes.Status != runstate.RemotePartUnavailable || after.Remotes.Reason != "interrupted" ||
-				after.Branches.Status != runstate.RemotePartUnavailable || after.Branches.Reason != "interrupted" {
-				t.Errorf("leg 2's after = %+v, want both parts unavailable, reason interrupted", after)
+				after.Branches.Status != runstate.RemotePartUnavailable || after.Branches.Reason != "interrupted" ||
+				after.PullRequests.Status != runstate.RemotePartUnavailable || after.PullRequests.Reason != "interrupted" {
+				t.Errorf("leg 2's after = %+v, want all three parts unavailable, reason interrupted", after)
 			}
 			d := lastLegChanges(t, remoteRunSnapshot(t, "run-1"))
-			if len(d.Entries) != 0 || len(d.Observed) != 0 || len(d.NotCompared) != 2 {
-				t.Errorf("leg 2's changes = %+v, want both parts not compared, never none observed", d)
+			if len(d.Entries) != 0 || len(d.Observed) != 0 || len(d.NotCompared) != 3 {
+				t.Errorf("leg 2's changes = %+v, want all three parts not compared, never none observed", d)
 			}
 		})
 	}
@@ -1090,11 +1094,11 @@ func TestRunGraph_AnInterruptDuringTheAfterSnapshotEndsTheLegInterrupted(t *test
 			}
 			after := *rc.Legs[len(rc.Legs)-1].After
 			if !reflect.DeepEqual(after, interruptedRemoteSnapshot) {
-				t.Errorf("after = %+v, want both parts unavailable, reason interrupted", after)
+				t.Errorf("after = %+v, want all three parts unavailable, reason interrupted", after)
 			}
 			d := lastLegChanges(t, snap)
-			if len(d.Entries) != 0 || len(d.Observed) != 0 || len(d.NotCompared) != 2 {
-				t.Errorf("changes = %+v, want both parts not compared, never none observed", d)
+			if len(d.Entries) != 0 || len(d.Observed) != 0 || len(d.NotCompared) != 3 {
+				t.Errorf("changes = %+v, want all three parts not compared, never none observed", d)
 			}
 
 			// Resumable like any interrupted leg: --retry-failed runs on to

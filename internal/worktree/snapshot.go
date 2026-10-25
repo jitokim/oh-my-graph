@@ -2,34 +2,39 @@ package worktree
 
 import (
 	"context"
-	"regexp"
+	"sort"
 	"strings"
 
+	"github.com/jitokim/oh-my-graph/internal/remote"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 )
 
-// maxReasonBytes bounds an unavailable part's reason. git's diagnosis is one
-// or two lines; the bound only keeps a chatty failure from bloating a
-// snapshot that is rewritten after every node.
-const maxReasonBytes = 500
-
-// TakeRemoteSnapshot reads the invocation repository's remote state through
-// obs (ADR 0046 §2.1): the configured remotes, then `ls-remote --heads` for
-// each. It never fails: a read that errors — not a repository, a remote
-// that cannot be reached, a timeout — makes its part unavailable with the
+// TakeRemoteSnapshot reads the invocation repository's remote state (ADR
+// 0046 §2.1): through obs the configured remotes, then `ls-remote --heads`
+// for each, and through prs the open pull requests. It never fails: a read
+// that errors — not a repository, a remote that cannot be reached, gh not
+// on PATH or not logged in, a timeout — makes its part unavailable with the
 // reason, and a run carries on exactly as it would have. The branches part
 // is unavailable when the remotes part is, and when any one remote's refs
 // could not be read, since a list missing one remote would compare as that
-// remote's branches all gone.
+// remote's branches all gone. The pull-request part stands on its own: gh
+// reads the GitHub repository, not a remote, and is asked even when git
+// could not be.
 //
 // URLs, and the reasons that may quote them, have any credential in them
 // replaced before they are recorded.
-func TakeRemoteSnapshot(ctx context.Context, obs RemoteObserver) runstate.RemoteSnapshot {
+func TakeRemoteSnapshot(ctx context.Context, obs RemoteObserver, prs remote.PRLister) runstate.RemoteSnapshot {
+	snap := takeGitParts(ctx, obs)
+	snap.PullRequests = takePullRequests(ctx, prs)
+	return snap
+}
+
+func takeGitParts(ctx context.Context, obs RemoteObserver) runstate.RemoteSnapshot {
 	var snap runstate.RemoteSnapshot
 
 	remotes, err := obs.Remotes(ctx)
 	if err != nil {
-		reason := summarizeReason(err.Error())
+		reason := remote.SummarizeReason(err.Error())
 		snap.Remotes = runstate.RemotesSnapshot{Status: runstate.RemotePartUnavailable, Reason: reason}
 		snap.Branches = runstate.BranchesSnapshot{Status: runstate.RemotePartUnavailable,
 			Reason: "the remotes part is unavailable: " + reason}
@@ -38,7 +43,7 @@ func TakeRemoteSnapshot(ctx context.Context, obs RemoteObserver) runstate.Remote
 	snap.Remotes.Status = runstate.RemotePartObserved
 	for _, r := range remotes {
 		snap.Remotes.Configured = append(snap.Remotes.Configured, runstate.RemoteConfig{
-			Name: r.Name, FetchURL: redactURLCredentials(r.FetchURL), PushURL: redactURLCredentials(r.PushURL),
+			Name: r.Name, FetchURL: remote.RedactURLCredentials(r.FetchURL), PushURL: remote.RedactURLCredentials(r.PushURL),
 		})
 	}
 
@@ -56,11 +61,34 @@ func TakeRemoteSnapshot(ctx context.Context, obs RemoteObserver) runstate.Remote
 	}
 	if len(failures) > 0 {
 		snap.Branches = runstate.BranchesSnapshot{Status: runstate.RemotePartUnavailable,
-			Reason: summarizeReason(strings.Join(failures, "; "))}
+			Reason: remote.SummarizeReason(strings.Join(failures, "; "))}
 		return snap
 	}
 	snap.Branches = runstate.BranchesSnapshot{Status: runstate.RemotePartObserved, Refs: refs}
 	return snap
+}
+
+// takePullRequests records what prs answered. The limit rule is applied
+// here, whatever the lister: a list holding the whole --limit is truncated,
+// never compared. Anything that is not an observed list is unavailable —
+// never empty — with its reason, and its detail redacted once more, so a
+// lister that skipped the hygiene still records nothing raw.
+func takePullRequests(ctx context.Context, prs remote.PRLister) runstate.PullRequestsSnapshot {
+	l := remote.CheckTruncation(prs.ListOpenPRs(ctx))
+	if !l.Observed() {
+		reason := l.Reason
+		if reason == "" {
+			reason = "no reason given"
+		}
+		return runstate.PullRequestsSnapshot{Status: runstate.RemotePartUnavailable,
+			Reason: remote.SummarizeReason(reason), Detail: remote.SummarizeReason(l.Detail)}
+	}
+	var open []runstate.OpenPullRequest
+	for _, pr := range l.PRs {
+		open = append(open, runstate.OpenPullRequest{Number: pr.Number, HeadRefName: pr.HeadRefName, HeadRefOid: pr.HeadRefOid})
+	}
+	sort.Slice(open, func(i, j int) bool { return open[i].Number < open[j].Number })
+	return runstate.PullRequestsSnapshot{Status: runstate.RemotePartObserved, Open: open}
 }
 
 // RunCommitCheck adapts obs's §5.1 check to the shape
@@ -68,34 +96,3 @@ func TakeRemoteSnapshot(ctx context.Context, obs RemoteObserver) runstate.Remote
 func RunCommitCheck(ctx context.Context, obs RemoteObserver, baseSHA string) func(sha string) bool {
 	return func(sha string) bool { return obs.CommitAttributable(ctx, sha, baseSHA) }
 }
-
-var (
-	// httpUserinfo is the whole userinfo of an http(s) URL: there the user
-	// name alone is often a token (https://<token>@github.com/...).
-	httpUserinfo = regexp.MustCompile(`(?i)\b(https?://)[^/\s@]+@`)
-	// urlPassword is the password of any other scheme's userinfo; the user
-	// name (git@ in ssh://git@host) is kept.
-	urlPassword = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.-]*://[^/\s:@]*):[^/\s@]+@`)
-)
-
-// redactURLCredentials replaces the credentials a URL may carry, wherever
-// one appears in s.
-func redactURLCredentials(s string) string {
-	s = httpUserinfo.ReplaceAllString(s, "${1}***@")
-	return urlPassword.ReplaceAllString(s, "${1}:***@")
-}
-
-// summarizeReason makes git's diagnosis one bounded, credential-free line.
-func summarizeReason(s string) string {
-	s = redactURLCredentials(strings.Join(strings.Fields(s), " "))
-	if len(s) <= maxReasonBytes {
-		return s
-	}
-	cut := maxReasonBytes
-	for cut > 0 && !isRuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut] + " …"
-}
-
-func isRuneStart(b byte) bool { return b&0xC0 != 0x80 }

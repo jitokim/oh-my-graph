@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jitokim/oh-my-graph/internal/remote"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 )
 
@@ -35,9 +36,9 @@ func (f remoteFixture) leg(t *testing.T, during func()) runstate.RemoteDiff {
 	t.Helper()
 	ctx := context.Background()
 	var rc runstate.RemoteChanges
-	rc.BeginLeg(TakeRemoteSnapshot(ctx, f.m))
+	rc.BeginLeg(TakeRemoteSnapshot(ctx, f.m, remote.NewFakePRLister()))
 	during()
-	if !rc.EndLeg(TakeRemoteSnapshot(ctx, f.m), RunCommitCheck(ctx, f.m, f.base)) {
+	if !rc.EndLeg(TakeRemoteSnapshot(ctx, f.m, remote.NewFakePRLister()), RunCommitCheck(ctx, f.m, f.base)) {
 		t.Fatal("EndLeg recorded nothing")
 	}
 	return *rc.Legs[0].Changes
@@ -59,7 +60,7 @@ func TestRemoteLeg_RunCommitPushedToANewBranchIsRunCommit(t *testing.T) {
 	if !reflect.DeepEqual(diff.Entries, want) {
 		t.Fatalf("entries = %+v\nwant      %+v", diff.Entries, want)
 	}
-	if !reflect.DeepEqual(diff.Observed, []runstate.RemotePart{runstate.RemotePartRemotes, runstate.RemotePartBranches}) {
+	if !reflect.DeepEqual(diff.Observed, []runstate.RemotePart{runstate.RemotePartRemotes, runstate.RemotePartBranches, runstate.RemotePartPullRequests}) {
 		t.Errorf("observed = %v", diff.Observed)
 	}
 }
@@ -135,7 +136,7 @@ func TestRemoteLeg_NothingChanged(t *testing.T) {
 	f := newRemoteFixture(t)
 	diff := f.leg(t, func() {})
 	want := runstate.RemoteDiff{
-		Observed:    []runstate.RemotePart{runstate.RemotePartRemotes, runstate.RemotePartBranches},
+		Observed:    []runstate.RemotePart{runstate.RemotePartRemotes, runstate.RemotePartBranches, runstate.RemotePartPullRequests},
 		Entries:     []runstate.RemoteChangeEntry{},
 		NotCompared: []runstate.RemoteNotCompared{},
 	}
@@ -151,11 +152,11 @@ func TestRemoteLeg_NothingChanged(t *testing.T) {
 func TestRemoteLeg_ABadRemoteURLMakesBranchesUnavailable(t *testing.T) {
 	f := newRemoteFixture(t)
 	ctx := context.Background()
-	before := TakeRemoteSnapshot(ctx, f.m)
+	before := TakeRemoteSnapshot(ctx, f.m, remote.NewFakePRLister())
 
 	gitIn(t, f.repo, "remote", "add", "broken", filepath.Join(t.TempDir(), "no-such-remote.git"))
 	gitIn(t, f.repo, "push", "-q", "origin", "main:refs/heads/pushed")
-	after := TakeRemoteSnapshot(ctx, f.m)
+	after := TakeRemoteSnapshot(ctx, f.m, remote.NewFakePRLister())
 
 	if after.Branches.Status != runstate.RemotePartUnavailable || !strings.Contains(after.Branches.Reason, "ls-remote broken:") {
 		t.Fatalf("branches = %+v, want unavailable naming the broken remote", after.Branches)
@@ -181,7 +182,7 @@ func TestRemoteLeg_ABadRemoteURLMakesBranchesUnavailable(t *testing.T) {
 
 func TestTakeRemoteSnapshot_OutsideARepository(t *testing.T) {
 	isolateGitConfig(t, filepath.Dir(t.TempDir()))
-	snap := TakeRemoteSnapshot(context.Background(), NewGitManager(t.TempDir(), "", "test-run"))
+	snap := TakeRemoteSnapshot(context.Background(), NewGitManager(t.TempDir(), "", "test-run"), remote.NewFakePRLister())
 	if snap.Remotes.Status != runstate.RemotePartUnavailable || !strings.Contains(snap.Remotes.Reason, "not a git repository") {
 		t.Errorf("remotes = %+v, want unavailable: not a git repository", snap.Remotes)
 	}
@@ -200,7 +201,7 @@ func TestTakeRemoteSnapshot_FromTheFake(t *testing.T) {
 	}, nil)
 	fake.SetHeads("origin", []RemoteHead{{Branch: "main", SHA: sha}}, nil)
 
-	snap := TakeRemoteSnapshot(ctx, fake)
+	snap := TakeRemoteSnapshot(ctx, fake, remote.NewFakePRLister())
 	wantRemotes := []runstate.RemoteConfig{
 		{Name: "origin", FetchURL: "https://***@github.com/o/r.git", PushURL: "https://***@github.com/o/r.git"},
 		{Name: "ssh", FetchURL: "ssh://git@example.com/r.git", PushURL: "ssh://git:***@example.com/r.git"},
@@ -213,7 +214,7 @@ func TestTakeRemoteSnapshot_FromTheFake(t *testing.T) {
 	}
 
 	fake.SetHeads("ssh", nil, errors.New("git ls-remote --heads ssh: timed out after 30s: signal: killed: fatal: https://u:pw@example.com\nsecond line"))
-	snap = TakeRemoteSnapshot(ctx, fake)
+	snap = TakeRemoteSnapshot(ctx, fake, remote.NewFakePRLister())
 	if snap.Branches.Status != runstate.RemotePartUnavailable {
 		t.Fatalf("branches = %+v, want unavailable", snap.Branches)
 	}
@@ -222,7 +223,7 @@ func TestTakeRemoteSnapshot_FromTheFake(t *testing.T) {
 	}
 
 	fake.SetRemotes(nil, context.DeadlineExceeded)
-	snap = TakeRemoteSnapshot(ctx, fake)
+	snap = TakeRemoteSnapshot(ctx, fake, remote.NewFakePRLister())
 	if snap.Remotes.Status != runstate.RemotePartUnavailable || snap.Branches.Status != runstate.RemotePartUnavailable {
 		t.Errorf("snapshot = %+v, want both parts unavailable", snap)
 	}
@@ -245,12 +246,127 @@ func TestRunCommitCheck_AsksTheObserverAgainstTheBase(t *testing.T) {
 	}
 }
 
-func TestSummarizeReasonIsBounded(t *testing.T) {
-	got := summarizeReason(strings.Repeat("é", 400))
-	if len(got) > maxReasonBytes+len(" …") || !strings.HasSuffix(got, " …") {
-		t.Errorf("reason of %d bytes not bounded: %q", len(got), got)
+// The open-PR part is read beside the git parts, recorded sorted by number,
+// and diffed with the same §5.1 check the branch entries use.
+func TestTakeRemoteSnapshot_PullRequestsFromTheFake(t *testing.T) {
+	ctx := context.Background()
+	run, them := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	obs := NewFakeRemoteObserver()
+	obs.SetRunCommit(run)
+	prs := remote.NewFakePRLister()
+	prs.Set(remote.ObservedPRs([]remote.OpenPR{{Number: 7, HeadRefName: "fix", HeadRefOid: them}}))
+
+	var rc runstate.RemoteChanges
+	before := TakeRemoteSnapshot(ctx, obs, prs)
+	if before.PullRequests.Status != runstate.RemotePartObserved {
+		t.Fatalf("pull requests = %+v, want observed", before.PullRequests)
 	}
-	if strings.ContainsRune(strings.TrimSuffix(got, " …"), '�') {
-		t.Error("the cut split a rune")
+	rc.BeginLeg(before)
+
+	prs.Set(remote.ObservedPRs([]remote.OpenPR{
+		{Number: 9, HeadRefName: "omg/feat", HeadRefOid: run},
+		{Number: 8, HeadRefName: "theirs", HeadRefOid: them},
+	}))
+	after := TakeRemoteSnapshot(ctx, obs, prs)
+	want := []runstate.OpenPullRequest{{Number: 8, HeadRefName: "theirs", HeadRefOid: them}, {Number: 9, HeadRefName: "omg/feat", HeadRefOid: run}}
+	if !reflect.DeepEqual(after.PullRequests.Open, want) {
+		t.Errorf("open = %+v, want %+v", after.PullRequests.Open, want)
+	}
+	rc.EndLeg(after, RunCommitCheck(ctx, obs, strings.Repeat("0", 40)))
+
+	got := rc.Legs[0].Changes.Entries
+	wantEntries := []runstate.RemoteChangeEntry{
+		{Kind: runstate.PRNoLongerOpen, PRNumber: 7, HeadRefName: "fix", OldSHA: them, Attribution: runstate.AttributionNotAttributable},
+		{Kind: runstate.PROpened, PRNumber: 8, HeadRefName: "theirs", NewSHA: them, Attribution: runstate.AttributionNotAttributable},
+		{Kind: runstate.PROpened, PRNumber: 9, HeadRefName: "omg/feat", NewSHA: run, Attribution: runstate.AttributionRunCommit},
+	}
+	if !reflect.DeepEqual(got, wantEntries) {
+		t.Errorf("entries = %+v\nwant      %+v", got, wantEntries)
+	}
+	if prs.Calls() != 2 {
+		t.Errorf("lister asked %d times, want once per snapshot", prs.Calls())
+	}
+}
+
+// Every way gh can fail is an unavailable part with its reason, never an
+// empty list, and gh's detail is recorded redacted.
+func TestTakeRemoteSnapshot_PullRequestsUnavailable(t *testing.T) {
+	cases := []struct {
+		name   string
+		list   remote.PRList
+		reason string
+	}{
+		{"gh not on PATH", remote.UnavailablePRs(remote.ReasonGHNotFound, ""), "gh not found"},
+		{"not authenticated", remote.UnavailablePRs(remote.ReasonNotAuthenticated, "To get started with GitHub CLI, please run: gh auth login"), "not authenticated"},
+		{"non-zero exit", remote.UnavailablePRs(remote.ReasonNonZeroExit, "exit status 1: could not resolve https://ghp_secret@github.com/o/r"), "non-zero exit"},
+		{"timeout", remote.UnavailablePRs(remote.ReasonTimeout, "gh pr list timed out after 30s"), "timeout"},
+		{"unparsable output", remote.UnavailablePRs(remote.ReasonUnparsable, "not a JSON list"), "unparsable output"},
+		{"a raw detail from another lister", remote.PRList{Status: runstate.RemotePartUnavailable, Reason: remote.ReasonNonZeroExit,
+			Detail: "fatal: https://x-access-token:ghs_secret@github.com/o/r\nsecond line"}, "non-zero exit"},
+		{"no status at all", remote.PRList{}, "no reason given"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prs := remote.NewFakePRLister()
+			prs.Set(tc.list)
+			got := TakeRemoteSnapshot(context.Background(), NewFakeRemoteObserver(), prs).PullRequests
+			if got.Status != runstate.RemotePartUnavailable || got.Reason != tc.reason || got.Open != nil {
+				t.Errorf("pull requests = %+v, want unavailable %q with no list", got, tc.reason)
+			}
+			if strings.Contains(got.Detail, "secret") || strings.Contains(got.Detail, "\n") {
+				t.Errorf("detail = %q, want one redacted line", got.Detail)
+			}
+		})
+	}
+}
+
+// The PR part is its own: a repository git cannot read is still asked
+// about its pull requests, and an unavailable PR part leaves the git parts
+// observed.
+func TestTakeRemoteSnapshot_PullRequestsStandApartFromGit(t *testing.T) {
+	obs := NewFakeRemoteObserver()
+	obs.SetRemotes(nil, errors.New("fatal: not a git repository"))
+	prs := remote.NewFakePRLister()
+	snap := TakeRemoteSnapshot(context.Background(), obs, prs)
+	if snap.Remotes.Status != runstate.RemotePartUnavailable || snap.PullRequests.Status != runstate.RemotePartObserved || prs.Calls() != 1 {
+		t.Errorf("snapshot = %+v (lister calls %d), want git unavailable and PRs observed", snap, prs.Calls())
+	}
+
+	prs.Set(remote.UnavailablePRs(remote.ReasonNotAuthenticated, ""))
+	snap = TakeRemoteSnapshot(context.Background(), NewFakeRemoteObserver(), prs)
+	if snap.Remotes.Status != runstate.RemotePartObserved || snap.Branches.Status != runstate.RemotePartObserved {
+		t.Errorf("snapshot = %+v, want the git parts observed", snap)
+	}
+}
+
+// ADR 0046 §8.13: a lister answering exactly PRListLimit PRs — here the fake,
+// which applies no limit of its own — records the part unavailable,
+// "truncated", and the diff does not compare it; one fewer is observed.
+func TestTakeRemoteSnapshot_AListOfTheWholeLimitIsTruncated(t *testing.T) {
+	full := make([]remote.OpenPR, remote.PRListLimit)
+	for i := range full {
+		full[i] = remote.OpenPR{Number: i + 1, HeadRefName: "b", HeadRefOid: strings.Repeat("c", 40)}
+	}
+	prs := remote.NewFakePRLister()
+	prs.Set(remote.ObservedPRs(full[:remote.PRListLimit-1]))
+	before := TakeRemoteSnapshot(context.Background(), NewFakeRemoteObserver(), prs)
+	if before.PullRequests.Status != runstate.RemotePartObserved || len(before.PullRequests.Open) != remote.PRListLimit-1 {
+		t.Fatalf("one under the limit: status %q with %d PRs, want observed", before.PullRequests.Status, len(before.PullRequests.Open))
+	}
+
+	prs.Set(remote.ObservedPRs(full))
+	after := TakeRemoteSnapshot(context.Background(), NewFakeRemoteObserver(), prs)
+	if after.PullRequests.Status != runstate.RemotePartUnavailable || after.PullRequests.Reason != remote.ReasonTruncated || after.PullRequests.Open != nil {
+		t.Fatalf("pull requests = status %q reason %q with %d PRs, want unavailable truncated",
+			after.PullRequests.Status, after.PullRequests.Reason, len(after.PullRequests.Open))
+	}
+
+	d := runstate.DiffRemoteSnapshots(before, after, func(string) bool { return true })
+	for _, e := range d.Entries {
+		t.Errorf("entry %+v from a truncated list", e)
+	}
+	nc := d.NotCompared
+	if len(nc) != 1 || nc[0].Part != runstate.RemotePartPullRequests || nc[0].Reason != "unavailable after: truncated" {
+		t.Errorf("not_compared = %+v, want pull_requests: unavailable after: truncated", nc)
 	}
 }

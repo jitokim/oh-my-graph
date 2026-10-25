@@ -5,8 +5,7 @@ import (
 	"sort"
 )
 
-// RemotePart names one part of a RemoteSnapshot (ADR 0046 §2.1). The git
-// parts are the only ones this build observes.
+// RemotePart names one part of a RemoteSnapshot (ADR 0046 §2.1).
 type RemotePart string
 
 const (
@@ -15,6 +14,9 @@ const (
 	// RemotePartBranches is the remote branch refs: `git ls-remote --heads`
 	// for each configured remote.
 	RemotePartBranches RemotePart = "branches"
+	// RemotePartPullRequests is the open pull requests: `gh pr list --state
+	// open`, run in the invocation repository.
+	RemotePartPullRequests RemotePart = "pull_requests"
 )
 
 // RemotePartStatus says whether the engine saw a part.
@@ -30,12 +32,28 @@ const (
 )
 
 // RemoteSnapshot is what the engine saw of the invocation repository's
-// remote state at one moment (ADR 0046 §2.1): its configured remotes and the
-// branch refs those remotes advertise, each part with its own status. A leg
-// takes one before its first node and one after its last.
+// remote state at one moment (ADR 0046 §2.1): its configured remotes, the
+// branch refs those remotes advertise and its open pull requests, each part
+// with its own status. A leg takes one before its first node and one after
+// its last.
 type RemoteSnapshot struct {
 	Remotes  RemotesSnapshot  `json:"remotes"`
 	Branches BranchesSnapshot `json:"branches"`
+	// PullRequests is additive: a snapshot written before the part existed
+	// has no key and loads with a zero part — Status "", "not recorded" —
+	// which, like an unavailable one, is never compared.
+	PullRequests PullRequestsSnapshot `json:"pull_requests,omitzero"`
+}
+
+// UnavailableRemoteSnapshot is a snapshot not taken: every part unavailable
+// with reason, so a diff against it compares nothing and says why — the
+// after a leg records when the run was interrupted before it could read one.
+func UnavailableRemoteSnapshot(reason string) RemoteSnapshot {
+	return RemoteSnapshot{
+		Remotes:      RemotesSnapshot{Status: RemotePartUnavailable, Reason: reason},
+		Branches:     BranchesSnapshot{Status: RemotePartUnavailable, Reason: reason},
+		PullRequests: PullRequestsSnapshot{Status: RemotePartUnavailable, Reason: reason},
+	}
 }
 
 // RemotesSnapshot is the configured-remotes part.
@@ -77,6 +95,32 @@ type RemoteBranchRef struct {
 	SHA    string `json:"sha"`
 }
 
+// PullRequestsSnapshot is the open-pull-requests part. It is unavailable when
+// gh is not on PATH or not authenticated, exits non-zero, times out or prints
+// what is not the list asked for, and when the list holds the whole --limit
+// ("truncated"), since more may exist.
+type PullRequestsSnapshot struct {
+	Status RemotePartStatus `json:"status"`
+	// Reason is one of internal/remote's short, stable reasons when the part
+	// is unavailable; empty when observed.
+	Reason string `json:"reason,omitempty"`
+	// Detail is gh's own diagnosis, one bounded line with any credential
+	// redacted; it is kept for the reader, never compared.
+	Detail string `json:"detail,omitempty"`
+	// Open is every open pull request, sorted by number. Empty both when
+	// observed with none and when unavailable; only Status tells them apart.
+	Open []OpenPullRequest `json:"open,omitempty"`
+}
+
+// OpenPullRequest is one open pull request: only what a change is keyed on.
+// HeadRefOid is its head commit; updatedAt, the title and the rest are not
+// collected, so a comment or a label never reads as a change (ADR 0046 §2.2).
+type OpenPullRequest struct {
+	Number      int    `json:"number"`
+	HeadRefName string `json:"head_ref_name"`
+	HeadRefOid  string `json:"head_ref_oid"`
+}
+
 // RemoteChangeKind is the kind of one RemoteChangeEntry (ADR 0046 §2.2).
 type RemoteChangeKind string
 
@@ -88,6 +132,11 @@ const (
 	// BranchMoved carries both the old and the new sha.
 	BranchMoved   RemoteChangeKind = "branch_moved"
 	BranchDeleted RemoteChangeKind = "branch_deleted"
+	PROpened      RemoteChangeKind = "pr_opened"
+	// PRUpdated is the same PR number with its head sha moved; it carries
+	// both shas.
+	PRUpdated      RemoteChangeKind = "pr_updated"
+	PRNoLongerOpen RemoteChangeKind = "pr_no_longer_open"
 )
 
 // RemoteAttribution is whether an entry points at a commit this run made,
@@ -102,19 +151,23 @@ const (
 	AttributionRunCommit RemoteAttribution = "run_commit"
 	// AttributionNotAttributable is every other entry: one whose sha fails
 	// the check, one with no new sha (remote_added, remote_removed,
-	// remote_url_changed, branch_deleted), and every between-legs entry —
+	// remote_url_changed, branch_deleted, pr_no_longer_open), and every
+	// between-legs entry —
 	// "observed, not attributable".
 	AttributionNotAttributable RemoteAttribution = "not_attributable"
 )
 
 // RemoteChangeEntry is one difference between two snapshots. Which fields
 // are set follows Kind: the remote kinds carry the URLs on the side(s) that
-// had the remote; the branch kinds carry Branch and the sha(s) on the
-// side(s) that had the branch.
+// had the remote; the branch kinds carry Remote, Branch and the sha(s) on
+// the side(s) that had the branch; the PR kinds carry PRNumber, HeadRefName
+// and the head sha(s) on the side(s) that had the PR open, and no Remote.
 type RemoteChangeEntry struct {
 	Kind        RemoteChangeKind  `json:"kind"`
-	Remote      string            `json:"remote"`
+	Remote      string            `json:"remote,omitempty"`
 	Branch      string            `json:"branch,omitempty"`
+	PRNumber    int               `json:"pr_number,omitempty"`
+	HeadRefName string            `json:"head_ref_name,omitempty"`
 	OldSHA      string            `json:"old_sha,omitempty"`
 	NewSHA      string            `json:"new_sha,omitempty"`
 	OldFetchURL string            `json:"old_fetch_url,omitempty"`
@@ -190,6 +243,7 @@ func (c *RemoteChanges) BeginLeg(before RemoteSnapshot) {
 				NotCompared: []RemoteNotCompared{
 					{Part: RemotePartRemotes, Reason: reason},
 					{Part: RemotePartBranches, Reason: reason},
+					{Part: RemotePartPullRequests, Reason: reason},
 				},
 			}
 		}
@@ -220,12 +274,14 @@ func (c *RemoteChanges) EndLeg(after RemoteSnapshot, isRunCommit func(sha string
 // sides list with the same fetch URL: an added or removed remote has no refs
 // on one side to compare against, and a changed fetch URL means the refs
 // come from another repository; each such remote gets its own not_compared
-// item, beside the remote entry that already reports it.
+// item, beside the remote entry that already reports it. Pull requests are
+// compared on their own: gh reads the GitHub repository, not a remote.
 //
-// isRunCommit decides the attribution of a branch_created or branch_moved
-// entry from its new sha; nil — the between-legs diff — attributes nothing.
-// Entries come out remote kinds first, then branch kinds, each sorted by
-// remote and branch.
+// isRunCommit decides the attribution of a branch_created, branch_moved,
+// pr_opened or pr_updated entry from its new sha; nil — the between-legs
+// diff — attributes nothing. Entries come out remote kinds first, then
+// branch kinds, each sorted by remote and branch, then PR kinds, sorted by
+// number.
 func DiffRemoteSnapshots(before, after RemoteSnapshot, isRunCommit func(sha string) bool) RemoteDiff {
 	d := RemoteDiff{Observed: []RemotePart{}, Entries: []RemoteChangeEntry{}, NotCompared: []RemoteNotCompared{}}
 	attribute := func(sha string) RemoteAttribution {
@@ -259,6 +315,13 @@ func DiffRemoteSnapshots(before, after RemoteSnapshot, isRunCommit func(sha stri
 		d.Entries = append(d.Entries, entries...)
 		d.NotCompared = append(d.NotCompared, skipped...)
 	}
+
+	if reason, ok := comparable(before.PullRequests.Status, before.PullRequests.Reason, after.PullRequests.Status, after.PullRequests.Reason); ok {
+		d.Observed = append(d.Observed, RemotePartPullRequests)
+		d.Entries = append(d.Entries, diffPullRequests(before.PullRequests.Open, after.PullRequests.Open, attribute)...)
+	} else {
+		d.NotCompared = append(d.NotCompared, RemoteNotCompared{Part: RemotePartPullRequests, Reason: reason})
+	}
 	return d
 }
 
@@ -278,12 +341,16 @@ func comparable(beforeStatus RemotePartStatus, beforeReason string, afterStatus 
 	}
 }
 
-// unavailableReason never lets a missing reason print as nothing; a status
-// that is neither value (a hand-edited file) is named as found.
+// unavailableReason never lets a missing reason print as nothing. No status
+// at all is a part the snapshot did not record — the pull requests of one
+// written before that part existed; any other status that is neither value
+// (a hand-edited file) is named as found.
 func unavailableReason(status RemotePartStatus, reason string) string {
 	switch {
 	case reason != "":
 		return reason
+	case status == "":
+		return "not recorded"
 	case status != RemotePartUnavailable:
 		return fmt.Sprintf("status %q", status)
 	default:
@@ -355,6 +422,49 @@ func diffBranches(before, after RemoteSnapshot, attribute func(string) RemoteAtt
 	return entries, skipped
 }
 
+// diffPullRequests keys each PR on its number, and a change on its head sha
+// alone: a PR whose head did not move yields no entry, whatever else about
+// it did.
+func diffPullRequests(before, after []OpenPullRequest, attribute func(string) RemoteAttribution) []RemoteChangeEntry {
+	old, cur := prsByNumber(before), prsByNumber(after)
+	numbers := make([]int, 0, len(old)+len(cur))
+	for n := range old {
+		numbers = append(numbers, n)
+	}
+	for n := range cur {
+		if _, ok := old[n]; !ok {
+			numbers = append(numbers, n)
+		}
+	}
+	sort.Ints(numbers)
+
+	entries := []RemoteChangeEntry{}
+	for _, num := range numbers {
+		o, inOld := old[num]
+		n, inCur := cur[num]
+		switch {
+		case !inOld:
+			entries = append(entries, RemoteChangeEntry{Kind: PROpened, PRNumber: num, HeadRefName: n.HeadRefName,
+				NewSHA: n.HeadRefOid, Attribution: attribute(n.HeadRefOid)})
+		case !inCur:
+			entries = append(entries, RemoteChangeEntry{Kind: PRNoLongerOpen, PRNumber: num, HeadRefName: o.HeadRefName,
+				OldSHA: o.HeadRefOid, Attribution: AttributionNotAttributable})
+		case o.HeadRefOid != n.HeadRefOid:
+			entries = append(entries, RemoteChangeEntry{Kind: PRUpdated, PRNumber: num, HeadRefName: n.HeadRefName,
+				OldSHA: o.HeadRefOid, NewSHA: n.HeadRefOid, Attribution: attribute(n.HeadRefOid)})
+		}
+	}
+	return entries
+}
+
+func prsByNumber(prs []OpenPullRequest) map[int]OpenPullRequest {
+	m := make(map[int]OpenPullRequest, len(prs))
+	for _, pr := range prs {
+		m[pr.Number] = pr
+	}
+	return m
+}
+
 func remotesByName(remotes []RemoteConfig) map[string]RemoteConfig {
 	m := make(map[string]RemoteConfig, len(remotes))
 	for _, r := range remotes {
@@ -420,6 +530,7 @@ func (c *RemoteChanges) clone() *RemoteChanges {
 func (s RemoteSnapshot) clone() RemoteSnapshot {
 	s.Remotes.Configured = cloneSlice(s.Remotes.Configured)
 	s.Branches.Refs = cloneSlice(s.Branches.Refs)
+	s.PullRequests.Open = cloneSlice(s.PullRequests.Open)
 	return s
 }
 

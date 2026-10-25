@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/jitokim/oh-my-graph/internal/fence"
+	"github.com/jitokim/oh-my-graph/internal/remote"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/schedule"
@@ -24,6 +25,15 @@ var remoteObserverFor = func(runID string) worktree.RemoteObserver {
 	return worktreeManagerFor(runID)
 }
 
+// remotePRListerFor is what a leg reads the invocation repository's open
+// pull requests through (ADR 0046 §2.1): the fifth seam's GHRunner, run in
+// the same repository the GitManager reads ("" = the working directory).
+// Tests swap it for a remote.FakePRLister, so no test runs a real gh;
+// production code never reassigns it.
+var remotePRListerFor = func(string) remote.PRLister {
+	return remote.NewGHRunner("")
+}
+
 // runBaseCommit reads the run's base commit — the invocation repository's
 // HEAD, "" outside one — once, at the start of a run's first leg (ADR 0046
 // §5.1). An indirection for the same reason as remoteObserverFor.
@@ -35,6 +45,7 @@ var runBaseCommit = launchCommitOfWorkingDir
 // observes, and no write of it that fails, stops the leg or changes its exit.
 type remoteLeg struct {
 	obs      worktree.RemoteObserver
+	prs      remote.PRLister
 	recorder *runstate.SnapshotRecorder
 	baseSHA  string
 	changes  runstate.RemoteChanges
@@ -45,11 +56,11 @@ type remoteLeg struct {
 // leg is appended to a copy of it, so the change since the last leg's after
 // lands in between_legs, never attributed.
 func beginRemoteLeg(ctx context.Context, runID string, recorder *runstate.SnapshotRecorder, baseSHA string, prior *runstate.RemoteChanges) *remoteLeg {
-	l := &remoteLeg{obs: remoteObserverFor(runID), recorder: recorder, baseSHA: baseSHA}
+	l := &remoteLeg{obs: remoteObserverFor(runID), prs: remotePRListerFor(runID), recorder: recorder, baseSHA: baseSHA}
 	if prior != nil {
 		l.changes = cloneRemoteChanges(*prior)
 	}
-	l.changes.BeginLeg(worktree.TakeRemoteSnapshot(ctx, l.obs))
+	l.changes.BeginLeg(worktree.TakeRemoteSnapshot(ctx, l.obs, l.prs))
 	l.record()
 	return l
 }
@@ -57,12 +68,12 @@ func beginRemoteLeg(ctx context.Context, runID string, recorder *runstate.Snapsh
 // end takes the leg's after snapshot, diffs it against the before with the
 // §5.1 check, and records it. runCtx is the leg's own context: once the user
 // has interrupted the run (Ctrl-C, SIGTERM) the after snapshot is not taken
-// — an unreachable remote would hold the exit for the git timeout — and both
-// parts are recorded unavailable, "interrupted", so the record never reads
+// — an unreachable remote would hold the exit for the git or gh timeout — and
+// all three parts are recorded unavailable, "interrupted", so the record never reads
 // "no change". Otherwise it runs on a context of its own, since a
 // halt-on-fail cancels only the scheduler's, and the leg still ended; that
 // context is cancelled with runCtx, so an interrupt while the snapshot runs
-// kills its git and records it interrupted the same way. It reports whether
+// kills its git and gh and records it interrupted the same way. It reports whether
 // the leg was interrupted by the time the record was written.
 func (l *remoteLeg) end(runCtx context.Context) (interrupted bool) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -72,7 +83,7 @@ func (l *remoteLeg) end(runCtx context.Context) (interrupted bool) {
 
 	after := interruptedRemoteSnapshot
 	if runCtx.Err() == nil {
-		after = worktree.TakeRemoteSnapshot(ctx, l.obs)
+		after = worktree.TakeRemoteSnapshot(ctx, l.obs, l.prs)
 	}
 	// Read after the snapshot: an interrupt that landed while it ran made
 	// its parts git's kill, not the remote's state.
@@ -147,10 +158,7 @@ func pausedOrPassed(schedErr error) bool {
 // because the run was interrupted.
 const remoteSnapshotInterrupted = "interrupted"
 
-var interruptedRemoteSnapshot = runstate.RemoteSnapshot{
-	Remotes:  runstate.RemotesSnapshot{Status: runstate.RemotePartUnavailable, Reason: remoteSnapshotInterrupted},
-	Branches: runstate.BranchesSnapshot{Status: runstate.RemotePartUnavailable, Reason: remoteSnapshotInterrupted},
-}
+var interruptedRemoteSnapshot = runstate.UnavailableRemoteSnapshot(remoteSnapshotInterrupted)
 
 func (l *remoteLeg) record() {
 	if err := l.recorder.RecordRemoteChanges(l.changes); err != nil {
@@ -252,6 +260,12 @@ func describeRemoteEntry(e runstate.RemoteChangeEntry) string {
 		return fmt.Sprintf("%s %s %s -> %s", e.Kind, ref, shortSHA(e.OldSHA), shortSHA(e.NewSHA))
 	case runstate.BranchDeleted:
 		return fmt.Sprintf("%s %s (was %s)", e.Kind, ref, shortSHA(e.OldSHA))
+	case runstate.PROpened:
+		return fmt.Sprintf("%s #%d %s at %s", e.Kind, e.PRNumber, e.HeadRefName, shortSHA(e.NewSHA))
+	case runstate.PRUpdated:
+		return fmt.Sprintf("%s #%d %s %s -> %s", e.Kind, e.PRNumber, e.HeadRefName, shortSHA(e.OldSHA), shortSHA(e.NewSHA))
+	case runstate.PRNoLongerOpen:
+		return fmt.Sprintf("%s #%d %s (was %s)", e.Kind, e.PRNumber, e.HeadRefName, shortSHA(e.OldSHA))
 	default:
 		return fmt.Sprintf("%s %s", e.Kind, e.Remote)
 	}

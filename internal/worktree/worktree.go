@@ -102,6 +102,10 @@ type RemoteHead struct {
 // Every method reads; none writes to the repository or to a remote. A failure
 // is returned as an error for the snapshot to record as unavailable — no
 // caller may treat it as a reason to stop the run.
+//
+// It reads git only. The snapshot's third part, the open pull requests, is
+// read through remote.PRLister (the fifth seam, gh) beside it: a caller
+// passes both to TakeRemoteSnapshot, for every before and every after.
 type RemoteObserver interface {
 	// Remotes lists the invocation repository's configured remotes, sorted
 	// by name.

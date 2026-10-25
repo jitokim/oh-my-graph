@@ -216,7 +216,7 @@ func TestGHRunner_UnparsableOutput(t *testing.T) {
 
 func TestGHRunner_ExactlyTheLimitIsTruncated(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "prs.json")
-	if err := os.WriteFile(file, []byte(prJSON(t, prListLimit)), 0o600); err != nil {
+	if err := os.WriteFile(file, []byte(prJSON(t, PRListLimit)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("GH_STUB_PRS", file)
@@ -224,12 +224,12 @@ func TestGHRunner_ExactlyTheLimitIsTruncated(t *testing.T) {
 	wantUnavailable(t, NewGHRunner(t.TempDir()).ListOpenPRs(context.Background()), ReasonTruncated)
 
 	// One fewer is a whole list.
-	if err := os.WriteFile(file, []byte(prJSON(t, prListLimit-1)), 0o600); err != nil {
+	if err := os.WriteFile(file, []byte(prJSON(t, PRListLimit-1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	got := NewGHRunner(t.TempDir()).ListOpenPRs(context.Background())
-	if !got.Observed() || len(got.PRs) != prListLimit-1 {
-		t.Fatalf("got status %q reason %q with %d PRs, want observed %d", got.Status, got.Reason, len(got.PRs), prListLimit-1)
+	if !got.Observed() || len(got.PRs) != PRListLimit-1 {
+		t.Fatalf("got status %q reason %q with %d PRs, want observed %d", got.Status, got.Reason, len(got.PRs), PRListLimit-1)
 	}
 }
 
@@ -256,4 +256,33 @@ func readFile(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// Only number, headRefName and headRefOid are kept: a PR whose updatedAt or
+// title moved parses to the same list, so it can yield no change (ADR 0046
+// §2.2).
+func TestParsePRList_KeepsOnlyWhatAChangeIsKeyedOn(t *testing.T) {
+	sha := strings.Repeat("a", 40)
+	one := parsePRList([]byte(`[{"number":3,"headRefName":"fix","headRefOid":"` + sha + `","updatedAt":"2026-10-01T00:00:00Z","title":"Fix"}]`))
+	two := parsePRList([]byte(`[{"number":3,"headRefName":"fix","headRefOid":"` + sha + `","updatedAt":"2026-10-26T09:30:00Z","title":"Fix it"}]`))
+	if !one.Observed() || fmt.Sprint(one) != fmt.Sprint(two) {
+		t.Errorf("lists differ only in fields not collected: %+v vs %+v", one, two)
+	}
+}
+
+func TestCheckTruncation(t *testing.T) {
+	full := make([]OpenPR, PRListLimit)
+	for i := range full {
+		full[i] = OpenPR{Number: i + 1, HeadRefOid: "a"}
+	}
+	if got := CheckTruncation(ObservedPRs(full)); got.Observed() || got.Reason != ReasonTruncated || got.PRs != nil {
+		t.Errorf("a list of the whole limit = %q %q, want unavailable truncated", got.Status, got.Reason)
+	}
+	if got := CheckTruncation(ObservedPRs(full[1:])); !got.Observed() || len(got.PRs) != PRListLimit-1 {
+		t.Errorf("one under the limit = %q %q, want observed", got.Status, got.Reason)
+	}
+	auth := UnavailablePRs(ReasonNotAuthenticated, "")
+	if got := CheckTruncation(auth); got.Reason != ReasonNotAuthenticated {
+		t.Errorf("an unavailable list became %q", got.Reason)
+	}
 }

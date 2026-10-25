@@ -22,7 +22,6 @@ import (
 
 	"github.com/jitokim/oh-my-graph/internal/childenv"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
-	"github.com/jitokim/oh-my-graph/internal/worktree"
 )
 
 // ghTimeout bounds the one gh command, matching worktree's gitTimeout: `gh pr
@@ -34,19 +33,19 @@ const ghTimeout = 30 * time.Second
 // killed — see ghCmd.
 const ghWaitDelay = time.Second
 
-// prListLimit is the --limit the PR list is read with (ADR 0046 §2.1). `gh pr
+// PRListLimit is the --limit the PR list is read with (ADR 0046 §2.1). `gh pr
 // list` returns 30 PRs unless told otherwise, so two snapshots of a busy
 // repository could list different PRs that never changed. A result holding
 // exactly this many may have been cut short, and is ReasonTruncated, never
 // compared.
-const prListLimit = 1000
+const PRListLimit = 1000
 
 // ghPRListArgs is the whole argv: fixed by the engine, built from nothing a
 // node or a model wrote.
 var ghPRListArgs = []string{
 	"pr", "list",
 	"--state", "open",
-	"--limit", strconv.Itoa(prListLimit),
+	"--limit", strconv.Itoa(PRListLimit),
 	"--json", "number,headRefName,headRefOid",
 }
 
@@ -70,7 +69,7 @@ const (
 	// ReasonUnparsable: gh exited 0 but its output was not the JSON list the
 	// argv asked for.
 	ReasonUnparsable = "unparsable output"
-	// ReasonTruncated: the list held exactly prListLimit PRs, so more may
+	// ReasonTruncated: the list held exactly PRListLimit PRs, so more may
 	// exist.
 	ReasonTruncated = "truncated"
 )
@@ -114,7 +113,7 @@ func ObservedPRs(prs []OpenPR) PRList {
 // UnavailablePRs is an unavailable list with reason and detail; detail is
 // redacted and bounded here, so no caller can record it raw.
 func UnavailablePRs(reason, detail string) PRList {
-	return PRList{Status: runstate.RemotePartUnavailable, Reason: reason, Detail: worktree.SummarizeReason(detail)}
+	return PRList{Status: runstate.RemotePartUnavailable, Reason: reason, Detail: SummarizeReason(detail)}
 }
 
 // PRLister is what the remote snapshot reads the open PRs through. GHRunner
@@ -206,10 +205,19 @@ func parsePRList(out []byte) PRList {
 			return UnavailablePRs(ReasonUnparsable, "a pull request has no number or head sha")
 		}
 	}
-	if len(prs) >= prListLimit {
-		return UnavailablePRs(ReasonTruncated, "gh returned "+strconv.Itoa(len(prs))+" open pull requests, the --limit")
+	return CheckTruncation(ObservedPRs(prs))
+}
+
+// CheckTruncation is l, unless l is an observed list holding PRListLimit PRs
+// or more: such a list may have been cut short, so it is unavailable,
+// ReasonTruncated (ADR 0046 §2.1). The snapshot applies it to whatever
+// PRLister it was given, so the rule holds for every implementation, not
+// only for GHRunner's parse.
+func CheckTruncation(l PRList) PRList {
+	if l.Observed() && len(l.PRs) >= PRListLimit {
+		return UnavailablePRs(ReasonTruncated, "gh returned "+strconv.Itoa(len(l.PRs))+" open pull requests, the --limit")
 	}
-	return ObservedPRs(prs)
+	return l
 }
 
 // ghCmd assembles the exact *exec.Cmd for the gh invocation: the fixed argv,
