@@ -1111,8 +1111,11 @@ every run, each git command bounded by the 30 s git timeout, so one
 unreachable remote can add up to 30 s at the start and at the end of each
 leg. Ctrl-C cuts that short: Ctrl-C during either snapshot, *before* or
 *after*, ends the leg as interrupted, as an interrupt during a node does —
-exit 1, `run_finished` `"failed"`, no pause hint. One during the *before*
-snapshot ends the leg there, before any node starts, and on a resumed leg
+exit 1, no pause hint, and `run_finished` `"failed"` once the leg has a
+`run_started`. One during the *before* snapshot ends the leg there, before
+any node starts — so only an `auto` run, whose planning `run_started` is
+already written, gets that `run_finished`, while a `run` or resumed leg
+writes neither event — and on a resumed leg
 leaves the run paused as it was, resumable by the same `resume --approve
 <gate>`; once a leg is
 interrupted its *after* snapshot is not taken, or is cut short, and is
