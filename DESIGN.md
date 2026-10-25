@@ -1082,16 +1082,17 @@ the concrete `GitManager`. See ADR 0005.
 A node holding `Bash(git *)` can push a branch or add a remote, and no check
 node is asked to notice. The engine records it itself, outside any model, as
 a report: the record itself changes no verdict, no exit code and no run
-status, and nothing in the engine reads it to decide anything. The leg it
-belongs to can still change its exit: a Ctrl-C during its *after* snapshot
-ends the leg interrupted (exit 1), below.
+status, and nothing in the engine reads it to decide anything. A Ctrl-C
+while a snapshot is taken is the interrupt's doing, not the record's: it
+ends the leg interrupted, below.
 
 **Timing: two snapshots per leg.** `run`, `auto` and `resume` take a *before*
 snapshot of the **invocation repository** (the one the command was started
 in, where worktrees come from) after the leg's `state.json` exists and
 before `scheduler.Run` starts its first node, and an *after* snapshot when
 `scheduler.Run` returns — whatever it returned, a pause or a halt included,
-on a fresh context — before worktree cleanup. Every leg takes its own
+on a context of its own that only the run's interrupt cancels — before
+worktree cleanup. Every leg takes its own
 *before*, a resumed one included. A resumed leg also diffs the previous leg's
 *after* against its own *before* into the `between_legs` set: what changed
 while no leg ran, recorded and never attributed.
@@ -1108,20 +1109,21 @@ recorded. Reading never stops the run: a failure, a timeout or "not a git
 repository" becomes an unavailable part. `ls-remote` reads the network on
 every run, each git command bounded by the 30 s git timeout, so one
 unreachable remote can add up to 30 s at the start and at the end of each
-leg. Ctrl-C cuts that short: an interrupt during either snapshot, *before*
-or *after*, ends the leg as interrupted (exit 1, as any interrupt); one
-during the *before* snapshot ends the leg there, before any node starts, and
-once a leg is interrupted its *after* snapshot is not taken, or cut short,
-but recorded with both parts unavailable, reason `interrupted`. During the
-*after* snapshot only the exit code changes: the outcome the scheduler
-already wrote to `state.json` and `run_finished` stands, so a leg whose
-nodes ended at a gate stays paused there and resumable, with its
-`resume <run-id> --approve|--reject <gate>` hint still printed, and a leg
-that passed stays `passed`. This is the one case where a single-run
-invocation's exit code and its run's status disagree, exit 1 with `PAUSED`
-or `PASS`: an exception to ADR 0023 §2.6's exit 2 ↔ `PAUSED`, exit 1 ↔
-`FAIL`, exit 0 ↔ `PASS`, pinned by
-`TestExitCode_DoesNotAgreeWithStatusWhenAnInterruptLandsOnTheAfterSnapshot`.
+leg. Ctrl-C cuts that short: Ctrl-C during either snapshot, *before* or
+*after*, ends the leg as interrupted, as an interrupt during a node does —
+exit 1, `run_finished` `"failed"`, no pause hint. One during the *before*
+snapshot ends the leg there, before any node starts; once a leg is
+interrupted its *after* snapshot is not taken, or is cut short, and is
+recorded with both parts unavailable, reason `interrupted`, the record
+printed either way. A leg's `run_finished` is therefore written after its
+*after* snapshot, not when `scheduler.Run` returns, and an interrupt there
+overrides the pause or pass the scheduler reached: a gate or session-limit
+pause is withdrawn from `state.json` — the leg resumes with
+`--retry-failed`, its gate pausing again when reached — and the run reads
+`FAIL`. The one disagreement left is a leg whose every node had already
+passed: `state.json` holds them all `PASS`, so the run reads `PASS` while
+the invocation exits 1, an exception to ADR 0023 §2.6 pinned by
+`TestExitCode_DoesNotAgreeWithStatusWhenAnInterruptLandsOnAPassedLegsAfterSnapshot`.
 
 **Entries.** The diff of two snapshots gives `remote_added`,
 `remote_removed`, `remote_url_changed`, `branch_created`, `branch_moved`

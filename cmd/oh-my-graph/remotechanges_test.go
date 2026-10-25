@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/jitokim/oh-my-graph/internal/browser"
+	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
+	"github.com/jitokim/oh-my-graph/internal/runstatus"
 	"github.com/jitokim/oh-my-graph/internal/schedule"
 	"github.com/jitokim/oh-my-graph/internal/worktree"
 )
@@ -628,18 +630,22 @@ func (o *afterSnapshotInterrupter) Remotes(ctx context.Context) ([]worktree.Remo
 // QA at 2198b74: a Ctrl-C while the after snapshot ran was ignored — the
 // snapshot waited out the git timeout and the leg ended paused at its gate
 // (exit 2). The interrupt now reaches the snapshot's git: the leg ends
-// promptly, as interrupted (exit 1), with both after parts recorded
-// unavailable, "interrupted". Only the exit changes: a leg whose nodes reached
-// the gate stays paused there in state.json, so its resume hint still prints.
+// promptly, as interrupted, with both after parts recorded unavailable,
+// "interrupted" — and everything says so alike: exit 1, an ordinary Ctrl-C's;
+// no gate pause in state.json; run_finished "failed", so the run reads FAIL;
+// and no pause hint printed. Like any interrupted leg it resumes with
+// --retry-failed, its gate pausing again when reached.
 func TestRunGraph_AnInterruptDuringTheAfterSnapshotEndsTheLegInterrupted(t *testing.T) {
 	gateGraph := `{"name":"gate-flow","nodes":[
 		{"id":"a","prompt":"a"},
 		{"id":"approve","type":"gate","depends_on":["a"]},
-		{"id":"ship","prompt":"ship","depends_on":["approve"]}]}`
+		{"id":"ship","prompt":"ship","depends_on":["approve"]},
+		{"id":"release","type":"gate","depends_on":["ship"]}]}`
 	for _, tc := range []struct {
-		name     string
-		pausedAt string
-		leg      func(t *testing.T, fake *runner.FakeRunner, obs *afterSnapshotInterrupter) (string, error)
+		name string
+		// gate is the gate the leg's nodes stopped at before the interrupt.
+		gate string
+		leg  func(t *testing.T, fake *runner.FakeRunner, obs *afterSnapshotInterrupter) (string, error)
 	}{
 		{"a first leg", "approve", func(t *testing.T, fake *runner.FakeRunner, obs *afterSnapshotInterrupter) (string, error) {
 			ctx, cancel := context.WithCancel(context.Background())
@@ -652,7 +658,7 @@ func TestRunGraph_AnInterruptDuringTheAfterSnapshotEndsTheLegInterrupted(t *test
 			})
 			return out, err
 		}},
-		{"a resumed leg", "", func(t *testing.T, fake *runner.FakeRunner, obs *afterSnapshotInterrupter) (string, error) {
+		{"a resumed leg", "release", func(t *testing.T, fake *runner.FakeRunner, obs *afterSnapshotInterrupter) (string, error) {
 			useRemoteObserver(t, originObserver(), remoteBaseSHA)
 			var err error
 			captureStdout(t, func() {
@@ -662,7 +668,8 @@ func TestRunGraph_AnInterruptDuringTheAfterSnapshotEndsTheLegInterrupted(t *test
 			if !errors.As(err, &paused) {
 				t.Fatalf("expected the first leg to pause, got %v", err)
 			}
-			// The resumed leg passes; the interrupt lands on its after snapshot.
+			// The resumed leg reaches the next gate; the interrupt lands on its
+			// after snapshot.
 			obs.interrupt = sigint(t)
 			useRemoteObserver(t, obs, remoteBaseSHA)
 			out := captureStdout(t, func() {
@@ -694,14 +701,21 @@ func TestRunGraph_AnInterruptDuringTheAfterSnapshotEndsTheLegInterrupted(t *test
 				t.Errorf("exit code = %d, want 1, an ordinary Ctrl-C's", code)
 			}
 			snap := remoteRunSnapshot(t, "run-1")
-			if snap.Gate.PausedAt != tc.pausedAt {
-				t.Errorf("state.json paused_at = %q, want %q: the interrupt changes only the exit", snap.Gate.PausedAt, tc.pausedAt)
+			if snap.Gate.PausedAt != "" || snap.Gate.Decisions[tc.gate] == runstate.GatePause {
+				t.Errorf("state.json gate = %+v, want no pause at %q: the leg ended interrupted", snap.Gate, tc.gate)
 			}
-			if hinted := strings.Contains(out, "Paused at gate"); hinted != (tc.pausedAt != "") {
-				t.Errorf("pause hint printed = %v, want %v, the leg paused at %q:\n%s", hinted, !hinted, tc.pausedAt, out)
+			leg, legErr := runfeed.LastLeg(filepath.Join(runDirFor("run-1"), runfeed.FileName))
+			if legErr != nil {
+				t.Fatalf("runfeed.LastLeg: %v", legErr)
 			}
-			if tc.pausedAt != "" && !strings.Contains(out, "oh-my-graph resume run-1 --approve "+tc.pausedAt) {
-				t.Errorf("the hint does not name the resume of the still-paused gate:\n%s", out)
+			if leg.Open || leg.LastOutcome != runfeed.OutcomeFailed {
+				t.Errorf("run feed leg = %+v, want closed with run_finished %q", leg, runfeed.OutcomeFailed)
+			}
+			if status, statusErr := runstatus.Of(runDirFor("run-1")); statusErr != nil || status != runstatus.Fail {
+				t.Errorf("status = %v (%v), want %v, as the exit says", status, statusErr, runstatus.Fail)
+			}
+			if strings.Contains(out, "Paused at gate") || strings.Contains(out, "--approve "+tc.gate) {
+				t.Errorf("an interrupted leg printed a pause hint:\n%s", out)
 			}
 
 			rc := snap.RemoteChanges
@@ -712,9 +726,20 @@ func TestRunGraph_AnInterruptDuringTheAfterSnapshotEndsTheLegInterrupted(t *test
 			if !reflect.DeepEqual(after, interruptedRemoteSnapshot) {
 				t.Errorf("after = %+v, want both parts unavailable, reason interrupted", after)
 			}
-			d := lastLegChanges(t, remoteRunSnapshot(t, "run-1"))
+			d := lastLegChanges(t, snap)
 			if len(d.Entries) != 0 || len(d.Observed) != 0 || len(d.NotCompared) != 2 {
 				t.Errorf("changes = %+v, want both parts not compared, never none observed", d)
+			}
+
+			// Resumable like any interrupted leg: --retry-failed runs on to
+			// the same gate, which pauses again.
+			useRemoteObserver(t, originObserver(), remoteBaseSHA)
+			captureStdout(t, func() {
+				err = executeResume(parseResumeFlags(t, []string{"run-1", "--retry-failed"}), fake, nil)
+			})
+			var paused *schedule.PausedError
+			if !errors.As(err, &paused) || paused.GateID != tc.gate {
+				t.Errorf("resume --retry-failed = %v, want a pause at %q again", err, tc.gate)
 			}
 		})
 	}

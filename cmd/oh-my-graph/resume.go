@@ -753,6 +753,8 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// (#363): a pinned file changed while the run was stopped faults here
 	// exactly as one changed mid-run would. No pins, no wrapper.
 	verifier := resumedVerifyPins(verifyCmd.Command, snap.VerifyPins).guard(verify.NewShellVerifier())
+	// run_finished is held until the leg's after remote snapshot ends (finish).
+	hold := &finishHold{sink: feed}
 	scheduler := schedule.NewScheduler(nodeRunner, schedule.Options{
 		Concurrency:    flags.concurrency,
 		ContinueOnFail: snap.ContinueOnFail,
@@ -780,7 +782,7 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// shown (#346); every other record is written exactly as before. A
 		// leg that pauses again stores the new gate's shown description (#348).
 		Recorder:  decided.recorderFor(describePauses(recorder, g, h)),
-		EventSink: feed,
+		EventSink: hold,
 		Engine:    engine,
 		// CompletedNodes seeds the resumed leg's ready set from
 		// graph.ReadyGiven(completed) instead of graph.Roots(), so a node the
@@ -826,14 +828,9 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		remote.print(os.Stdout)
 		return ctxErr
 	}
-	// schedErr is what the scheduler recorded; an interrupt during the after
-	// snapshot changes only the exit (runErr), so a leg that reached a gate
-	// is still paused in state.json and its resume hint still prints.
-	schedErr := scheduler.Run(ctx, g, h, led)
-	runErr := schedErr
-	if remote.end(ctx) {
-		runErr = interruptedRunErr(ctx, schedErr)
-	}
+	// The after snapshot ends the leg, not the scheduler: an interrupt during
+	// it ends the leg interrupted (finish), so its run_finished waits for it.
+	runErr := remote.finish(ctx, hold, scheduler.Run(ctx, g, h, led))
 	reportWorktreeCleanup(os.Stderr, worktrees.Cleanup(context.Background()))
 
 	fmt.Fprintln(os.Stdout)
@@ -843,11 +840,11 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// snapshot this leg rewrites carries snap.Graph forward verbatim — the
 	// verification stays on disk and stays untrusted — so the hint repeats the
 	// flags rather than promising a bare resume that would be refused.
-	description, err := pausedGateDescription(runID, schedErr, g, h)
+	description, err := pausedGateDescription(runID, runErr, g, h)
 	if err != nil {
 		return err
 	}
-	printDescribedPauseHint(os.Stdout, runID, schedErr, verifyCmd, description, recordedLimitPause(runID, schedErr))
+	printDescribedPauseHint(os.Stdout, runID, runErr, verifyCmd, description, recordedLimitPause(runID, runErr))
 
 	return runErr
 }

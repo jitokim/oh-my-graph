@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/jitokim/oh-my-graph/internal/fence"
+	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/schedule"
 	"github.com/jitokim/oh-my-graph/internal/worktree"
@@ -87,20 +88,59 @@ func (l *remoteLeg) end(runCtx context.Context) (interrupted bool) {
 	return interrupted
 }
 
-// interruptedRunErr is the error a leg whose after snapshot was interrupted
-// ends with: an interrupt there exits as interrupted (exit 1), like one
-// during any node, rather than as the pause or the pass the scheduler
-// returned. Only the exit changes: the outcome the scheduler already wrote to
-// state.json and run_finished stands, so a gate pause stays resumable. A
-// failure the scheduler already returned is kept — its exit is 1 already and
-// it says more.
-func interruptedRunErr(runCtx context.Context, runErr error) error {
-	var paused *schedule.PausedError
-	var limited *schedule.LimitPausedError
-	if runErr == nil || errors.As(runErr, &paused) || errors.As(runErr, &limited) {
-		return runCtx.Err()
+// finishHold is a leg's event sink while its scheduler runs: it passes every
+// event on but holds the scheduler's run_finished back until the leg's after
+// snapshot has ended (finish), so an interrupt during that snapshot can still
+// close the leg as interrupted rather than as the pause or the pass the
+// scheduler reported a moment before.
+type finishHold struct {
+	sink     schedule.EventSink
+	finished *runfeed.Event
+}
+
+func (h *finishHold) Emit(e runfeed.Event) error {
+	if e.Type == runfeed.EventRunFinished {
+		h.finished = &e
+		return nil
+	}
+	return h.sink.Emit(e)
+}
+
+// finish ends a leg whose scheduler returned schedErr: it takes the after
+// snapshot (end), writes the run_finished hold kept back, and returns the
+// error the leg exits with. An interrupt during the after snapshot ends the
+// leg as interrupted, like one during any node: a pause or a pass the
+// scheduler reported becomes runCtx's error (exit 1), the pause it recorded
+// is withdrawn from state.json and run_finished says failed, so the exit, the
+// snapshot, the stream and the pause hint (none) agree. A failure the
+// scheduler returned is kept — its exit is 1 already and it says more.
+func (l *remoteLeg) finish(runCtx context.Context, hold *finishHold, schedErr error) error {
+	runErr := schedErr
+	if l.end(runCtx) && pausedOrPassed(schedErr) {
+		runErr = runCtx.Err()
+		if err := l.recorder.ClearPause(); err != nil {
+			fmt.Fprintf(os.Stderr, "WARNING: could not withdraw this interrupted leg's pause: %v\n", err)
+		}
+		if hold.finished != nil {
+			hold.finished.Outcome = runfeed.OutcomeFailed
+			hold.finished.Detail = ""
+		}
+	}
+	if hold.finished != nil {
+		if err := hold.sink.Emit(*hold.finished); err != nil {
+			fmt.Fprintf(os.Stderr, "WARNING: could not record this leg's run_finished: %v\n", err)
+		}
 	}
 	return runErr
+}
+
+// pausedOrPassed reports whether the scheduler's return is a pass, a gate
+// pause or a session-limit pause: the outcomes an interrupt during the after
+// snapshot overrides.
+func pausedOrPassed(schedErr error) bool {
+	var paused *schedule.PausedError
+	var limited *schedule.LimitPausedError
+	return schedErr == nil || errors.As(schedErr, &paused) || errors.As(schedErr, &limited)
 }
 
 // remoteSnapshotInterrupted is the reason of an after snapshot not taken

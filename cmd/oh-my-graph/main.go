@@ -1258,6 +1258,8 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	// every `run` of a hand-written graph — gets the bare ShellVerifier.
 	verifier := flags.verifyPins.guard(verify.NewShellVerifier())
 
+	// run_finished is held until the leg's after remote snapshot ends (finish).
+	hold := &finishHold{sink: leg.feed}
 	scheduler := schedule.NewScheduler(nodeRunner, schedule.Options{
 		Concurrency:           flags.concurrency,
 		ContinueOnFail:        flags.continueOnFail,
@@ -1270,7 +1272,7 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 		SerializedVerifyNodes: serializedVerify,
 		// A gate pause also stores the gate's shown description (#348).
 		Recorder:  describePauses(recorder, g, h),
-		EventSink: leg.feed,
+		EventSink: hold,
 		Engine:    engine,
 		OpeningAccounting: schedule.RunAccounting{
 			CostUSD: planningCostUSD, CostUnknown: flags.planningCostUnknown,
@@ -1297,14 +1299,9 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 		closeLeg(leg, runfeed.OutcomeFailed)
 		return ctxErr
 	}
-	// schedErr is what the scheduler recorded; an interrupt during the after
-	// snapshot changes only the exit (runErr), so a leg that reached a gate
-	// is still paused in state.json and its resume hint still prints.
-	schedErr := scheduler.Run(ctx, g, h, led)
-	runErr := schedErr
-	if remote.end(ctx) {
-		runErr = interruptedRunErr(ctx, schedErr)
-	}
+	// The after snapshot ends the leg, not the scheduler: an interrupt during
+	// it ends the leg interrupted (finish), so its run_finished waits for it.
+	runErr := remote.finish(ctx, hold, scheduler.Run(ctx, g, h, led))
 	// Cleanup runs on a fresh context: the run's own may already be cancelled
 	// (halt-on-fail, Ctrl-C), and a halted run is exactly when leftover
 	// worktrees still need tearing down.
@@ -1320,11 +1317,11 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	// verification (what ReattachVerifyCommand refuses to take from a run
 	// directory). That pair is ADR 0016 §4's refusal, so the hint prints the
 	// command WITH --verify-cmd rather than a bare one that would be refused.
-	description, err := pausedGateDescription(runID, schedErr, g, h)
+	description, err := pausedGateDescription(runID, runErr, g, h)
 	if err != nil {
 		return err
 	}
-	printDescribedPauseHint(os.Stdout, runID, schedErr, resumeVerifyCmd, description, recordedLimitPause(runID, schedErr))
+	printDescribedPauseHint(os.Stdout, runID, runErr, resumeVerifyCmd, description, recordedLimitPause(runID, runErr))
 
 	return runErr
 }

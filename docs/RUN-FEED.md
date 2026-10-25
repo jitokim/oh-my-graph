@@ -356,7 +356,9 @@ feed schema is unchanged.
 observed changing on the invocation repository's remotes while the run ran.
 It is a report: nothing reads it to decide anything, and no exit code or
 verdict depends on it. `run`, `auto` and `resume` write it on every leg; it is
-absent only on a run that predates it. It holds:
+absent only on a run that predates it. A leg's `run_finished` comes after its
+`after` snapshot, and a Ctrl-C during that snapshot closes the leg `"failed"`,
+with any pause its nodes reached withdrawn from `state.json`. The record holds:
 
 - `legs`, one per leg in order, each with `before` (a snapshot taken before
   the leg's first node), `after` (taken when its last node ended; absent on a

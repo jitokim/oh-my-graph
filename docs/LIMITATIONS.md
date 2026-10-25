@@ -572,15 +572,14 @@ has no open issue behind it.
   remote at the start and at the end of each leg, each bounded by the git
   timeout (30 s), so an unreachable remote can add up to 30 s per remote at
   each of those points. Ctrl-C during either snapshot, start or end, ends
-  the leg as interrupted (exit 1); during the start snapshot it ends the
-  leg before any node starts, and an interrupted leg records its end
-  snapshot as `unavailable` ("interrupted") instead of waiting for it.
-  During the end snapshot only the exit code changes: `state.json` and the
-  run feed keep the outcome the nodes reached, so a leg that reached a gate
-  stays paused and resumable, and its resume hint still prints. That is
-  the one case where a single-run invocation's exit code and its run's
-  status disagree: exit 1 with the run `PAUSED` or `PASS`, an exception to
-  ADR 0023 §2.6 (exit 2 ↔ `PAUSED`, exit 1 ↔ `FAIL`, exit 0 ↔ `PASS`). ssh
+  the leg as interrupted (exit 1, never paused); during the start snapshot
+  it ends the leg before any node starts, and an interrupted leg records
+  its end snapshot as `unavailable` ("interrupted") instead of waiting for
+  it. During the end snapshot a pause the nodes reached is withdrawn, so
+  the leg resumes with `--retry-failed` and its gate pauses again. A leg
+  whose every node had already passed still reads `PASS` in `runs` while
+  the invocation exits 1: the one single-run exception to ADR 0023 §2.6
+  (exit 2 ↔ `PAUSED`, exit 1 ↔ `FAIL`, exit 0 ↔ `PASS`). ssh
   remotes run in BatchMode unless you chose an ssh command
   (`GIT_SSH_COMMAND`, `GIT_SSH` or `core.sshCommand`): an unknown host key or
   an encrypted key without an agent makes that part `unavailable` instead of
