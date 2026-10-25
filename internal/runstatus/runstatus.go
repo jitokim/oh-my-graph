@@ -83,9 +83,9 @@ const (
 	// pause (ADR 0003) and a session-limit pause (ADR 0009), which has no gate
 	// to point at and is the one the dashboard painted red.
 	Paused
-	// Pass means the leg closed and every node of the graph reached PASS. It is
-	// the one value that requires the snapshot, so a settled run without one
-	// cannot read it.
+	// Pass means the leg closed, its outcome was not failed, and every node of
+	// the graph reached PASS. It is the one value that requires the snapshot,
+	// so a settled run without one cannot read it.
 	Pass
 	// Fail means the leg closed and it did not pass — a settled run with no
 	// snapshot at all included. That combination used to be nearly unreachable;
@@ -184,8 +184,11 @@ type Facts struct {
 // Precedence is exactly as written, and it is load-bearing: an open leg answers
 // before any snapshot question (mid-run the snapshot holds only the nodes
 // completed so far, so a completed==all test would read a healthy run as FAIL),
-// a free lock answers before the phase question, and "paused" answers before
-// the completed-count.
+// a free lock answers before the phase question, and "paused" and "failed"
+// answer before the completed-count. A leg can close failed with every node
+// PASS: a guarded leg that observed a forbidden remote change (exit 6, ADR
+// 0046 §5.1) and one interrupted during its after remote snapshot (exit 1).
+// Both read FAIL, as their exit says (ADR 0023 §2.6, exit 1 or 6 ↔ FAIL).
 //
 // Abandoned still requires TWO affirmative facts, never the absence of one: an
 // open leg in the stream, and a LivenessFree that runstate actually
@@ -214,6 +217,8 @@ func Derive(f Facts, lock runstate.Liveness) Status {
 		return Running
 	case f.LastOutcome == runfeed.OutcomePaused:
 		return Paused
+	case f.LastOutcome == runfeed.OutcomeFailed:
+		return Fail
 	case f.HasSnapshot && f.TotalNodes > 0 && f.CompletedNodes == f.TotalNodes:
 		return Pass
 	default:

@@ -110,6 +110,15 @@ func TestDerive_IsTotalOverTheSixValues(t *testing.T) {
 			want:  Fail,
 		},
 		{
+			// "failed" answers before the completed-count: a guarded leg that
+			// observed a forbidden remote change exits 6 with every node PASS
+			// (ADR 0046 §5.1), and an interrupt on a passed leg's after
+			// snapshot exits 1 the same way. Both read FAIL, as the exit says.
+			name:  "the failed outcome beats the completed count",
+			facts: Facts{LastOutcome: runfeed.OutcomeFailed, HasSnapshot: true, CompletedNodes: 3, TotalNodes: 3},
+			want:  Fail,
+		},
+		{
 			// §2.1.1's newest cell, and the one §3 makes the shape of every
 			// refused plan: a closed leg with no snapshot at all.
 			name:  "a refused plan: settled, no snapshot",

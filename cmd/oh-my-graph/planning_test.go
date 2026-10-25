@@ -788,9 +788,10 @@ func TestPlanAndExecuteCycles_EveryCyclesPlanningPhaseIsVisible(t *testing.T) {
 // invariant, and the NARROW version is the whole invariant. An exit code is the
 // writer's answer about the process it just ran; a status is a reader's answer
 // about a directory on disk. Where they can be made to agree, the agreement is
-// asserted rather than assumed — and where they cannot, the next two tests say
-// so: the goal loop, and the one single-run exception, an interrupt during the
-// after remote snapshot of a leg whose every node had already passed (#410).
+// asserted rather than assumed — and where they cannot, the next test says so:
+// the goal loop. An interrupt during the after remote snapshot of a leg whose
+// every node had already passed was a single-run exception until #410's
+// guard: its leg closes failed, and a failed outcome now reads FAIL.
 func TestExitCode_AgreesWithTheStatusForASingleRunInvocation(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -822,6 +823,16 @@ func TestExitCode_AgreesWithTheStatusForASingleRunInvocation(t *testing.T) {
 			outcomes:   map[string]runner.NodeOutcome{},
 			wantExit:   2,
 			wantStatus: runstatus.Paused,
+		},
+		{
+			// No longer the exception it was (#410): the leg closes failed,
+			// and a failed outcome reads FAIL whatever the node count.
+			name:           "every node passed and an interrupt landed on the after snapshot",
+			graph:          `{"name":"g","nodes":[{"id":"a","prompt":"a"}]}`,
+			outcomes:       map[string]runner.NodeOutcome{"a": {SessionID: "s", Result: "PASS", ExitCode: 0}},
+			interruptAfter: true,
+			wantExit:       1,
+			wantStatus:     runstatus.Fail,
 		},
 		{
 			name:           "a gate paused it and an interrupt landed on the after snapshot",
@@ -907,52 +918,6 @@ func TestExitCode_DoesNotAgreeWithStatusForTheGoalLoop(t *testing.T) {
 		if status != runstatus.Pass {
 			t.Errorf("cycle run %s = %v, want %v — every cycle's WORK passed", name, status, runstatus.Pass)
 		}
-	}
-}
-
-// TestExitCode_DoesNotAgreeWithStatusWhenAnInterruptLandsOnAPassedLegsAfterSnapshot
-// is the one single-run case where the exit code and the status disagree: an
-// exception to ADR 0023 §2.6 (#410). A Ctrl-C during the after remote snapshot
-// ends the leg interrupted — exit 1, run_finished "failed" — but when every
-// node had already passed, state.json holds every node PASS, and the status
-// counts settled nodes, so the run reads PASS. A leg that paused does not
-// disagree: its pause is withdrawn and it reads FAIL (the agreement test
-// above). Pinned here, next to that test, so the invariant and the exception
-// cannot silently contradict each other.
-func TestExitCode_DoesNotAgreeWithStatusWhenAnInterruptLandsOnAPassedLegsAfterSnapshot(t *testing.T) {
-	isolateRunHome(t)
-	runID := "run-exit"
-	graphJSON := `{"name":"g","nodes":[{"id":"a","prompt":"a"}]}`
-	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{"a": {SessionID: "s", Result: "PASS", ExitCode: 0}})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	obs := &afterSnapshotInterrupter{FakeRemoteObserver: originObserver(), interrupt: cancel}
-	useRemoteObserver(t, obs, remoteBaseSHA)
-
-	var runErr error
-	captureStdout(t, func() {
-		runErr = executeGraph(ctx, runID, mustParse(t, graphJSON), fake,
-			commonRunFlags{inputs: inputFlag{}}, nil, 0, "g.yaml", []byte(graphJSON), false, nil, nil, nil)
-	})
-	if obs.remotesCalls != 2 {
-		t.Fatalf("Remotes ran %d times, want twice: the interrupt must land on the after snapshot", obs.remotesCalls)
-	}
-	if got := exitCodeForError(runErr); got != 1 {
-		t.Errorf("exit code = %d, want 1, an interrupted leg's (error %v)", got, runErr)
-	}
-	leg, err := runfeed.LastLeg(filepath.Join(runDirFor(runID), runfeed.FileName))
-	if err != nil {
-		t.Fatalf("runfeed.LastLeg: %v", err)
-	}
-	if leg.LastOutcome != runfeed.OutcomeFailed {
-		t.Errorf("run_finished outcome = %q, want %q: the leg ended interrupted", leg.LastOutcome, runfeed.OutcomeFailed)
-	}
-	status, err := runstatus.Of(runDirFor(runID))
-	if err != nil {
-		t.Fatalf("runstatus.Of: %v", err)
-	}
-	if status != runstatus.Pass {
-		t.Errorf("status = %v, want %v: every node passed before the interrupt", status, runstatus.Pass)
 	}
 }
 

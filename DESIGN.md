@@ -1127,10 +1127,9 @@ printed either way. A leg's `run_finished` is therefore written after its
 overrides the pause or pass the scheduler reached: a gate or session-limit
 pause is withdrawn from `state.json` — the leg resumes with
 `--retry-failed`, its gate pausing again when reached — and the run reads
-`FAIL`. The one disagreement left is a leg whose every node had already
-passed: `state.json` holds them all `PASS`, so the run reads `PASS` while
-the invocation exits 1, an exception to ADR 0023 §2.6 pinned by
-`TestExitCode_DoesNotAgreeWithStatusWhenAnInterruptLandsOnAPassedLegsAfterSnapshot`.
+`FAIL` — a leg whose every node had already passed included, since a
+closed leg whose `run_finished` is `"failed"` reads `FAIL` whatever its
+node count, so the exit and the status agree (ADR 0023 §2.6).
 
 **Pull requests.** The third part is read through `remote.PRLister`,
 whose production implementation is the fifth exec seam,
