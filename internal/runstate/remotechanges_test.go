@@ -384,3 +384,45 @@ func TestSnapshotRecorder_RecordRemoteChanges_410(t *testing.T) {
 		t.Error("the recorder shares the caller's record: a later EndLeg reached the file without being recorded")
 	}
 }
+
+// TestSnapshotRecorder_ClearPause_410: an interrupt during the after remote
+// snapshot withdraws the leg's pause — the gate, its description and its
+// "pause" decision, and a limit pause — and keeps the nodes, every other
+// decision and the remote record.
+func TestSnapshotRecorder_ClearPause_410(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	rec := NewSnapshotRecorder(path, baseSnapshot("run-1"))
+
+	var rc RemoteChanges
+	rc.BeginLeg(observed([]RemoteConfig{origin}))
+	steps := []error{
+		rec.RecordRemoteChanges(rc),
+		rec.RecordNode("a", NodeRecord{Verdict: VerdictPass}),
+		rec.RecordGateDecision("first", GateApprove),
+		rec.RecordLimitPause(LimitPause{NodeIDs: []string{"b"}}),
+		rec.RecordDescribedPause("second", "check it"),
+		rec.ClearPause(),
+	}
+	for _, err := range steps {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	snap, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Gate.PausedAt != "" || snap.Gate.PausedGateDescription != "" || snap.LimitPause != nil {
+		t.Errorf("pause not withdrawn: gate %+v, limit pause %+v", snap.Gate, snap.LimitPause)
+	}
+	if want := map[string]GateDecision{"first": GateApprove}; !reflect.DeepEqual(snap.Gate.Decisions, want) {
+		t.Errorf("decisions = %v, want %v: only the paused gate's pause is withdrawn", snap.Gate.Decisions, want)
+	}
+	if snap.Nodes["a"].Verdict != VerdictPass {
+		t.Errorf("nodes = %+v, want a's PASS kept", snap.Nodes)
+	}
+	if snap.RemoteChanges == nil || len(snap.RemoteChanges.Legs) != 1 {
+		t.Errorf("remote record not kept: %+v", snap.RemoteChanges)
+	}
+}
