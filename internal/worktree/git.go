@@ -29,9 +29,9 @@ const gitWaitDelay = time.Second
 // worktree name as a real `git worktree add` off the invocation repo's HEAD,
 // once per unique name, and tears everything down at run end without ever
 // losing work. It is the only object in this package that spawns a process,
-// and one of exactly four in the project (the others: runner.CLIRunner,
-// verify.ShellVerifier and browser.ExecOpener) — see docs/adr/0005 and
-// docs/adr/0006.
+// and one of exactly five in the project (the others: runner.CLIRunner,
+// verify.ShellVerifier, browser.ExecOpener and remote.GHRunner) — see
+// docs/adr/0005, docs/adr/0006 and docs/adr/0046.
 //
 // Its scope is the git commands the engine itself issues against the
 // invocation repository: worktrees, and the remote snapshot (#410). The
@@ -243,8 +243,8 @@ func (m *GitManager) branchExists(ctx context.Context, branch string) bool {
 // measures scope from the same commit (#414).
 //
 // It lives here rather than in the CLI because reading HEAD means spawning
-// git, and the exec-seam invariant allows exactly four spawners (docs/adr/0005
-// and 0006); running it through m.git keeps the env scrub and the per-command
+// git, and the exec-seam invariant allows exactly five spawners (docs/adr/0005,
+// 0006 and 0046); running it through m.git keeps the env scrub and the per-command
 // timeout. It addresses dir with -C and never touches repoDir, baseDir or the
 // branch prefix, so a NewGitManager("", "", "") serves it. The output is
 // combined stdout+stderr, so anything that is not a single full hex object

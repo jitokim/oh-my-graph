@@ -1101,7 +1101,7 @@ func executePlan(ctx context.Context, runID string, plan coordinator.Plan, nodeR
 // CLIRunner the caller passed (a node's model-CLI subprocess), a
 // ShellVerifier (a node's success_check.verify command), and a
 // worktree.GitManager (a node's managed `worktree:` checkout) — three of the
-// program's four seams; the fourth arrives already injected as web. A planned
+// program's five seams; the browser seam arrives already injected as web. A planned
 // graph can declare neither a verification nor a worktree — the coordinator
 // rejects both fields — so for `auto` those two are wired but never reached. toolPolicies is the per-node
 // execution ceiling: auto passes the coordinator's, `run` passes nil.

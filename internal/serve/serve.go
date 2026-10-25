@@ -40,8 +40,8 @@
 //
 // The server itself spawns no processes: it does not shell out to
 // `open`/`xdg-open` to launch a browser, and it does not run nodes. Exactly
-// four objects in this repo may spawn a process (internal/invariants, ADR
-// 0002/0005/0006), and both processes this package's features imply belong to
+// five objects in this repo may spawn a process (internal/invariants, ADR
+// 0002/0005/0006/0046), and both processes this package's features imply belong to
 // them — browser-open to browser.ExecOpener behind the browser.Opener seam
 // (ADR 0006), and a resumed leg's nodes to runner.CLIRunner, reached
 // only through the GateResumer the CLI injects (ADR 0014). The CLI decides

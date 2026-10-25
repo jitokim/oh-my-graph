@@ -39,7 +39,7 @@ the repository root and under `docs/` and `plugin/` for the absolutes ADR 0032
 falsified — run it instead of hand-writing a cross-check grep when a change
 makes a documented claim conditional.
 
-One file outside the four exec-seam packages is a **sanctioned exception to
+One file outside the five exec-seam packages is a **sanctioned exception to
 "spawns nothing"**, and it is still an exception to nothing above:
 `cmd/oh-my-graph/skillargv_test.go` drives the real `CLIRunner` against a
 temporary `#!/bin/sh` stub it writes itself, so it
@@ -171,7 +171,7 @@ snapshot's word for it; count today's number yourself.
 
 ## The exec seams — the one rule that matters most
 
-**Exactly four objects in this codebase may spawn a process**, each behind
+**Exactly five objects in this codebase may spawn a process**, each behind
 its own injected interface:
 
 | object | runs | interface |
@@ -180,6 +180,7 @@ its own injected interface:
 | `internal/verify.ShellVerifier` | a node's `success_check.verify` command | `verify.Verifier` |
 | `internal/worktree.GitManager` | the `git` commands the engine issues against the invocation repository: the `git worktree` commands behind a node's `worktree:`, and the remote snapshot's reads (ADR 0005 scope amendment, [#410](https://github.com/jitokim/oh-my-graph/issues/410)) | `worktree.Provider`, `worktree.RemoteObserver` |
 | `internal/browser.ExecOpener` | the `open`/`xdg-open` launch of the `serve` URL | `browser.Opener` |
+| `internal/remote.GHRunner` | the one fixed, read-only `gh pr list --state open --limit 1000 --json number,headRefName,headRefOid` of the remote snapshot's open-PR part, in the invocation repository ([ADR 0046](docs/adr/0046-the-engine-records-remote-changes-and-fails-only-when-the-operator-forbids-them.md), [#410](https://github.com/jitokim/oh-my-graph/issues/410)) | `remote.PRLister` |
 
 ```go
 type NodeRunner interface {
@@ -197,25 +198,30 @@ type Provider interface {
 type Opener interface {
 	Open(ctx context.Context, url string) error
 }
+
+type PRLister interface {
+	ListOpenPRs(ctx context.Context) PRList
+}
 ```
 
 Every other package — the scheduler, the CLI, handoff, ledger, coordinator —
 depends only on those interfaces. That is what keeps the entire engine testable
 via `FakeRunner`, `FakeVerifier`, `worktree.FakeManager` (with
-`worktree.FakeRemoteObserver` for the remote snapshot) and
-`browser.FakeOpener` with zero real spawns, and it keeps the
+`worktree.FakeRemoteObserver` for the remote snapshot), `browser.FakeOpener`
+and `remote.FakePRLister` with zero real spawns, and it keeps the
 subscription-auth env scrub (`internal/childenv`) to exactly one call site
 per spawner.
 
-If your change needs to run a subprocess, it belongs behind one of the four
+If your change needs to run a subprocess, it belongs behind one of the five
 existing seams. A PR that spawns a process (via `os/exec` or any other way of
 shelling out) outside `runner.CLIRunner`, `verify.ShellVerifier`,
-`worktree.GitManager` and `browser.ExecOpener` should be treated as a design
-regression, not a normal review comment — a **fifth** spawner needs an ADR
-first, the way the second, third and fourth got
+`worktree.GitManager`, `browser.ExecOpener` and `remote.GHRunner` should be
+treated as a design regression, not a normal review comment — a **sixth**
+spawner needs an ADR first, the way the second, third, fourth and fifth got
 [ADR 0002](docs/adr/0002-verification-is-a-second-exec-seam.md),
-[ADR 0005](docs/adr/0005-worktree-provisioning-is-a-third-exec-seam.md) and
-[ADR 0006](docs/adr/0006-browser-open-is-a-fourth-exec-seam.md). (The invariant
+[ADR 0005](docs/adr/0005-worktree-provisioning-is-a-third-exec-seam.md),
+[ADR 0006](docs/adr/0006-browser-open-is-a-fourth-exec-seam.md) and
+[ADR 0046](docs/adr/0046-the-engine-records-remote-changes-and-fails-only-when-the-operator-forbids-them.md). (The invariant
 is about *objects that spawn*, not `os/exec` imports per se: the runner and
 verify seam packages also carry build-tagged process-group helpers that import
 `os/exec` solely to kill a cancelled child's tree — they never start one.)
@@ -228,7 +234,8 @@ without an explicit, discussed design change should not be merged:
 
 - **Subscription-auth env scrub.** Every child process oh-my-graph spawns —
   a model node, a `success_check.verify` command, the git commands behind a
-  node's `worktree:`, AND the `open`/`xdg-open` launch of the `serve` URL —
+  node's `worktree:`, the `open`/`xdg-open` launch of the `serve` URL, AND the
+  `gh pr list` of the remote snapshot —
   has `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY` and
   `CODEX_API_KEY` deleted from its
   environment by the shared `internal/childenv.Scrub`. There is one list and
@@ -247,11 +254,11 @@ without an explicit, discussed design change should not be merged:
   measurement.
   `verify: { command: "claude -p ..." }` is a legal thing to write, a repo's
   own git hooks may invoke claude too, and the URL handler `open` dispatches
-  to is arbitrary user-configured code — so every one of the four spawners
+  to is arbitrary user-configured code — so every one of the five spawners
   must apply it. It is asserted in `internal/childenv/childenv_test.go` (the
   policy) and at each call site (`internal/runner/claude_test.go`,
   `internal/verify/shell_test.go`, `internal/worktree/git_test.go`,
-  `internal/browser/exec_test.go`) — if you touch env construction, make sure
+  `internal/browser/exec_test.go`, `internal/remote/gh_test.go`) — if you touch env construction, make sure
   those tests still prove the scrub.
 - **Artifact handoff is the default.** `handoff: session` is opt-in and valid
   only with exactly one session-parent, and a parent may have at most one

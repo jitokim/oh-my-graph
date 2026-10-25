@@ -22,9 +22,9 @@ const openTimeout = 10 * time.Second
 // ExecOpener is the production Opener: it hands the URL to the operating
 // system's default-browser launcher (see the build-tagged openArgv files for
 // the per-platform command). It is the only object in this package that
-// spawns a process, and one of exactly four in the project (the others:
-// runner.CLIRunner, verify.ShellVerifier and worktree.GitManager) —
-// see docs/adr/0006.
+// spawns a process, and one of exactly five in the project (the others:
+// runner.CLIRunner, verify.ShellVerifier, worktree.GitManager and
+// remote.GHRunner) — see docs/adr/0006 and docs/adr/0046.
 //
 // Construct it in cmd/oh-my-graph and inject it; nothing in internal/serve
 // builds one, so no test picks up a real spawn by accident.

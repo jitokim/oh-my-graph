@@ -667,11 +667,11 @@ func TestBuildCmd_NeverBareOrNoSessionPersistence(t *testing.T) {
 //
 // This is the runner's CALL SITE of the shared policy: the rule itself (which
 // keys, matched how) lives in internal/childenv and is tested there, and each
-// of the three OTHER spawners — verify.ShellVerifier, worktree.GitManager,
-// browser.ExecOpener — has the mirror image of this test in its own package.
-// All four must keep passing, or one kind of child process is billed
-// differently from the others. internal/invariants/exec_seam_test.go is what
-// keeps the set of four from growing silently.
+// of the four OTHER spawners — verify.ShellVerifier, worktree.GitManager,
+// browser.ExecOpener, remote.GHRunner — has the mirror image of this test in
+// its own package. All five must keep passing, or one kind of child process is
+// billed differently from the others. internal/invariants/exec_seam_test.go is
+// what keeps the set of five from growing silently.
 func TestBuildCmd_ScrubsSubscriptionAuthEnv(t *testing.T) {
 	parentEnv := []string{
 		"ANTHROPIC_API_KEY=sk-should-be-scrubbed",

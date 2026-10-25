@@ -39,9 +39,9 @@ import (
 // a question nobody asked.
 //
 // Signal 0 sends nothing: it runs kill(2)'s existence and permission checks and
-// returns. This is a syscall on an integer, not a process spawn, so the four
-// exec seams (ADR 0002, 0005, 0006) are untouched and no fifth-seam ADR is
-// owed — which is the constraint that rules out every `ps`-shaped alternative.
+// returns. This is a syscall on an integer, not a process spawn, so the five
+// exec seams (ADR 0002, 0005, 0006, 0046) are untouched and no sixth-seam ADR
+// is owed — which is the constraint that rules out every `ps`-shaped alternative.
 func pidGone(pid int) bool {
 	if pid <= 0 {
 		return false

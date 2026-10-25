@@ -338,7 +338,7 @@ oh-my-graph는 자격 증명을 배포하지 않고, 인증을 프록시하지 �
 `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, `CODEX_API_KEY`가
 **삭제된** 상태로 시작합니다 — 선택한 CLI가 저장된 로그인 대신 API key를 쓰지
 않게 하기 위해서입니다. 이 scrub은 하나의
-공유 정책(`internal/childenv`)이며, 정책 자체와 네 개의 exec seam 각각에서 유닛
+공유 정책(`internal/childenv`)이며, 정책 자체와 다섯 개의 exec seam 각각에서 유닛
 테스트로 검증됩니다. oh-my-graph는 (OAuth를 비활성화하는) `--bare`를 절대 쓰지
 않고, Agent SDK도 절대 건드리지 않습니다. 전체 입장:
 [SECURITY.md](SECURITY.md).

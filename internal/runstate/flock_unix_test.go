@@ -79,7 +79,7 @@ func TestFlock_TwoDescriptorsInOneProcessConflict(t *testing.T) {
 // as in flight for as long as its orphaned child lived — a false ALIVE that
 // never clears, and the abandoned-run derivation would never fire at all. Go
 // opens files O_CLOEXEC; this asserts that on the lock's own descriptor rather
-// than trusting it, and it is checked without spawning anything (the four exec
+// than trusting it, and it is checked without spawning anything (the five exec
 // seams are not this package's to widen).
 func TestFlock_LockDescriptorIsCloseOnExec(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "resume.lock")

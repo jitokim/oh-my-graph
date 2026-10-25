@@ -1068,7 +1068,8 @@ auto-branch bug). `worktree: <name>` is the root fix:
 neither a claude invocation nor an evidence command, so it gets its own seam
 in `internal/worktree`: a `Provider` interface (`Acquire(ctx, name) (path,
 error)`, idempotent per name), with `GitManager` (prod — the third of the
-program's exactly four process-spawning objects (ADR 0006 added the fourth),
+program's exactly five process-spawning objects (ADR 0006 added the fourth,
+ADR 0046 the fifth),
 env-scrubbed via
 `internal/childenv` because `git worktree add` fires the repo's own hooks),
 `RefusingProvider` (the `schedule.Options.Worktrees` default: a forgotten
@@ -2116,9 +2117,10 @@ type Verifier interface {
 }
 ```
 
-- `ShellVerifier` (prod) is the second of the program's exactly four
+- `ShellVerifier` (prod) is the second of the program's exactly five
   process-spawning seams (ADR 0002; the third is `worktree.GitManager`, ADR
-  0005; the fourth is `browser.ExecOpener`, ADR 0006) and the only object in
+  0005; the fourth is `browser.ExecOpener`, ADR 0006; the fifth is
+  `remote.GHRunner`, ADR 0046) and the only object in
   `internal/verify` that spawns anything. Injected by `cmd/oh-my-graph`, never constructed by
   the scheduler.
 - `RefusingVerifier` is the `Options.Verifier` default:
@@ -2143,10 +2145,10 @@ type Verifier interface {
   one kind: minimal implementation, sufficient interface.
 
 **This narrows the "only CLIRunner touches `os/exec`" invariant, on
-purpose.** The invariant's restated form: *exactly four objects may spawn a
+purpose.** The invariant's restated form: *exactly five objects may spawn a
 process — `runner.CLIRunner`, `verify.ShellVerifier`,
-`worktree.GitManager` (see "Worktree isolation") and `browser.ExecOpener`
-(ADR 0006) — each behind its own injected interface, and no other package
+`worktree.GitManager` (see "Worktree isolation"), `browser.ExecOpener`
+(ADR 0006) and `remote.GHRunner` (ADR 0046) — each behind its own injected interface, and no other package
 imports `os/exec`.* Both purposes survive: the subscription-auth scrub still
 has exactly one home per spawner, and the engine is still fully testable with
 zero spawns. See ADR 0002, ADR 0005 and ADR 0006.
@@ -4387,9 +4389,9 @@ for the 1.0.0 gate; an `auto --interview` graph does (ADR 0044 §2.4).
   type NodeOutcome struct { SessionID, Result string; TotalCostUSD float64; ExitCode int; FailureCause string; BudgetExhausted, SessionLimited bool }
   ```
   - `CLIRunner` (prod): builds argv, SCRUBS ANTHROPIC_API_KEY/AUTH_TOKEN,
-    execs under context, parses JSON. One of the exactly four objects that
+    execs under context, parses JSON. One of the exactly five objects that
     spawn a process (the others: `ShellVerifier`, `worktree.GitManager`,
-    `browser.ExecOpener`).
+    `browser.ExecOpener`, `remote.GHRunner`).
   - `FakeRunner` (tests): scripted `map[key]NodeOutcome` keyed by the
     invocation (`NodeInvocation` has no id field; the key defaults to
     `spec.Prompt`, and tests set each node's prompt equal to its id so the
@@ -4521,11 +4523,12 @@ cmd/oh-my-graph/{main,flags,argslot,init,resume,gateresume,runs,show,watch,serve
 internal/graph/{graph,validate,feedback,feedback_reach,fragment}.go + _test + testdata/{pre-migration,golden}/  Graph/Node value objects, YAML, DAG validation, ReadyGiven, feedback edges + the advisory sweep for an arc that misses a fan-in producer (feedback_reach.go — advisory on purpose; ADR 0010's alternatives record why the escalation is neither sound nor complete), and the load-time fragment resolver (LoadFile/LintLoadFile, one read per path — ADR 0013)
 internal/schedule/{scheduler,errors,feedback,retryfeedback}.go + _test  ready-set engine (drives FakeRunner — keystone) + typed errors + the bounded runtime re-run of a feedback edge (ADR 0010) + the fenced, one-deep quote of the attempt a retry repeats (retryfeedback.go — ADR 0020)
 internal/runner/{runner,runtime,cli,claude_protocol,codex_protocol,preflight,sessionlimit,fake}.go + build-tagged procgroup_{unix,windows}.go + _test  interface + ToolPolicy + CLIRunner(ENV SCRUB) + the one runtime selection (runtime.go — ADR 0025) + the two protocols beneath it, each owning binary/argv/session/output (claude_protocol.go mints the session id before spawn, codex_protocol.go learns its thread id from thread.started) + the per-runtime graph preflight (preflight.go) + the subscription session-limit recognizer (sessionlimit.go — ADR 0009, one pattern per limit sentence: two for Claude, one for Codex, asked through cliProtocol.isLimitCause) + FakeRunner
-internal/verify/{verify,shell,pin,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the four exec seams (ADR 0002); PinningVerifier, the `--verify-cmd` file pins (pin.go — #363)
+internal/verify/{verify,shell,pin,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the five exec seams (ADR 0002); PinningVerifier, the `--verify-cmd` file pins (pin.go — #363)
 internal/worktree/{worktree,git,fake}.go + _test  worktree Provider seam — GitManager is the third exec seam (ADR 0005): per-run managed checkouts + work-preserving cleanup
 internal/browser/{browser,exec,fake}.go + build-tagged argv_{darwin,unix,windows}.go + _test  browser Opener seam — ExecOpener is the fourth exec seam (ADR 0006): default-browser launch, wired behind run/auto's TTY gate
-internal/invariants/exec_seam_test.go          test-only: asserts only the four exec seams' files import os/exec — 8 files, since a seam's platform-specific procgroup files belong to it (a ninth importer fails CI — ADR 0002/0005/0006). A separate, shorter list names the 4 spawn CALL SITES (one per seam, procgroup files excluded — they mutate an already-built *exec.Cmd) and asserts each scrubs its child env through internal/childenv
-internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (all four spawners)
+internal/remote/{gh,fake}.go + _test           PRLister seam — GHRunner is the fifth exec seam (ADR 0046): the one fixed, read-only `gh pr list` of the remote snapshot's open-PR part; FakePRLister
+internal/invariants/exec_seam_test.go          test-only: asserts only the five exec seams' files import os/exec — 9 files, since a seam's platform-specific procgroup files belong to it (a tenth importer fails CI — ADR 0002/0005/0006/0046). A separate, shorter list names the 5 spawn CALL SITES (one per seam, procgroup files excluded — they mutate an already-built *exec.Cmd) and asserts each scrubs its child env through internal/childenv
+internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (all five spawners)
 internal/fence/fence.go + _test                the shared data fence: a per-call crypto/rand nonce for both markers of any quote of untrusted text into a prompt, plus the head+tail bound on the quoted material. Its callers live in coordinator, schedule, handoff and interview, and their number is stated in fence.go alone — internal/invariants counts the real ones repo-wide against that one sentence, so a second copy here would be a number nothing checks
 internal/conventions/conventions.go + _test   `auto --conventions` (ADR 0041): read and validate the operator's named files whole or refuse them, render the ordinal+basename prefix, stage it as the run directory's conventions.md, and re-check that copy's SHA-256 for `resume`. Spawns nothing; the scheduler applies the prefix (Options.Conventions)
 internal/interview/interview.go + _test       `auto --interview` and `design` (ADR 0044): the five-question loop over an injected Asker (the package imports no runner), the QUESTION:/ENOUGH reply grammar, the repeat test, the nonce-fenced planner prefix (Render), staging it as interview.md and re-checking that copy's SHA-256 for `resume` (Stage/LoadStaged). Spawns nothing; the coordinator applies the prefix to the planner prompt alone (WithInterviewPrefix)

@@ -82,7 +82,7 @@ var pathMention = regexp.MustCompile(`(?:^|[^\w~./-])(~?/[\w~./+@-]+)`)
 
 // scanUnisolated reports the checkouts outside root that goal and g's prompts
 // name. It reads the filesystem (does this path resolve into a git checkout?)
-// and never runs git: a fifth spawner would need its own ADR, and the question
+// and never runs git: a new spawner would need its own ADR, and the question
 // here — "is there a .git above this path" — is answered by stat.
 //
 // It is called with the planner's OWN text, before skill mapping inlines any

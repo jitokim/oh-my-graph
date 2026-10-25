@@ -28,31 +28,38 @@ let them drift apart.
   `CODEX_API_KEY` deleted, via the shared
   `internal/childenv.Scrub` — used by ALL spawners (a model node, a
   `success_check.verify` command, the git commands behind a node's
-  `worktree:`, and the browser launch of the `serve` URL). This is what keeps
+  `worktree:`, the browser launch of the `serve` URL, and the `gh pr list`
+  of the remote snapshot). This is what keeps
   the tool on subscription billing instead of silently falling back to
   metered API billing. It is unit-tested in
   `internal/childenv/childenv_test.go` and at each call site
   (`internal/runner/claude_test.go`, `internal/verify/shell_test.go`,
-  `internal/worktree/git_test.go`, `internal/browser/exec_test.go`) — don't
+  `internal/worktree/git_test.go`, `internal/browser/exec_test.go`,
+  `internal/remote/gh_test.go`) — don't
   touch env construction without keeping those tests meaningful.
   There is ONE list and NO runtime branch: a Claude node drops the OpenAI
   switches and a Codex node drops the Anthropic ones. Splitting it in two —
   "each runtime only needs its own" — is the tempting optimisation, and the
   half that then falls behind a new provider variable bills silently, with
   nothing failing to say so.
-- **The four exec seams.** Exactly four objects may spawn a process:
+- **The five exec seams.** Exactly five objects may spawn a process:
   `runner.CLIRunner` (a node's model CLI subprocess, claude or codex),
   `verify.ShellVerifier` (a node's evidence command),
-  `worktree.GitManager` (the `git worktree` commands behind a node's
-  `worktree:`) and `browser.ExecOpener` (the `open`/`xdg-open` launch of the
-  `serve` URL) — see `docs/adr/0002-verification-is-a-second-exec-seam.md`,
-  `docs/adr/0005-worktree-provisioning-is-a-third-exec-seam.md` and
-  `docs/adr/0006-browser-open-is-a-fourth-exec-seam.md`.
+  `worktree.GitManager` (the `git` commands the engine issues against the
+  invocation repository: the worktrees behind a node's `worktree:`, and the
+  remote snapshot's reads), `browser.ExecOpener` (the `open`/`xdg-open`
+  launch of the `serve` URL) and `remote.GHRunner` (the one fixed, read-only
+  `gh pr list` of the remote snapshot) — see
+  `docs/adr/0002-verification-is-a-second-exec-seam.md`,
+  `docs/adr/0005-worktree-provisioning-is-a-third-exec-seam.md`,
+  `docs/adr/0006-browser-open-is-a-fourth-exec-seam.md` and
+  `docs/adr/0046-the-engine-records-remote-changes-and-fails-only-when-the-operator-forbids-them.md`.
   Everything else (scheduler, CLI, handoff, ledger, coordinator) depends on
-  the `NodeRunner`, `Verifier`, `worktree.Provider` and `browser.Opener`
-  interfaces only, so the whole engine is testable via the scripted
-  `FakeRunner`/`FakeVerifier`/`FakeManager`/`FakeOpener` with zero real
-  spawns. A fifth spawner needs its own ADR.
+  the `NodeRunner`, `Verifier`, `worktree.Provider`/`worktree.RemoteObserver`,
+  `browser.Opener` and `remote.PRLister` interfaces only, so the whole engine
+  is testable via the scripted
+  `FakeRunner`/`FakeVerifier`/`FakeManager`/`FakeOpener`/`FakePRLister` with
+  zero real spawns. A sixth spawner needs its own ADR.
 - **Artifact handoff is the default.** `handoff: artifact` persists a node's
   result to `~/.oh-my-graph/runs/<run-id>/<node-id>.out` (base overridable via
   `OMG_HOME`); `handoff: session`
@@ -103,10 +110,11 @@ internal/runner/       NodeRunner interface, CLIRunner + its claude/codex protoc
 internal/verify/       Verifier interface, ShellVerifier, RefusingVerifier, FakeVerifier
 internal/worktree/     worktree Provider seam: GitManager (third exec seam), RefusingProvider, FakeManager
 internal/browser/      browser Opener seam: ExecOpener (fourth exec seam), RefusingOpener, FakeOpener
-internal/childenv/     the shared child-env scrub policy (used by all four spawners)
+internal/remote/       remote PRLister seam: GHRunner (fifth exec seam, the remote snapshot's `gh pr list`), FakePRLister
+internal/childenv/     the shared child-env scrub policy (used by all five spawners)
 internal/conventions/  `auto --conventions` (ADR 0041): validate the operator's named files, render + stage the prompt prefix, re-check the staged copy on resume
 internal/fence/        the shared data fence: a per-call crypto/rand nonce in BOTH markers of any quote of untrusted text into a prompt, plus the head+tail bound on it
-internal/invariants/   test-only: asserts exactly four spawner objects — only their seams' files import os/exec
+internal/invariants/   test-only: asserts exactly five spawner objects — only their seams' files import os/exec
 internal/coordinator/  auto mode: goal → planner call → validated graph + ToolPolicies; agent mapping — scanned from ~/.claude/agents only, with the matched definition staged so a mapped node keeps ceiling layer 1 (ADR 0022) — and skill activation (ADR 0017, superseding ADR 0012's plan-time inlining); the goal loop
 internal/handoff/      {{inputs}}/{{artifacts}} interpolation, artifact/session handoff, the advisory lint sweeps
 internal/runstate/     state.json snapshot — atomic write, resume load, and the run lock (an flock a leg holds; ProbeLock reads it — ADR 0015)
