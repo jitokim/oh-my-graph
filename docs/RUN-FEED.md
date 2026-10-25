@@ -392,9 +392,10 @@ whatever gh then answered, so an unavailable part can carry them.
 one GitHub remote and no gh default (run gh repo set-default)`, `ambiguous gh
 repo: more than one remote is gh's default`, `gh repo unknown: the remotes
 could not be read`, `gh repo unknown: gh's default repo could not be read
-from git config`, `gh repo unknown: GH_REPO is not [HOST/]OWNER/REPO` (in
-these five gh was not asked), `gh read another repo: expected
-<host/owner/name>, got <host/owner/name>` (a PR's url named another repo)
+from git config`, `gh repo unknown: GH_REPO is not [HOST/]OWNER/REPO`, `gh repo
+unknown: no GitHub remote (set GH_REPO or add a GitHub remote)` (in these six
+gh was not asked), `gh read another repo: expected <host/owner/name>, got
+<host/owner/name>` (a PR's url named another repo)
 or, on an interrupted `after`, `interrupted`. The key is absent from a
 snapshot written before the part existed; a diff against one reports
 `pull_requests` as `not_compared`, reason `… not recorded`. Two parts that

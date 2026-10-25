@@ -1153,20 +1153,22 @@ does not fail: it lists one of them, and the snapshot would record that
 repo's PRs as this one's. So before gh is asked the snapshot works out the
 expected repo (host, owner/name and source), by the first rule that applies:
 `GH_REPO` in gh's (scrubbed) environment, source `GH_REPO`; else the GitHub
-remote `gh repo set-default` marked (`remote.<name>.gh-resolved` = `base`,
-read with `git config` through `GitManager`), source `gh default`; else the
-one distinct GitHub repo among the remotes' fetch URLs (host and owner/name
-compared case-insensitively), source `single GitHub remote`. A GitHub remote
-is one on `GH_HOST` when that is set, else on `github.com` or a `*.ghe.com`
-host; a host in `GH_REPO` wins over `GH_HOST`, and with neither the host is
-`github.com`. No GitHub remote at all leaves gh to its own resolution, as
-before. When the repo cannot be told the part is `unavailable` and gh is not
-asked: `ambiguous gh repo: more than one GitHub remote and no gh default
+remote `gh repo set-default` marked (`remote.<name>.gh-resolved`, read with
+`git config` through `GitManager`): `base` is that remote's own repo,
+`OWNER/REPO` that repo on the remote's host (a related repo that is no remote,
+such as a fork's parent), any other value no default; source `gh default`; else
+the one distinct GitHub repo among the remotes' fetch URLs (host and owner/name
+compared case-insensitively), source `single GitHub remote`. A GitHub remote is
+one on `GH_HOST` when that is set, else on `github.com` or a `*.ghe.com` host;
+a host in `GH_REPO` wins over `GH_HOST`, and with neither the host is
+`github.com`. When the repo cannot be told the part is `unavailable` and gh is
+not asked: `ambiguous gh repo: more than one GitHub remote and no gh default
 (run gh repo set-default)`, `ambiguous gh repo: more than one remote is gh's
-default`, `gh repo unknown: the remotes could not be read` (the remotes
-part failed and no `GH_REPO`), `gh repo unknown: gh's default repo could not
-be read from git config`, or `gh repo unknown: GH_REPO is not
-[HOST/]OWNER/REPO`. When gh answers with at least one PR and an expected
+default`, `gh repo unknown: the remotes could not be read` (the remotes part
+failed and no `GH_REPO`), `gh repo unknown: gh's default repo could not be read
+from git config`, `gh repo unknown: GH_REPO is not [HOST/]OWNER/REPO`, or `gh
+repo unknown: no GitHub remote (set GH_REPO or add a GitHub remote)`. When gh
+answers with at least one PR and an expected
 repo was worked out, each PR's `url` (`https://<host>/<owner>/<repo>/pull/<n>`)
 must name that repo, case-insensitively; another repo, PRs naming more than
 one, or a url naming none make the part `unavailable`, `gh read another
