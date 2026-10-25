@@ -67,14 +67,14 @@ func beginRemoteLeg(ctx context.Context, runID string, recorder *runstate.Snapsh
 
 // end takes the leg's after snapshot, diffs it against the before with the
 // §5.1 check, and records it. runCtx is the leg's own context: once the user
-// has interrupted the run (Ctrl-C, SIGTERM) the after snapshot is not taken
-// — an unreachable remote would hold the exit for the git or gh timeout — and
-// all three parts are recorded unavailable, "interrupted", so the record never reads
-// "no change". Otherwise it runs on a context of its own, since a
+// has interrupted the run (Ctrl-C, SIGTERM) the after snapshot is not taken —
+// an unreachable remote would hold the exit for the git or gh timeout — and
+// all three parts are recorded unavailable, "interrupted", so the record never
+// reads "no change". Otherwise it runs on a context of its own, since a
 // halt-on-fail cancels only the scheduler's, and the leg still ended; that
 // context is cancelled with runCtx, so an interrupt while the snapshot runs
-// kills its git and gh and records it interrupted the same way. It reports whether
-// the leg was interrupted by the time the record was written.
+// kills its git and gh and records it interrupted the same way. It reports
+// whether the leg was interrupted by the time the record was written.
 func (l *remoteLeg) end(runCtx context.Context) (interrupted bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
