@@ -707,6 +707,26 @@ func (o *readOnlyRunDirObserver) LsRemoteHeads(ctx context.Context, remote strin
 	return o.FakeRemoteObserver.LsRemoteHeads(ctx, remote)
 }
 
+// failedPauseWrite runs a fresh gate-only run whose run directory turns
+// read-only after its before snapshot, so the scheduler's pause write — a
+// sibling state.json write a leg cannot run without — fails, and returns the
+// error that run ends with. Gate-only, so no node's output write fails first.
+func failedPauseWrite(t *testing.T, fake *runner.FakeRunner) error {
+	t.Helper()
+	g := mustParse(t, `{"name":"gate-only","nodes":[{"id":"approve","type":"gate"}]}`)
+	runDir := runDirFor("run-pause-write")
+	t.Cleanup(func() { _ = os.Chmod(runDir, 0o700) })
+	useRemoteObserver(t, &readOnlyRunDirObserver{FakeRemoteObserver: originObserver(), t: t, runDir: runDir}, remoteBaseSHA)
+	var err error
+	captureStdout(t, func() {
+		err = executeGraph(context.Background(), "run-pause-write", g, fake, commonRunFlags{inputs: inputFlag{}}, nil, 0, "gate-only.yaml", []byte("name: gate-only\n"), false, nil, nil, nil)
+	})
+	if err == nil || !strings.Contains(err.Error(), `persist pause snapshot for gate "approve"`) {
+		t.Fatalf("the read-only run's pause write: got %v, want it to fail", err)
+	}
+	return err
+}
+
 // Review of #410: a resume --approve whose gate decisions could not be
 // written after its before snapshot warned and ran the graph anyway, so a
 // later record could persist the run as no longer paused while the approval
@@ -752,9 +772,16 @@ func TestResume_AFailedGateDecisionWriteStartsNoNodeAndLeavesTheRunPaused(t *tes
 	if code := exitCodeForError(err); code != 1 {
 		t.Errorf("exit code = %d, want 1, the code of every other state.json write a leg cannot run without", code)
 	}
-	for _, want := range []string{"record this leg's gate decisions in state.json", `still paused at gate "approve"`, "the same resume command can be retried"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("err = %q, want it to say %q", err, want)
+	if code, sibling := exitCodeForError(err), exitCodeForError(failedPauseWrite(t, fake)); code != sibling {
+		t.Errorf("exit code = %d, want %d, the code of the scheduler's failed pause write", code, sibling)
+	}
+	// What mainExitCode prints for an exit-1 error, the one stderr line the
+	// user sees; mainExitCode itself is not driven, since resume through run()
+	// would build the real runtime.
+	stderr := "oh-my-graph: " + err.Error()
+	for _, want := range []string{"oh-my-graph: record this leg's gate decisions in state.json: ", `still paused at gate "approve"`, "the same resume command can be retried"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr = %q, want it to say %q", stderr, want)
 		}
 	}
 	if calls := fake.Calls(); len(calls) != firstCalls {

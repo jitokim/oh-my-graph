@@ -833,9 +833,12 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		return ctxErr
 	}
 	// A failed write of this leg's decisions ends the leg the same way, before
-	// any node starts, but as a failure — a plain error, exit 1, like the
-	// other state.json writes a leg cannot run without (`prepare run
-	// snapshot`, the scheduler's pause write). Its after snapshot is taken,
+	// any node starts, but as a failure — a plain wrapped error that
+	// mainExitCode maps to exit 1 and prints as its `oh-my-graph: ` stderr
+	// line, like the other state.json writes a leg cannot run without:
+	// executeGraph's WriteInitial (`prepare run snapshot: %w`) and the
+	// scheduler's RecordPause (`persist pause snapshot for gate %q: %w`),
+	// which this leg's own pause would reach. Its after snapshot is taken,
 	// not recorded interrupted, and no run_finished is written: the scheduler
 	// writes this leg's run_started, so nothing opened a leg on the stream.
 	// The recorder kept the pause as loaded, so the run is still paused where
