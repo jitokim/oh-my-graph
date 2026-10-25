@@ -100,6 +100,11 @@ is; if it already fails there, `auto` stops before any spend (exit 5, "baseline
 red") and quotes the tail of its output, so you fix the tree before paying for
 a cycle.
 
+Add `--forbid-remote-changes` to a `run` or `auto` whose goal must not touch
+the remote: a new branch or pull request at a commit the run made, or a new
+remote, then fails the run with exit 6. A push onto an existing branch is
+reported, not failed ([docs/LIMITATIONS.md](../docs/LIMITATIONS.md)).
+
 ## Prerequisite: `oh-my-graph` on `$PATH`
 
 The plugin does not bundle the graph engine. Install it once:

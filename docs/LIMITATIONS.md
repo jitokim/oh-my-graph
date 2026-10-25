@@ -542,14 +542,36 @@ has no open issue behind it.
   unchanged.
   ([#298](https://github.com/jitokim/oh-my-graph/issues/298))
 - **The remote change record sees two snapshots of one repository, and
-  only reports.** `run`, `auto` and `resume` record what changed on the
+  only reports unless you pass `--forbid-remote-changes`.** `run`, `auto` and
+  `resume` record what changed on the
   invocation repository's remotes and open pull requests between a snapshot
   before each leg's first
   node and one after its last (`remote_changes` in `state.json`, printed after
-  the ledger table). It changes no verdict and no exit code: a push the goal
-  forbade still exits 0. What it does not see:
-  <br>**Other repositories.** A node that pushes from a clone under `/tmp`
-  changes nothing the snapshot reads.
+  the ledger table). Without the flag it changes no verdict and no exit code:
+  a push the goal forbade still exits 0. With it (`run` or `auto`, carried by
+  `resume`), a new branch or pull request at a commit this run made, or a new
+  remote, fails the run with exit 6 — and nothing else does:
+  <br>**A push onto an existing branch never fails the run.** Pushing the
+  run's own commits onto a branch that already existed at the leg's start,
+  `main` included, is `branch_moved`; updating an open PR is `pr_updated`.
+  Both are recorded and printed, labelled `run_commit` when the sha is the
+  run's, and never fail, with or without the flag. This is #410's own case,
+  left open on purpose (ADR 0046 §2.4, §9 item 3). `remote_removed`,
+  `remote_url_changed`, `branch_deleted`, `pr_no_longer_open` and every change
+  made between legs (while a run sat paused) are reported only too.
+  <br>**An unavailable part is not guarded.** The guarded run still starts;
+  it prints which parts it could not read and judges only the parts it
+  compared, so a PR opened behind an unusable `gh` does not fail it (`PR part
+  not guarded: <reason>`, at launch and in the summary).
+  <br>**A human's change can fail a guarded run.** A human who pushes a
+  commit this run made to a new branch, creates a branch or opens a PR at a
+  commit a node fetched and merged, or adds a remote to the checkout during
+  the leg, fails the run as a node doing it would. The record names the sha
+  or remote; the cost is a re-run.
+  <br>The flag sees only what the record sees. What the record does not see:
+  <br>**Other repositories.** A node that pushes from a clone under `/tmp`,
+  or runs `gh pr create --repo other/repo`, changes nothing the snapshot
+  reads.
   <br>**A change reverted before the leg ends.** A branch pushed and deleted,
   or a PR opened and closed, within one leg leaves the two snapshots equal.
   <br>**Who made a change.** A human who pushes or adds a remote while the run
@@ -560,7 +582,8 @@ has no open issue behind it.
   to it reads "points at a commit this run made".
   <br>**A run commit reachable only from another branch.** A commit a node made
   on a branch it renamed, or with no `worktree:` on the invocation
-  repository's own branch, is labelled `not_attributable`.
+  repository's own branch, is labelled `not_attributable`, so its new branch
+  or PR does not fail a guarded run.
   <br>**Anything outside configured remotes, remote branch heads and open
   pull requests' head shas:** tags, releases, PR and issue comments, labels,
   reviews and CI state. A PR is `pr_updated` only when its head sha moves.
@@ -601,10 +624,9 @@ has no open issue behind it.
   `--retry-failed`), and an interrupted leg records
   its end snapshot as `unavailable` ("interrupted") instead of waiting for
   it. During the end snapshot a pause the nodes reached is withdrawn, so
-  the leg resumes with `--retry-failed` and its gate pauses again. A leg
-  whose every node had already passed still reads `PASS` in `runs` while
-  the invocation exits 1: the one single-run exception to ADR 0023 §2.6
-  (exit 2 ↔ `PAUSED`, exit 1 ↔ `FAIL`, exit 0 ↔ `PASS`). ssh
+  the leg resumes with `--retry-failed` and its gate pauses again. The run
+  reads `FAIL` in `runs`, a leg whose every node had already passed
+  included, as its exit 1 says (ADR 0023 §2.6). ssh
   remotes run in BatchMode unless you chose an ssh command
   (`GIT_SSH_COMMAND`, `GIT_SSH` or `core.sshCommand`): an unknown host key or
   an encrypted key without an agent makes that part `unavailable` instead of

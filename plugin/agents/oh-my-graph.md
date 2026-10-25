@@ -27,8 +27,8 @@ Claude behaviour below carries over.
 
 ```
 oh-my-graph init [<dir>]
-oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
-oh-my-graph auto "<goal>" [--plan-only] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]
+oh-my-graph run <graph.yaml> [--dry-run] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--forbid-remote-changes] [--no-web]
+oh-my-graph auto "<goal>" [--plan-only] [--input k=v ...] [--concurrency N] [--continue-on-fail] [--forbid-remote-changes] [--no-web]
                           [--verify-cmd 'CMD'] [--verify-timeout D] [--no-baseline] [--accept-no-build-evidence]
                           [--accept-loaded-user-config]
                           [--max-cycles N] [--max-goal-budget-usd X]
@@ -70,12 +70,19 @@ Exit codes: `0` every node passed, `1` the run failed, `2` the run paused at
 a human gate and is **resumable** — a pause is not a failure — `3` `auto`
 refused to start for want of build evidence, and `5` `auto`'s `--verify-cmd`
 was already red on the starting tree (baseline red — no model call, no run
-directory). On exit 2, surface the printed resume hint and offer
+directory), and `6` a run started with `--forbid-remote-changes` observed a
+forbidden remote change — a new branch or pull request at a commit the run
+made, or a new remote — and reads `FAIL` even if every node passed. On exit 2, surface the printed resume hint and offer
 `oh-my-graph resume <run-id> --approve <gate-id>` (or `--reject`). On exit 3,
 see the rule immediately below. On exit 5, show the user the quoted output; do
 not retry until the tree, the command, or its `--verify-timeout` is fixed —
 unless the command is an intentionally red acceptance test of the goal, in which
-case retry with `--no-baseline`.
+case retry with `--no-baseline`. On exit 6, show the user the stderr line naming
+the forbidden entries and the printed remote change record; the push already
+happened, so do not retry or undo it yourself — ask the user. Pass
+`--forbid-remote-changes` when the user's goal says not to push, open a PR or
+add a remote; a push onto an existing branch is reported, not failed, and
+`resume` keeps the guard on its own.
 A FAIL detailed `result did not match` may be a verdict-pattern miss rather than
 broken work — unlike `verify_failed`, read the node's reply before acting (#264).
 
