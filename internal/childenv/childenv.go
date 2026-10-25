@@ -2,24 +2,25 @@
 // spawns must obey: variables that switch Claude or Codex from the user's saved
 // login to API-key authentication are DELETED from the child's environment.
 //
-// It is a dependency-free leaf package because there are FOUR spawners —
+// It is a dependency-free leaf package because there are FIVE spawners —
 // runner.CLIRunner (a model node, claude or codex), verify.ShellVerifier (a
 // success_check.verify command), worktree.GitManager (the git commands the
 // engine issues against the invocation repository: worktrees and the remote
-// snapshot) and browser.ExecOpener (the open/xdg-open
-// launch of the serve URL) — and they must not be able to disagree about the
-// rule. Each of the last three can reach claude without meaning to: a
-// verification command may legitimately BE a claude invocation
-// (`verify: { command: "claude -p ..." }`), a repo's git hooks may invoke it,
-// and the launcher dispatches to a user-configured URL handler that inherits
-// the child environment (ADR 0006). A scrub that lived only in the runner
+// snapshot), browser.ExecOpener (the open/xdg-open launch of the serve URL)
+// and remote.GHRunner (the remote snapshot's `gh pr list`, ADR 0046) — and
+// they must not be able to disagree about the rule. The non-model ones can
+// reach claude without meaning to: a verification command may legitimately BE
+// a claude invocation (`verify: { command: "claude -p ..." }`), a repo's git
+// hooks may invoke it, and the launcher dispatches to a user-configured URL
+// handler that inherits the child environment (ADR 0006). The scrub leaves
+// GH_TOKEN alone, so gh still authenticates as the operator. A scrub that lived only in the runner
 // would leave exactly those cases billed to the API.
 //
 // The set of spawners is not a matter of prose: internal/invariants/
 // exec_seam_test.go enforces it, both by refusing an os/exec import outside the
-// four seams and by requiring each seam's call site to route its child env
-// through Scrub. A fifth spawner needs its own ADR (see docs/adr/0002, 0005,
-// 0006), and that test is what will notice.
+// five seams and by requiring each seam's call site to route its child env
+// through Scrub. A sixth spawner needs its own ADR (see docs/adr/0002, 0005,
+// 0006, 0046), and that test is what will notice.
 //
 // This is the load-bearing subscription-auth guarantee of the whole project.
 // It is asserted here (the policy) and again on each spawner (the call site).

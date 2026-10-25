@@ -104,7 +104,7 @@ func TestScrub_MatchesKeyCaseInsensitively(t *testing.T) {
 }
 
 // TestScrub_DoesNotMutateInput pins that the caller's slice is left alone — all
-// four spawners pass os.Environ()'s result and one of them building its child
+// five spawners pass os.Environ()'s result and one of them building its child
 // env must never disturb the others' view of the parent environment.
 func TestScrub_DoesNotMutateInput(t *testing.T) {
 	parent := []string{"ANTHROPIC_API_KEY=secret", "PATH=/usr/bin"}

@@ -30,9 +30,9 @@ import (
 // than no diagnostic.
 //
 // What this must NOT become is the obvious alternative: `lsof -i :8642` and a
-// pid, then `kill`. Exactly four objects in this repo may spawn a process (ADR
-// 0002/0005/0006, internal/invariants asserts it by import), and a diagnostic is
-// not worth a fifth. An HTTP GET to loopback spawns nothing, and it answers a
+// pid, then `kill`. Exactly five objects in this repo may spawn a process (ADR
+// 0002/0005/0006/0046, internal/invariants asserts it by import), and a
+// diagnostic is not worth a sixth. An HTTP GET to loopback spawns nothing, and it answers a
 // better question than a pid does — not "which process", but "which BUILD". So
 // every message below reports, names a command the reader can run, and stops
 // there: nothing here kills, replaces, or offers to.

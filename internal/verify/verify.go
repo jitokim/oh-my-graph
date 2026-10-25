@@ -8,10 +8,10 @@
 // reasons to change. Instead verification gets its own, narrower interface with
 // its own single exec-owning implementation. See docs/adr/0002.
 //
-// The project invariant this restates (it does not weaken it): exactly four
+// The project invariant this restates (it does not weaken it): exactly five
 // objects in oh-my-graph may spawn a process — runner.CLIRunner,
-// verify.ShellVerifier, worktree.GitManager and browser.ExecOpener (ADR 0006)
-// — each behind its own injected interface, each scrubbing the child
+// verify.ShellVerifier, worktree.GitManager, browser.ExecOpener (ADR 0006) and
+// remote.GHRunner (ADR 0046) — each behind its own injected interface, each scrubbing the child
 // environment through internal/childenv. No other package imports os/exec.
 package verify
 

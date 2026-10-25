@@ -2,6 +2,7 @@ package worktree
 
 import (
 	"context"
+	"maps"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -78,7 +79,8 @@ func (f *FakeManager) Calls() []string {
 // FakeRemoteObserver is the scripted RemoteObserver — FakeManager's
 // counterpart for the remote snapshot. It answers from what a test set on it
 // (no git, no network): the remotes list or an error for it, each remote's
-// heads or an error for them, and the set of shas CommitAttributable passes.
+// heads or an error for them, the set of shas CommitAttributable passes, and
+// the remotes marked gh's default.
 // Mutating it between two snapshots is how a test scripts a change.
 type FakeRemoteObserver struct {
 	mu          sync.Mutex
@@ -88,6 +90,9 @@ type FakeRemoteObserver struct {
 	headsErr    map[string]error
 	runCommits  map[string]bool
 	attribCalls []string
+	ghDefaults  map[string]string
+	ghDefErr    error
+	ghDefCalls  int
 }
 
 // NewFakeRemoteObserver builds a FakeRemoteObserver with no remotes.
@@ -170,6 +175,39 @@ func (f *FakeRemoteObserver) AttributionCalls() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string{}, f.attribCalls...)
+}
+
+// SetGHDefaultRemotes scripts what GHDefaultRemotes returns: each remote
+// carrying gh-resolved mapped to its value, or a non-nil err in their place.
+func (f *FakeRemoteObserver) SetGHDefaultRemotes(values map[string]string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ghDefaults = maps.Clone(values)
+	f.ghDefErr = err
+}
+
+// GHDefaultRemotes returns a copy of the scripted values, or the scripted
+// error. Nothing scripted is no default. It counts each call.
+func (f *FakeRemoteObserver) GHDefaultRemotes(ctx context.Context) (map[string]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ghDefCalls++
+	if f.ghDefErr != nil {
+		return nil, f.ghDefErr
+	}
+	out := map[string]string{}
+	maps.Copy(out, f.ghDefaults)
+	return out, nil
+}
+
+// GHDefaultCalls returns how many times GHDefaultRemotes was asked.
+func (f *FakeRemoteObserver) GHDefaultCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.ghDefCalls
 }
 
 var _ RemoteObserver = (*FakeRemoteObserver)(nil)

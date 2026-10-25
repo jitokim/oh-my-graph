@@ -341,7 +341,7 @@ To keep that guarantee real, every node subprocess starts from your environment
 with `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, and
 `CODEX_API_KEY` **deleted** — those can switch the selected CLI away from its
 saved login. The scrub is one shared policy
-(`internal/childenv`), unit-tested on its own and again at each of the four exec
+(`internal/childenv`), unit-tested on its own and again at each of the five exec
 seams; oh-my-graph never uses `--bare` (which disables OAuth) and never touches
 the Agent SDK. Full stance: [SECURITY.md](SECURITY.md).
 

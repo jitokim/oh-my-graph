@@ -33,9 +33,10 @@ nodes:
       keeping the diff focused and matching the existing style (DESIGN.md is the
       spec; English-only):
         {{ inputs.task }}
-      os/exec belongs to the FOUR exec seams only — runner.ClaudeCLIRunner,
-      verify.ShellVerifier, worktree.GitManager, browser.ExecOpener — and a fifth
-      spawner needs an ADR before it lands; internal/invariants enforces this.
+      os/exec belongs to the FIVE exec seams only — runner.CLIRunner,
+      verify.ShellVerifier, worktree.GitManager, browser.ExecOpener,
+      remote.GHRunner — and a sixth spawner needs an ADR before it lands;
+      internal/invariants enforces this.
       Add or update tests. Choose a commit granularity that fits the work —
       one commit per refactoring unit for refactors, per file for sweeps, per
       feature slice for new code — and state your choice in the first commit
@@ -117,7 +118,7 @@ nodes:
     cwd: "{{ inputs.repo }}"
     with:
       diff: the current branch's diff vs main
-      focus: Also check adherence to DESIGN.md's invariants (the four exec seams, env scrub, no Agent SDK).
+      focus: Also check adherence to DESIGN.md's invariants (the five exec seams, env scrub, no Agent SDK).
 
   # The gate (#293). Gating is a PAIR — a success_check narrowed to the gating
   # pattern, which accepts `CLEAN` and `MINOR:` and rejects only `FINDINGS:`

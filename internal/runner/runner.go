@@ -1,9 +1,10 @@
 // Package runner is the model-CLI execution seam of oh-my-graph. It defines the
 // NodeRunner interface the Scheduler depends on, the value types crossing that
 // boundary, and two implementations: CLIRunner (one of the exactly
-// four objects in the whole program that touch os/exec —
-// verify.ShellVerifier, worktree.GitManager and browser.ExecOpener are the
-// others; see ADR 0002, ADR 0005 and ADR 0006) and FakeRunner (scripted, for
+// five objects in the whole program that touch os/exec —
+// verify.ShellVerifier, worktree.GitManager, browser.ExecOpener and
+// remote.GHRunner are the others; see ADR 0002, ADR 0005, ADR 0006 and ADR
+// 0046) and FakeRunner (scripted, for
 // tests).
 //
 // The seam exists so the entire scheduler — topological order, fan-out, fan-in,

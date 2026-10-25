@@ -1,9 +1,9 @@
 // Package invariants holds repo-wide structural tests. This one enforces the
-// "exactly four exec seams" rule from ADR 0002, ADR 0005 and ADR 0006: only
-// runner.CLIRunner, verify.ShellVerifier, worktree.GitManager and
-// browser.ExecOpener may spawn processes, so only their files may import
-// os/exec. A new importer means a new spawner, which needs its own ADR before
-// it lands.
+// "exactly five exec seams" rule from ADR 0002, ADR 0005, ADR 0006 and ADR
+// 0046: only runner.CLIRunner, verify.ShellVerifier, worktree.GitManager,
+// browser.ExecOpener and remote.GHRunner may spawn processes, so only their
+// files may import os/exec. A new importer means a new spawner, which needs
+// its own ADR before it lands.
 package invariants
 
 import (
@@ -20,11 +20,11 @@ import (
 
 // allowedExecImporters is the exhaustive list of non-test files (relative to
 // the repo root, slash-separated) that may import os/exec. Each entry belongs
-// to one of the four exec seams; the platform-specific procgroup files are
+// to one of the five exec seams; the platform-specific procgroup files are
 // part of their seam's process-spawning machinery.
 //
 // To add an entry here, first write an ADR introducing the new seam
-// (see docs/adr/0002, docs/adr/0005 and docs/adr/0006).
+// (see docs/adr/0002, docs/adr/0005, docs/adr/0006 and docs/adr/0046).
 var allowedExecImporters = map[string]bool{
 	// Seam 1: runner.CLIRunner (ADR 0001/0002/0025)
 	"internal/runner/cli.go":               true,
@@ -39,6 +39,9 @@ var allowedExecImporters = map[string]bool{
 	// Seam 4: browser.ExecOpener (ADR 0006) — the build-tagged argv files
 	// only pick the launcher command; exec.go alone imports os/exec.
 	"internal/browser/exec.go": true,
+	// Seam 5: remote.GHRunner (ADR 0046) — the one fixed `gh pr list` of the
+	// remote snapshot.
+	"internal/remote/gh.go": true,
 }
 
 // skippedDirs are the directory NAMES the repo-root walk does not descend
@@ -67,9 +70,9 @@ var allowedExecImporters = map[string]bool{
 //   - bin: the gitignored build output directory (`make build`).
 //
 // A botched skip-list cannot fail silently: the stale check in
-// TestOnlyTheFourExecSeamsImportOsExec asserts that every allowlisted file was
+// TestOnlyTheFiveExecSeamsImportOsExec asserts that every allowlisted file was
 // FOUND to import os/exec, so a walk that stopped reaching internal/ reports
-// all eight allowlisted files stale (measured, by adding "internal" here) and
+// all nine allowlisted files stale (measured, by adding "internal" here) and
 // goes red rather than passing on an empty scan.
 var skippedDirs = map[string]bool{
 	"testdata": true,
@@ -101,12 +104,13 @@ const childenvImportPath = "github.com/jitokim/oh-my-graph/internal/childenv"
 // EXCLUDES the platform-specific procgroup files: those import os/exec only to
 // mutate an already-built *exec.Cmd (SysProcAttr, Process.Kill), they never call
 // exec.Command/exec.CommandContext themselves, so they have no spawn to scrub.
-// Keep this in step with the four seams in allowedExecImporters.
+// Keep this in step with the five seams in allowedExecImporters.
 var execSeamCallSites = []string{
 	"internal/runner/cli.go",   // Seam 1: runner.CLIRunner (ADR 0001/0002/0025)
 	"internal/verify/shell.go", // Seam 2: verify.ShellVerifier (ADR 0002)
 	"internal/worktree/git.go", // Seam 3: worktree.GitManager (ADR 0005)
 	"internal/browser/exec.go", // Seam 4: browser.ExecOpener (ADR 0006)
+	"internal/remote/gh.go",    // Seam 5: remote.GHRunner (ADR 0046)
 }
 
 // walkRepoGoFiles parses every non-test .go file in the repository — the whole
@@ -152,7 +156,7 @@ func walkRepoGoFiles(t *testing.T, repoRoot string, visit func(rel string, file 
 	}
 }
 
-func TestOnlyTheFourExecSeamsImportOsExec(t *testing.T) {
+func TestOnlyTheFiveExecSeamsImportOsExec(t *testing.T) {
 	repoRoot := filepath.Join("..", "..")
 
 	importers := map[string]bool{}
@@ -177,11 +181,11 @@ func TestOnlyTheFourExecSeamsImportOsExec(t *testing.T) {
 	sort.Strings(stale)
 
 	for _, file := range unexpected {
-		t.Errorf("%s imports os/exec but is not one of the four exec seams "+
+		t.Errorf("%s imports os/exec but is not one of the five exec seams "+
 			"(runner.CLIRunner, verify.ShellVerifier, worktree.GitManager, "+
-			"browser.ExecOpener). A fifth spawner needs its own ADR — see "+
-			"docs/adr/0002, docs/adr/0005 and docs/adr/0006. Depend on the "+
-			"NodeRunner/Verifier/worktree.Provider/browser.Opener interfaces "+
+			"browser.ExecOpener, remote.GHRunner). A sixth spawner needs its own "+
+			"ADR — see docs/adr/0002, 0005, 0006 and 0046. Depend on the "+
+			"NodeRunner/Verifier/worktree.Provider/browser.Opener/remote.PRLister interfaces "+
 			"instead, or write the ADR and extend allowedExecImporters.", file)
 	}
 	for _, file := range stale {
@@ -209,12 +213,12 @@ var directSpawnSelectors = map[string][]string{
 	"syscall": {"ForkExec", "StartProcess", "Exec", "CreateProcess"},
 }
 
-// TestNoDirectProcessSpawns closes the gap under TestOnlyTheFourExecSeamsImportOsExec:
-// that test proves only four files import os/exec, but os/exec is not the only
+// TestNoDirectProcessSpawns closes the gap under TestOnlyTheFiveExecSeamsImportOsExec:
+// that test proves only the five seams' files import os/exec, but os/exec is not the only
 // way to spawn. os.StartProcess and syscall.ForkExec are the same capability one
 // layer down, and a file naming them would sail past an import allowlist.
 //
-// The rule is absolute rather than allowlisted: even the four seams route their
+// The rule is absolute rather than allowlisted: even the five seams route their
 // spawns through os/exec (which is what TestExecSeamCallSitesScrubEnv can then
 // verify scrubs the child env). A direct fork/exec anywhere — seam or not — would
 // be a spawn with no scrub check over it, so there is nobody to exempt. What a
@@ -242,12 +246,12 @@ func TestNoDirectProcessSpawns(t *testing.T) {
 	})
 	for _, f := range found {
 		t.Errorf("%s references %s, which spawns a process without going through os/exec — so "+
-			"the import allowlist in TestOnlyTheFourExecSeamsImportOsExec cannot see it and "+
+			"the import allowlist in TestOnlyTheFiveExecSeamsImportOsExec cannot see it and "+
 			"TestExecSeamCallSitesScrubEnv cannot prove its child environment is scrubbed, which "+
 			"is what keeps provider API-auth variables out of the child and the tool "+
 			"on subscription billing. Naming it at all is the finding: a spawn primitive stored in "+
 			"a variable, a field or an argument is called somewhere. Route the spawn through one of "+
-			"the four exec seams, or write the ADR for a new one (docs/adr/0002, 0005, 0006).",
+			"the five exec seams, or write the ADR for a new one (docs/adr/0002, 0005, 0006, 0046).",
 			f.file, f.call)
 	}
 }
@@ -453,12 +457,12 @@ func f() { StartProcess("/bin/sh") }`,
 }
 
 // TestExecSeamCallSitesScrubEnv closes the defense-in-depth gap that the import
-// allowlist above cannot: TestOnlyTheFourExecSeamsImportOsExec guards WHICH
+// allowlist above cannot: TestOnlyTheFiveExecSeamsImportOsExec guards WHICH
 // files may spawn a process, but not that they ACTUALLY scrub the child env at
 // the call site. A future edit could add a second, unscrubbed exec.Command to an
 // already-allowlisted file and CI would stay green.
 //
-// For each of the four spawn-site files this asserts, structurally:
+// For each of the five spawn-site files this asserts, structurally:
 //
 //   - (a) the file has EXACTLY ONE exec.Command/exec.CommandContext call — the
 //     one env-scrubbed constructor per seam, so a second (unaudited) spawn is a
@@ -510,7 +514,7 @@ func TestExecSeamCallSitesScrubEnv(t *testing.T) {
 					"Each exec seam funnels every spawn through a single env-scrubbed *exec.Cmd "+
 					"constructor; a second call site is a second, unaudited spawn that the import "+
 					"allowlist cannot catch. Route it through the existing builder, or write an ADR "+
-					"for a new seam (docs/adr/0002, 0005, 0006).", rel, totalCalls)
+					"for a new seam (docs/adr/0002, 0005, 0006, 0046).", rel, totalCalls)
 			}
 
 			// Locate the function enclosing that single call site.
@@ -570,7 +574,7 @@ func TestExecSeamCallSitesScrubEnv(t *testing.T) {
 					"environment on the constructed command before the process runs, or "+
 					"provider API-auth variables leak into the child and it silently "+
 					"falls back to metered API billing — the one invariant childenv.Scrub exists to "+
-					"hold (see CLAUDE.md, docs/adr/0002, 0005, 0006).", rel, fn.Name.Name, recvName, recvName, childenvName)
+					"hold (see CLAUDE.md, docs/adr/0002, 0005, 0006, 0046).", rel, fn.Name.Name, recvName, recvName, childenvName)
 				return
 			}
 
@@ -693,7 +697,7 @@ func execConstructReceiver(fn *ast.FuncDecl, execName string) (name string, pos 
 // firstReceiverExecOrReturn returns the earliest position inside fn at which the
 // receiver named recv is either executed (a .Run/.Start/.Output/.CombinedOutput
 // call on it) or returned. used is false when the receiver is neither run nor
-// returned inside fn. The four real seam builders return the *exec.Cmd for a
+// returned inside fn. The five real seam builders return the *exec.Cmd for a
 // sibling function to run, so the return statement is the ordering boundary; a
 // caller that inlined the run would hit the method-call boundary instead.
 func firstReceiverExecOrReturn(fn *ast.FuncDecl, recv string) (pos token.Pos, used bool) {

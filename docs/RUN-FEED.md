@@ -355,7 +355,8 @@ feed schema is unchanged.
 
 `remote_changes` is the remote change record
 ([#410](https://github.com/jitokim/oh-my-graph/issues/410)): what the engine
-observed changing on the invocation repository's remotes while the run ran.
+observed changing on the invocation repository's remotes and open pull
+requests while the run ran.
 It is a report: nothing reads it to decide anything, and no exit code or
 verdict depends on it. `run`, `auto` and `resume` write it on every leg; it is
 absent only on a run that predates it. A leg's `run_finished` comes after its
@@ -374,23 +375,50 @@ with any pause its nodes reached withdrawn from `state.json`. The record holds:
   the record starts `legs` at that resumed leg, so its "leg 1" is the first
   leg recorded, and the printed "between leg 1 and leg 2" counts the same way.
 
-A snapshot has two parts, each with `status` `"observed"` or `"unavailable"`
-and, when unavailable, `reason`: `remotes` (`configured`: `name`,
-`fetch_url`, `push_url` from `git remote -v`) and `branches` (`refs`:
-`remote`, `branch`, `sha` from `git ls-remote --heads` per remote). An empty
-observed list is an observed "none"; an unavailable part is never treated as
-empty. `branches` is unavailable as a whole when any one remote's
-`ls-remote` failed, with every failing remote in the reason. Credentials in
-a URL, and in a reason that quotes one, are replaced with `***`.
+A snapshot has three parts, each with `status` `"observed"` or
+`"unavailable"` and, when unavailable, `reason`: `remotes` (`configured`:
+`name`, `fetch_url`, `push_url` from `git remote -v`), `branches` (`refs`:
+`remote`, `branch`, `sha` from `git ls-remote --heads` per remote) and
+`pull_requests` (`open`: `number`, `head_ref_name`, `head_ref_oid` from `gh
+pr list --state open --limit 1000`, sorted by number; when unavailable also
+`detail`, gh's own words, redacted; and, both omitted when empty, `repo`, the
+GitHub repo gh was expected to read as `host/owner/name`, and `repo_source`,
+how it was worked out: `GH_REPO`, `gh default` or `single GitHub remote`).
+`repo` and `repo_source` are set whenever an expected repo was worked out,
+whatever gh then answered, so an unavailable part can carry them.
+`pull_requests`' reason is one of `gh not found`, `not authenticated`,
+`non-zero exit`, `timeout`, `canceled`, `unparsable output`, `truncated`
+(exactly 1000 open PRs, so more may exist), `ambiguous gh repo: more than
+one GitHub remote and no gh default (run gh repo set-default)`, `ambiguous gh
+repo: more than one remote is gh's default`, `gh repo unknown: the remotes
+could not be read`, `gh repo unknown: gh's default repo could not be read
+from git config`, `gh repo unknown: GH_REPO is not [HOST/]OWNER/REPO`, `gh repo
+unknown: no GitHub remote (set GH_REPO or add a GitHub remote)` (in these six
+gh was not asked), `gh read another repo: expected <host/owner/name>, got
+<host/owner/name>` (a PR's url named another repo)
+or, on an interrupted `after`, `interrupted`. The key is absent from a
+snapshot written before the part existed; a diff against one reports
+`pull_requests` as `not_compared`, reason `… not recorded`. Two parts that
+both record a `repo` and name different ones are `not_compared` too, reason
+`different repos: before <repo>, after <repo>`. The part, `repo` and
+`repo_source` included, is additive like the rest of the record: the state
+schema stays 3, no event carries it and the feed schema (3) is unchanged. An
+empty observed list is an observed "none"; an unavailable part is never
+treated as empty. `branches` is unavailable as a whole when any one remote's
+`ls-remote` failed, with every failing remote in the reason. Credentials in a
+URL, and in a reason that quotes one, are replaced with `***`.
 
 A `changes` object always spells out three arrays: `observed` (the parts
 compared, i.e. observed on both sides), `entries` and `not_compared` (`part`,
 `remote` when it names one remote's refs, `reason`). An entry has `kind` —
 `remote_added`, `remote_removed`, `remote_url_changed`, `branch_created`,
-`branch_moved` or `branch_deleted` — `remote`, and as the kind needs
-`branch`, `old_sha`/`new_sha` and `old_fetch_url`/`new_fetch_url`/
-`old_push_url`/`new_push_url`. Its `attribution` is `run_commit` when a
-`branch_created` or `branch_moved` entry's new sha is a commit reachable from
+`branch_moved`, `branch_deleted`, `pr_opened`, `pr_updated` (head sha moved)
+or `pr_no_longer_open` — `remote` (absent on the PR kinds), and as the kind
+needs `branch`, `pr_number`, `head_ref_name`, `old_sha`/`new_sha` (a PR's
+head shas) and `old_fetch_url`/`new_fetch_url`/`old_push_url`/
+`new_push_url`. Its `attribution` is `run_commit` when a `branch_created`,
+`branch_moved`, `pr_opened` or `pr_updated` entry's new sha is a commit
+reachable from
 one of the run's own `omg/<run-id>/` branches and not from `run_base_sha`,
 and `not_attributable` otherwise. `run_commit` says the sha is the run's, not
 that the run moved the ref.

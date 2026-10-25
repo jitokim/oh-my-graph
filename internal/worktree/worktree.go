@@ -15,10 +15,10 @@
 // beside Provider. Those are git commands the engine issues against the same
 // repository, so they run on GitManager rather than on a new spawner.
 //
-// The project invariant this restates (it does not weaken it): exactly four
+// The project invariant this restates (it does not weaken it): exactly five
 // objects in oh-my-graph may spawn a process — runner.CLIRunner,
-// verify.ShellVerifier, worktree.GitManager and browser.ExecOpener (ADR 0006)
-// — each behind its own injected interface, each scrubbing the child
+// verify.ShellVerifier, worktree.GitManager, browser.ExecOpener (ADR 0006) and
+// remote.GHRunner (ADR 0046) — each behind its own injected interface, each scrubbing the child
 // environment through internal/childenv. No other package imports os/exec.
 package worktree
 
@@ -102,6 +102,10 @@ type RemoteHead struct {
 // Every method reads; none writes to the repository or to a remote. A failure
 // is returned as an error for the snapshot to record as unavailable — no
 // caller may treat it as a reason to stop the run.
+//
+// It reads git only. The snapshot's third part, the open pull requests, is
+// read through remote.PRLister (the fifth seam, gh) beside it: a caller
+// passes both to TakeRemoteSnapshot, for every before and every after.
 type RemoteObserver interface {
 	// Remotes lists the invocation repository's configured remotes, sorted
 	// by name.
@@ -113,4 +117,9 @@ type RemoteObserver interface {
 	// commit in the invocation repository reachable from one of this run's
 	// own branches and not from baseSHA, the run's base commit.
 	CommitAttributable(ctx context.Context, sha, baseSHA string) bool
+	// GHDefaultRemotes maps each remote `gh repo set-default` marked to its
+	// remote.<name>.gh-resolved value in the invocation repository's config:
+	// "base" for the remote's own repository, or the OWNER/REPO gh chose
+	// instead. None is an empty map, not an error.
+	GHDefaultRemotes(ctx context.Context) (map[string]string, error)
 }

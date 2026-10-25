@@ -29,20 +29,20 @@ const gitWaitDelay = time.Second
 // worktree name as a real `git worktree add` off the invocation repo's HEAD,
 // once per unique name, and tears everything down at run end without ever
 // losing work. It is the only object in this package that spawns a process,
-// and one of exactly four in the project (the others: runner.CLIRunner,
-// verify.ShellVerifier and browser.ExecOpener) — see docs/adr/0005 and
-// docs/adr/0006.
+// and one of exactly five in the project (the others: runner.CLIRunner,
+// verify.ShellVerifier, browser.ExecOpener and remote.GHRunner) — see
+// docs/adr/0005, docs/adr/0006 and docs/adr/0046.
 //
 // Its scope is the git commands the engine itself issues against the
 // invocation repository: worktrees, and the remote snapshot (#410). The
-// snapshot's reads — Remotes, LsRemoteHeads and the local CommitAttributable
-// check — go through the same m.gitEnv/gitCmd path that m.git uses, so they
-// inherit the one exec.Command, the env scrub and the timeout, and add only
-// GIT_TERMINAL_PROMPT=0 and an empty GIT_ASKPASS — plus, for Remotes and
-// LsRemoteHeads, GIT_SSH_COMMAND running ssh in BatchMode unless the user
-// chose an ssh command (see snapshotEnv). That widens ADR 0005's "the git
-// worktree commands behind a node's worktree:" to cover them; it adds no
-// spawner.
+// snapshot's reads — Remotes, LsRemoteHeads, the local CommitAttributable
+// check and the GHDefaultRemotes config read — go through the same
+// m.gitEnv/gitCmd path that m.git uses, so they inherit the one exec.Command,
+// the env scrub and the timeout, and add only GIT_TERMINAL_PROMPT=0 and an
+// empty GIT_ASKPASS — plus, for Remotes and LsRemoteHeads, GIT_SSH_COMMAND
+// running ssh in BatchMode unless the user chose an ssh command (see
+// snapshotEnv). That widens ADR 0005's "the git worktree commands behind a
+// node's worktree:" to cover them; it adds no spawner.
 //
 // Construct it in cmd/oh-my-graph and inject it; the Scheduler never builds
 // one, so no test picks up a real spawn by accident.
@@ -243,12 +243,13 @@ func (m *GitManager) branchExists(ctx context.Context, branch string) bool {
 // measures scope from the same commit (#414).
 //
 // It lives here rather than in the CLI because reading HEAD means spawning
-// git, and the exec-seam invariant allows exactly four spawners (docs/adr/0005
-// and 0006); running it through m.git keeps the env scrub and the per-command
-// timeout. It addresses dir with -C and never touches repoDir, baseDir or the
-// branch prefix, so a NewGitManager("", "", "") serves it. The output is
-// combined stdout+stderr, so anything that is not a single full hex object
-// name — a git warning riding along — is discarded rather than returned.
+// git, and the exec-seam invariant allows exactly five spawners
+// (docs/adr/0005, 0006 and 0046); running it through m.git keeps the env scrub
+// and the per-command timeout. It addresses dir with -C and never touches
+// repoDir, baseDir or the branch prefix, so a NewGitManager("", "", "") serves
+// it. The output is combined stdout+stderr, so anything that is not a single
+// full hex object name — a git warning riding along — is discarded rather than
+// returned.
 func (m *GitManager) HeadCommit(ctx context.Context, dir string) string {
 	out, err := m.git(ctx, "-C", dir, "rev-parse", "--verify", "HEAD")
 	if err != nil || !isFullSHA(out) {
@@ -599,4 +600,53 @@ func (m *GitManager) isAncestor(ctx context.Context, a, b string) (bool, error) 
 		return false, nil
 	}
 	return false, err
+}
+
+// ghResolvedKey is the config variable `gh repo set-default` writes on the
+// remote it chose, and ghResolvedBase the value that names that remote's own
+// repository; any other value is the OWNER/REPO gh chose instead.
+const (
+	ghResolvedKey  = "gh-resolved"
+	ghResolvedBase = "base"
+)
+
+// GHDefaultRemotes reads remote.<name>.gh-resolved from the invocation
+// repository's config, a local read with prompting off like
+// CommitAttributable's, and maps each remote carrying it to its value. `git
+// config --get-regexp` exits 1 when no key matches, which is no default, not a
+// failure; any other failure is returned.
+func (m *GitManager) GHDefaultRemotes(ctx context.Context) (map[string]string, error) {
+	out, err := m.gitEnv(ctx, noPromptEnv, "config", "--get-regexp", `^remote\..*\.`+ghResolvedKey+`$`)
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return map[string]string{}, nil
+		}
+		return nil, err
+	}
+	return parseGHResolved(out), nil
+}
+
+// parseGHResolved reads `git config --get-regexp` lines, "<key> <value>".
+// git prints the section and variable lowercased and the remote name as
+// written, which may itself hold dots. A line of any other shape — combined
+// output may carry a warning — is skipped, as is an empty value.
+func parseGHResolved(out string) map[string]string {
+	values := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		key, value, ok := strings.Cut(strings.TrimRight(line, "\r"), " ")
+		if !ok || value == "" {
+			continue
+		}
+		name, ok := strings.CutPrefix(key, "remote.")
+		if !ok {
+			continue
+		}
+		name, ok = strings.CutSuffix(name, "."+ghResolvedKey)
+		if !ok || name == "" {
+			continue
+		}
+		values[name] = value
+	}
+	return values
 }
