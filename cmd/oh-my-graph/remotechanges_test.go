@@ -1381,3 +1381,71 @@ func TestEveryLegReadsTheOpenPullRequests(t *testing.T) {
 		}
 	})
 }
+
+// githubObserver is a fake whose remotes are GitHub repos, one per name,
+// each advertising main.
+func githubObserver(repos map[string]string) *worktree.FakeRemoteObserver {
+	obs := worktree.NewFakeRemoteObserver()
+	var remotes []worktree.Remote
+	for name, repo := range repos {
+		url := "https://github.com/" + repo + ".git"
+		remotes = append(remotes, worktree.Remote{Name: name, FetchURL: url, PushURL: url})
+		obs.SetHeads(name, []worktree.RemoteHead{{Branch: "main", SHA: remoteMainSHA}}, nil)
+	}
+	slices.SortFunc(remotes, func(a, b worktree.Remote) int { return strings.Compare(a.Name, b.Name) })
+	obs.SetRemotes(remotes, nil)
+	return obs
+}
+
+// The summary line names the repo gh read for the pull-request part, and
+// where that repo was worked out from; state.json records both.
+func TestRunGraph_TheRemoteChangesLineNamesThePRRepo(t *testing.T) {
+	isolateRunHome(t)
+	obs := githubObserver(map[string]string{"origin": "me/cli", "upstream": "cli/cli"})
+	obs.SetGHDefaultRemotes([]string{"origin"}, nil)
+	useRemoteObserver(t, obs, remoteBaseSHA)
+	prs := remote.NewFakePRLister()
+	prs.Set(remote.ObservedPRs([]remote.OpenPR{
+		{Number: 7, HeadRefName: "feat/seven", HeadRefOid: remoteMainSHA, URL: "https://github.com/me/cli/pull/7"},
+	}))
+	usePRLister(t, prs)
+
+	out, err := runOneNodeGraph(t, passingWork())
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if want := "Remote changes: none observed (observed: remotes, branches, pull_requests of github.com/me/cli (gh default))\n"; !strings.Contains(out, want) {
+		t.Errorf("stdout lacks %q:\n%s", want, out)
+	}
+	leg := remoteRunSnapshot(t, soleRunID(t)).RemoteChanges.Legs[0]
+	if got := leg.After.PullRequests; got.Repo != "github.com/me/cli" || got.RepoSource != "gh default" {
+		t.Errorf("after pull requests recorded repo %q (%q), want github.com/me/cli (gh default)", got.Repo, got.RepoSource)
+	}
+}
+
+// Two GitHub remotes and no gh default: gh is not asked, and the summary
+// prints the pull-request part not compared with the reason, never as none
+// observed.
+func TestRunGraph_AnAmbiguousGHRepoPrintsThePRPartNotCompared(t *testing.T) {
+	isolateRunHome(t)
+	useRemoteObserver(t, githubObserver(map[string]string{"origin": "me/cli", "upstream": "cli/cli"}), remoteBaseSHA)
+	prs := remote.NewFakePRLister()
+	usePRLister(t, prs)
+
+	out, err := runOneNodeGraph(t, passingWork())
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	reason := worktree.ReasonAmbiguousGHRepo
+	for _, want := range []string{
+		"Remote changes: none observed in the parts compared (observed: remotes, branches)\n",
+		"  not compared: pull_requests: unavailable before (" + reason + ") and after (" + reason + ")\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, out)
+		}
+	}
+	if prs.Calls() != 0 {
+		t.Errorf("gh asked %d times, want never when its repo cannot be told", prs.Calls())
+	}
+}

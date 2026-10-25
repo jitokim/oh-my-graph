@@ -197,22 +197,33 @@ func printRemoteChanges(w io.Writer, c *runstate.RemoteChanges) {
 		return
 	}
 	fmt.Fprintln(w)
+	leg := c.Legs[n-1]
 	for _, between := range c.BetweenLegs {
 		if between.ToLeg == n {
-			printRemoteDiff(w, fmt.Sprintf("Remote changes between leg %d and leg %d, while no leg ran", between.FromLeg, between.ToLeg), between.Changes)
+			printRemoteDiff(w, fmt.Sprintf("Remote changes between leg %d and leg %d, while no leg ran", between.FromLeg, between.ToLeg), between.Changes, leg.Before.PullRequests)
 		}
 	}
-	if leg := c.Legs[n-1]; leg.Changes != nil {
-		printRemoteDiff(w, "Remote changes", *leg.Changes)
+	if leg.Changes != nil {
+		var prs runstate.PullRequestsSnapshot
+		if leg.After != nil {
+			prs = leg.After.PullRequests
+		}
+		printRemoteDiff(w, "Remote changes", *leg.Changes, prs)
 	}
 }
 
-func printRemoteDiff(w io.Writer, heading string, d runstate.RemoteDiff) {
+// printRemoteDiff prints d. prs is the diff's after pull-request part: when
+// that part was compared, both sides name the same repo, and the summary
+// line names it with where it was worked out from.
+func printRemoteDiff(w io.Writer, heading string, d runstate.RemoteDiff, prs runstate.PullRequestsSnapshot) {
 	observed := "none"
 	if len(d.Observed) > 0 {
 		parts := make([]string, len(d.Observed))
 		for i, p := range d.Observed {
 			parts[i] = string(p)
+			if p == runstate.RemotePartPullRequests {
+				parts[i] = describePRPart(prs)
+			}
 		}
 		observed = strings.Join(parts, ", ")
 	}
@@ -235,6 +246,20 @@ func printRemoteDiff(w io.Writer, heading string, d runstate.RemoteDiff) {
 		}
 		fmt.Fprintf(w, "  not compared: %s\n", fence.SanitizeTerminalLine(part+": "+nc.Reason))
 	}
+}
+
+// describePRPart names the pull-request part, and the repo gh read when one
+// was recorded: "pull_requests of github.com/owner/name (gh default)".
+func describePRPart(prs runstate.PullRequestsSnapshot) string {
+	part := string(runstate.RemotePartPullRequests)
+	if prs.Repo == "" {
+		return part
+	}
+	part += " of " + prs.Repo
+	if prs.RepoSource != "" {
+		part += " (" + prs.RepoSource + ")"
+	}
+	return fence.SanitizeTerminalLine(part)
 }
 
 func attributionLabel(a runstate.RemoteAttribution) string {
