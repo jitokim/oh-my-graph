@@ -682,6 +682,120 @@ func TestResume_AnInterruptDuringTheRemoteSnapshotLeavesTheRunPausedAtTheGate(t 
 	}
 }
 
+// readOnlyRunDirObserver makes the run directory read-only once the before
+// snapshot's ls-remote has answered, so every later state.json write of the
+// leg fails — RecordLegGate's first among them. It counts Remotes, one call
+// per snapshot taken.
+type readOnlyRunDirObserver struct {
+	*worktree.FakeRemoteObserver
+	t            *testing.T
+	runDir       string
+	remotesCalls int
+}
+
+func (o *readOnlyRunDirObserver) Remotes(ctx context.Context) ([]worktree.Remote, error) {
+	o.remotesCalls++
+	return o.FakeRemoteObserver.Remotes(ctx)
+}
+
+func (o *readOnlyRunDirObserver) LsRemoteHeads(ctx context.Context, remote string) ([]worktree.RemoteHead, error) {
+	if o.remotesCalls == 1 {
+		if err := os.Chmod(o.runDir, 0o500); err != nil {
+			o.t.Errorf("chmod run dir: %v", err)
+		}
+	}
+	return o.FakeRemoteObserver.LsRemoteHeads(ctx, remote)
+}
+
+// Review of #410: a resume --approve whose gate decisions could not be
+// written after its before snapshot warned and ran the graph anyway, so a
+// later record could persist the run as no longer paused while the approval
+// itself was never on disk. The leg now ends there as a failure: no node
+// starts, exit 1 with the failed write and the gate named, its record
+// printed, and state.json still paused at the gate — so the same command,
+// retried, passes the gate.
+func TestResume_AFailedGateDecisionWriteStartsNoNodeAndLeavesTheRunPaused(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the read-only run directory this test relies on")
+	}
+	isolateRunHome(t)
+	useRemoteObserver(t, originObserver(), remoteBaseSHA)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"a":    {Result: "PASS", ExitCode: 0},
+		"ship": {Result: "PASS", ExitCode: 0},
+	})
+	g := mustParse(t, `{"name":"gate-flow","nodes":[
+		{"id":"a","prompt":"a"},
+		{"id":"approve","type":"gate","depends_on":["a"]},
+		{"id":"ship","prompt":"ship","depends_on":["approve"]}]}`)
+	var err error
+	captureStdout(t, func() {
+		err = executeGraph(context.Background(), "run-1", g, fake, commonRunFlags{inputs: inputFlag{}}, nil, 0, "gate-flow.yaml", []byte("name: gate-flow\n"), false, nil, nil, nil)
+	})
+	var paused *schedule.PausedError
+	if !errors.As(err, &paused) {
+		t.Fatalf("expected the first leg to pause, got %v", err)
+	}
+	pausedGate := remoteRunSnapshot(t, "run-1").Gate
+	firstCalls := len(fake.Calls())
+
+	runDir := runDirFor("run-1")
+	t.Cleanup(func() { _ = os.Chmod(runDir, 0o700) })
+	obs := &readOnlyRunDirObserver{FakeRemoteObserver: originObserver(), t: t, runDir: runDir}
+	useRemoteObserver(t, obs, remoteBaseSHA)
+	out := captureStdout(t, func() {
+		err = executeResume(parseResumeFlags(t, []string{"run-1", "--approve", "approve"}), fake, nil)
+	})
+	if err == nil {
+		t.Fatal("resume returned nil after its gate decisions could not be written")
+	}
+	if code := exitCodeForError(err); code != 1 {
+		t.Errorf("exit code = %d, want 1, the code of every other state.json write a leg cannot run without", code)
+	}
+	for _, want := range []string{"record this leg's gate decisions in state.json", `still paused at gate "approve"`, "the same resume command can be retried"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %q, want it to say %q", err, want)
+		}
+	}
+	if calls := fake.Calls(); len(calls) != firstCalls {
+		t.Errorf("nodes ran after the failed write: %v", calls[firstCalls:])
+	}
+	if obs.remotesCalls != 2 {
+		t.Errorf("Remotes ran %d times on the resumed leg, want twice: the leg's after snapshot is taken", obs.remotesCalls)
+	}
+	if !strings.Contains(out, "\nRemote changes") {
+		t.Errorf("the failed leg did not print its remote record:\n%s", out)
+	}
+	if strings.Contains(out, "Paused at gate") {
+		t.Errorf("the failed leg printed a pause hint:\n%s", out)
+	}
+
+	if err := os.Chmod(runDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if gate := remoteRunSnapshot(t, "run-1").Gate; !reflect.DeepEqual(gate, pausedGate) {
+		t.Errorf("gate = %+v after the failed write, want the pause as it was: %+v", gate, pausedGate)
+	}
+	status, err := runstatus.Of(runDir)
+	if err != nil {
+		t.Fatalf("runstatus.Of: %v", err)
+	}
+	if status != runstatus.Paused {
+		t.Errorf("status = %v after the failed write, want %v", status, runstatus.Paused)
+	}
+
+	useRemoteObserver(t, originObserver(), remoteBaseSHA)
+	captureStdout(t, func() {
+		err = executeResume(parseResumeFlags(t, []string{"run-1", "--approve", "approve"}), fake, nil)
+	})
+	if err != nil {
+		t.Fatalf("the same resume --approve after the failed write: %v", err)
+	}
+	if !slices.Contains(fake.Calls(), "ship") {
+		t.Errorf("calls = %v, want ship run past the approved gate", fake.Calls())
+	}
+}
+
 // afterSnapshotInterrupter is the user's Ctrl-C landing on the after
 // snapshot of a leg whose nodes have finished. Its first Remotes (the before
 // snapshot) answers in full; its second (the after snapshot) interrupts the

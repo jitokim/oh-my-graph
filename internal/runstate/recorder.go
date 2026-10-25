@@ -174,12 +174,21 @@ func (r *SnapshotRecorder) ClearPause() error {
 // remote snapshot has completed uninterrupted (#410): a Ctrl-C during that
 // snapshot then leaves the run paused exactly where it was, resumable by the
 // same command. decisions is copied, so the caller's map is never mutated.
+//
+// The new state is written before it is kept: a failed write leaves the
+// recorder holding the loaded pause, so no later record persists "not paused"
+// for a leg whose decisions never reached disk.
 func (r *SnapshotRecorder) RecordLegGate(decisions map[string]GateDecision) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.snap.Gate = GateState{Decisions: maps.Clone(decisions)}
-	r.snap.LimitPause = nil
-	return Write(r.path, r.snap)
+	next := r.snap
+	next.Gate = GateState{Decisions: maps.Clone(decisions)}
+	next.LimitPause = nil
+	if err := Write(r.path, next); err != nil {
+		return err
+	}
+	r.snap = next
+	return nil
 }
 
 // RecordRemoteChanges stores the run's remote change record (ADR 0046 §2.2)

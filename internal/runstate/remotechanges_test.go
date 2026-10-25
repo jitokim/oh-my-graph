@@ -2,6 +2,7 @@ package runstate
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -472,5 +473,43 @@ func TestSnapshotRecorder_RecordLegGate_410(t *testing.T) {
 	}
 	if snap.Nodes["a"].Verdict != VerdictPass || snap.RemoteChanges == nil || len(snap.RemoteChanges.Legs) != 1 {
 		t.Errorf("nodes %+v / remote record %+v not kept", snap.Nodes, snap.RemoteChanges)
+	}
+}
+
+// TestSnapshotRecorder_RecordLegGateKeepsThePauseWhenItsWriteFails_410: a
+// RecordLegGate whose write fails returns the error and keeps the loaded
+// pause, so the next record that does reach disk still says paused — never
+// the leg gate that was not written.
+func TestSnapshotRecorder_RecordLegGateKeepsThePauseWhenItsWriteFails_410(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "run")
+	// A file where the run directory should be: Write's MkdirAll fails.
+	if err := os.WriteFile(dir, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "state.json")
+	base := baseSnapshot("run-1")
+	base.Gate = GateState{PausedAt: "second", PausedGateDescription: "check it", Decisions: map[string]GateDecision{"first": GateApprove, "second": GatePause}}
+	base.LimitPause = &LimitPause{NodeIDs: []string{"b"}, Cause: "limit"}
+	rec := NewSnapshotRecorder(path, base)
+
+	if err := rec.RecordLegGate(map[string]GateDecision{"first": GateApprove, "second": GateApprove}); err == nil {
+		t.Fatal("RecordLegGate returned nil on a write that cannot succeed")
+	}
+	if !reflect.DeepEqual(rec.snap.Gate, base.Gate) || !reflect.DeepEqual(rec.snap.LimitPause, base.LimitPause) {
+		t.Errorf("after the failed write: gate %+v, limit pause %+v, want the loaded pause %+v, %+v", rec.snap.Gate, rec.snap.LimitPause, base.Gate, base.LimitPause)
+	}
+
+	if err := os.Remove(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.RecordNode("a", NodeRecord{Verdict: VerdictPass}); err != nil {
+		t.Fatalf("RecordNode once the path is writable: %v", err)
+	}
+	snap, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(snap.Gate, base.Gate) || snap.LimitPause == nil || !reflect.DeepEqual(snap.LimitPause.NodeIDs, base.LimitPause.NodeIDs) {
+		t.Errorf("the next record persisted gate %+v, limit pause %+v, want the loaded pause kept", snap.Gate, snap.LimitPause)
 	}
 }

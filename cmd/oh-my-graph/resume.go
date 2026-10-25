@@ -832,8 +832,18 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		remote.print(os.Stdout)
 		return ctxErr
 	}
+	// A failed write of this leg's decisions ends the leg the same way, before
+	// any node starts, but as a failure — a plain error, exit 1, like the
+	// other state.json writes a leg cannot run without (`prepare run
+	// snapshot`, the scheduler's pause write). Its after snapshot is taken,
+	// not recorded interrupted, and no run_finished is written: the scheduler
+	// writes this leg's run_started, so nothing opened a leg on the stream.
+	// The recorder kept the pause as loaded, so the run is still paused where
+	// it was and the same command can be retried.
 	if err := recorder.RecordLegGate(decisions); err != nil {
-		fmt.Fprintf(os.Stderr, "WARNING: could not record this leg's gate decisions: %v\n", err)
+		remote.end(ctx)
+		remote.print(os.Stdout)
+		return legGateWriteError(snap.Gate.PausedAt, err)
 	}
 	// The after snapshot ends the leg, not the scheduler: an interrupt during
 	// it ends the leg interrupted (finish), so its run_finished waits for it.
@@ -854,6 +864,16 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	printDescribedPauseHint(os.Stdout, runID, runErr, verifyCmd, description, recordedLimitPause(runID, runErr))
 
 	return runErr
+}
+
+// legGateWriteError is the error a resumed leg ends with when its gate
+// decisions could not be written to state.json: no node ran, and the run is
+// still stopped as it was, so the same resume command can be retried.
+func legGateWriteError(pausedAt string, err error) error {
+	if pausedAt == "" {
+		return fmt.Errorf("record this leg's gate decisions in state.json: %w; no node ran and the run is unchanged, so the same resume command can be retried", err)
+	}
+	return fmt.Errorf("record this leg's gate decisions in state.json: %w; no node ran and the run is still paused at gate %q, so the same resume command can be retried", err, pausedAt)
 }
 
 // resumeDecision turns the flags this invocation was given, plus the gate the
