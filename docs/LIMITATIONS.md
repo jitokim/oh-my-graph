@@ -543,14 +543,15 @@ has no open issue behind it.
   ([#298](https://github.com/jitokim/oh-my-graph/issues/298))
 - **The remote change record sees two snapshots of one repository, and
   only reports.** `run`, `auto` and `resume` record what changed on the
-  invocation repository's remotes between a snapshot before each leg's first
+  invocation repository's remotes and open pull requests between a snapshot
+  before each leg's first
   node and one after its last (`remote_changes` in `state.json`, printed after
   the ledger table). It changes no verdict and no exit code: a push the goal
   forbade still exits 0. What it does not see:
   <br>**Other repositories.** A node that pushes from a clone under `/tmp`
   changes nothing the snapshot reads.
-  <br>**A change reverted before the leg ends.** A branch pushed and deleted
-  within one leg leaves the two snapshots equal.
+  <br>**A change reverted before the leg ends.** A branch pushed and deleted,
+  or a PR opened and closed, within one leg leaves the two snapshots equal.
   <br>**Who made a change.** A human who pushes or adds a remote while the run
   runs looks the same as a node doing it. The `run_commit` label says only
   that the new sha is reachable from one of the run's own `omg/<run-id>/`
@@ -560,18 +561,31 @@ has no open issue behind it.
   <br>**A run commit reachable only from another branch.** A commit a node made
   on a branch it renamed, or with no `worktree:` on the invocation
   repository's own branch, is labelled `not_attributable`.
-  <br>**Anything outside configured remotes and remote branch heads:** pull
-  requests, tags, releases, comments and CI state. Pull requests are not
-  observed at all; the `gh` half of the design is not built.
+  <br>**Anything outside configured remotes, remote branch heads and open
+  pull requests' head shas:** tags, releases, PR and issue comments, labels,
+  reviews and CI state. A PR is `pr_updated` only when its head sha moves.
+  <br>**Pull requests need `gh`, installed and authenticated.** The PR part
+  runs `gh pr list` in the invocation repository. With no `gh` on `PATH`, no
+  login for the host, a repository gh cannot map to GitHub, or output it
+  cannot parse, the part is recorded `unavailable` (`gh not found`, `not
+  authenticated`, `non-zero exit`, `unparsable output`), never as an empty
+  list, and prints `not compared: pull_requests: …`; a PR opened behind it
+  goes unseen. gh never prompts (`GH_PROMPT_DISABLED=1`).
+  <br>**At most 1000 open pull requests.** The list is read with `--limit
+  1000`; a list holding exactly 1000 may be cut short, so it is recorded
+  `unavailable` with reason `truncated` and not compared. A repository with
+  that many open PRs gets no PR record.
   <br>**A remote that cannot be read.** One failed `ls-remote` makes the whole
   branches part `unavailable` for that snapshot, every remote's refs
-  included, and a failed `git remote -v` makes both parts so. An unavailable
+  included, and a failed `git remote -v` makes both git parts so. An unavailable
   part is never compared, so a change behind it goes unseen; the record
   prints a `not compared:` line naming it rather than "none observed".
   <br>**The network, on every run.** The snapshot runs `ls-remote` per
   remote at the start and at the end of each leg, each bounded by the git
   timeout (30 s), so an unreachable remote can add up to 30 s per remote at
-  each of those points. Ctrl-C during either snapshot, start or end, ends
+  each of those points, and `gh pr list` has its own 30 s timeout (recorded
+  `unavailable`, `timeout`), so an unreachable GitHub adds up to 30 s more at
+  each. Ctrl-C during either snapshot, start or end, ends
   the leg as interrupted (exit 1, never paused); during the start snapshot
   it ends the leg before any node starts, a resumed run keeping its
   `state.json` for the same `resume` (still paused at its gate after

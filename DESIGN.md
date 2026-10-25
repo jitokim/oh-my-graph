@@ -1098,10 +1098,11 @@ worktree cleanup. Every leg takes its own
 *after* against its own *before* into the `between_legs` set: what changed
 while no leg ran, recorded and never attributed.
 
-**A snapshot** has two parts, each `observed` or `unavailable` with the
+**A snapshot** has three parts, each `observed` or `unavailable` with the
 reason: the configured **remotes** (`git remote -v`: name, fetch and push
-URL) and the remote **branches** (`git ls-remote --heads` per remote: branch
-and sha). An unavailable part is never treated as empty and never compared.
+URL), the remote **branches** (`git ls-remote --heads` per remote: branch
+and sha) and the open **pull requests** (below). An unavailable part is never
+treated as empty and never compared.
 The branches part is all or nothing: if any one remote's `ls-remote` fails,
 the whole part is unavailable, every failing remote named, since a list
 missing one remote would compare as that remote's branches all deleted.
@@ -1120,7 +1121,7 @@ writes neither event — and on a resumed leg
 leaves the run paused as it was, resumable by the same `resume --approve
 <gate>`; once a leg is
 interrupted its *after* snapshot is not taken, or is cut short, and is
-recorded with both parts unavailable, reason `interrupted`, the record
+recorded with all three parts unavailable, reason `interrupted`, the record
 printed either way. A leg's `run_finished` is therefore written after its
 *after* snapshot, not when `scheduler.Run` returns, and an interrupt there
 overrides the pause or pass the scheduler reached: a gate or session-limit
@@ -1131,21 +1132,50 @@ passed: `state.json` holds them all `PASS`, so the run reads `PASS` while
 the invocation exits 1, an exception to ADR 0023 §2.6 pinned by
 `TestExitCode_DoesNotAgreeWithStatusWhenAnInterruptLandsOnAPassedLegsAfterSnapshot`.
 
+**Pull requests.** The third part is read through `remote.PRLister`,
+whose production implementation is the fifth exec seam,
+`internal/remote.GHRunner`: one fixed, read-only `gh pr list --state open
+--limit 1000 --json number,headRefName,headRefOid`, run in the invocation
+repository (so the PRs whose base is its GitHub repo), on the scrubbed
+environment plus `GH_PROMPT_DISABLED=1`, under its own 30 s timeout
+(`ghTimeout`). `GH_TOKEN` survives the scrub, so gh reads as the operator;
+no model text reaches the argv. Each PR records only `number`,
+`head_ref_name` and `head_ref_oid`; `updatedAt`, the title and the rest are
+dropped at parse, so a comment, a label or a review never reads as a change.
+The part is `unavailable` with a short, stable reason — `gh not found`,
+`not authenticated` (gh's exit 4 or its `gh auth login` advice), `non-zero
+exit`, `timeout`, `canceled`, `unparsable output` — and gh's own words,
+redacted and cut to one line, in `detail`. A list holding exactly
+`PRListLimit` (1000) PRs may have been cut short, so it is `unavailable`,
+`truncated`, whatever lister produced it. The PR part is read even when the
+git parts fail, and an interrupted *after* records it `interrupted` with the
+others. Tests inject `remote.FakePRLister`; no test runs a real gh.
+
 **Entries.** The diff of two snapshots gives `remote_added`,
 `remote_removed`, `remote_url_changed`, `branch_created`, `branch_moved`
-(old and new sha) and `branch_deleted`. Branch refs are compared only for a
+(old and new sha) and `branch_deleted`, then the PR kinds, by number:
+`pr_opened`, `pr_updated` (same number, head sha `head_ref_oid` moved — a
+new `updatedAt` or a renamed head branch alone gives no entry) and
+`pr_no_longer_open` (closed or merged; only a PR open at the *before* can
+show). Branch refs are compared only for a
 remote both sides list with the same fetch URL; an added, removed or
 re-pointed remote gets a `not_compared` item for its branches instead. A
 part unavailable on either side gives a `not_compared` item with the reason,
-so "no change" and "could not see" never read the same.
+so "no change" and "could not see" never read the same. A PR part not
+observed on either side gives `not compared: pull_requests: …` the same
+way; a snapshot written before the part existed has none, which reads
+`not recorded` (a resumed old run's between-legs diff says `unavailable
+before: not recorded`).
 
 **Attribution.** A `branch_created` or `branch_moved` entry in a leg is
-`run_commit` when its new sha passes a local check, all through
+`run_commit` when its new sha passes a local check, and so is a `pr_opened`
+or `pr_updated` entry when its new head sha does, all through
 `GitManager.CommitAttributable`: the sha is a commit in the invocation
 repository, it is not an ancestor of `run_base_sha` (the invocation
 repository's `HEAD` when the run's first leg started, carried by `resume`),
 and it is an ancestor of one of the run's own `refs/heads/omg/<run-id>/`
-branches. Every other entry — the no-sha kinds, a sha that fails the check,
+branches. Every other entry — the no-sha kinds (`pr_no_longer_open` included), a
+sha that fails the check,
 every between-legs entry, and every entry of a run with no `run_base_sha` —
 is `not_attributable`. The check proves where a commit came from, never who
 moved the ref.
@@ -1154,23 +1184,30 @@ moved the ref.
 leg's record (a resumed leg first prints its between-legs set):
 
 ```
-Remote changes (observed: remotes, branches):
+Remote changes (observed: remotes, branches, pull_requests):
   branch_created origin/feat/x at 333333333333 — observed during the run; points at a commit this run made
   remote_added mirror https://example.com/m.git — observed, not attributable
+  pr_opened #11 omg-out at 333333333333 — observed during the run; points at a commit this run made
+  pr_updated #8 feat/eight 222222222222 -> 444444444444 — observed, not attributable
+  pr_no_longer_open #10 gone (was 222222222222) — observed, not attributable
   not compared: branches of mirror: remote added: it has no before refs to compare
 ```
+
+A PR part gh could not read prints, for instance, `not compared:
+pull_requests: unavailable after: not authenticated`.
 
 `run_commit` reads "observed during the run; points at a commit this run
 made"; `not_attributable` reads "observed, not attributable". No entry and
 nothing uncompared prints one line, `Remote changes: none observed
-(observed: remotes, branches)`. With nothing changed but a part not
+(observed: remotes, branches, pull_requests)`. With nothing changed but a part not
 compared, the line says `none observed in the parts compared` and a
 `not compared:` line follows for each such part.
 
 **Storage.** `state.json` carries `run_base_sha` and `remote_changes`
 (`legs`, each with `before`, `after` and `changes`, and `between_legs`),
 additive and optional, so the schema stays 3 and no event is added
-(docs/RUN-FEED.md). Every command runs on `worktree.GitManager`, through the
+(docs/RUN-FEED.md); the `pull_requests` part is additive within it, and a
+snapshot without one loads unchanged. Every git command runs on `worktree.GitManager`, through the
 `worktree.RemoteObserver` interface, with `GIT_TERMINAL_PROMPT=0` and an
 empty `GIT_ASKPASS` added to the scrubbed environment. That stops only git's
 own prompts, an askpass helper's included — ssh asks on
@@ -1180,8 +1217,8 @@ the user chose an ssh command (`GIT_SSH_COMMAND` or `GIT_SSH` in the
 environment, or `core.sshCommand` in the repository), which is left
 untouched; an ssh prompt then fails at once into an unavailable part. This
 widens the third seam's scope from the `git worktree` commands to the git
-commands the engine issues against the invocation repository, and adds no
-spawner. Tests inject `worktree.FakeRemoteObserver`. What the record cannot
+commands the engine issues against the invocation repository; the git parts
+add no spawner, and gh is the one ADR 0046 adds. Tests inject `worktree.FakeRemoteObserver`. What the record cannot
 see is listed in docs/LIMITATIONS.md.
 
 ## Execution engine
@@ -4526,7 +4563,7 @@ internal/runner/{runner,runtime,cli,claude_protocol,codex_protocol,preflight,ses
 internal/verify/{verify,shell,pin,fake}.go + build-tagged {shell,procgroup}_{unix,windows}.go + _test  Verifier seam — ShellVerifier is the second of the five exec seams (ADR 0002); PinningVerifier, the `--verify-cmd` file pins (pin.go — #363)
 internal/worktree/{worktree,git,fake}.go + _test  worktree Provider seam — GitManager is the third exec seam (ADR 0005): per-run managed checkouts + work-preserving cleanup
 internal/browser/{browser,exec,fake}.go + build-tagged argv_{darwin,unix,windows}.go + _test  browser Opener seam — ExecOpener is the fourth exec seam (ADR 0006): default-browser launch, wired behind run/auto's TTY gate
-internal/remote/{gh,fake}.go + _test           PRLister seam — GHRunner is the fifth exec seam (ADR 0046): the one fixed, read-only `gh pr list` of the remote snapshot's open-PR part; FakePRLister
+internal/remote/{gh,fake,redact}.go + _test    PRLister seam — GHRunner is the fifth exec seam (ADR 0046): the one fixed, read-only `gh pr list` of the remote snapshot's open-PR part; FakePRLister; the credential redaction the remote snapshot applies to URLs and reasons
 internal/invariants/exec_seam_test.go          test-only: asserts only the five exec seams' files import os/exec — 9 files, since a seam's platform-specific procgroup files belong to it (a tenth importer fails CI — ADR 0002/0005/0006/0046). A separate, shorter list names the 5 spawn CALL SITES (one per seam, procgroup files excluded — they mutate an already-built *exec.Cmd) and asserts each scrubs its child env through internal/childenv
 internal/childenv/childenv.go + _test          the shared "delete billing-switching vars" child-env policy (all five spawners)
 internal/fence/fence.go + _test                the shared data fence: a per-call crypto/rand nonce for both markers of any quote of untrusted text into a prompt, plus the head+tail bound on the quoted material. Its callers live in coordinator, schedule, handoff and interview, and their number is stated in fence.go alone — internal/invariants counts the real ones repo-wide against that one sentence, so a second copy here would be a number nothing checks
