@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -24,13 +25,14 @@ import (
 )
 
 // TestMain puts every test in this package on a quiet FakeRemoteObserver (no
-// remotes, every part observed) and an empty run base, so no test that runs
-// a leg reaches a real remote from the package directory's own repository.
-// A test about the record swaps in its own through useRemoteObserver.
+// remotes, every part observed — the PR lister's GH_REPO names the repo gh
+// reads) and an empty run base, so no test that runs a leg reaches a real
+// remote from the package directory's own repository. A test about the
+// record swaps in its own through useRemoteObserver.
 func TestMain(m *testing.M) {
 	productionRemotePRListerFor = remotePRListerFor
 	remoteObserverFor = func(string) worktree.RemoteObserver { return worktree.NewFakeRemoteObserver() }
-	remotePRListerFor = func(string) remote.PRLister { return remote.NewFakePRLister() }
+	remotePRListerFor = func(string) remote.PRLister { return ghRepoPRLister() }
 	runBaseCommit = func() string { return "" }
 	os.Exit(m.Run())
 }
@@ -44,6 +46,27 @@ func productionRemoteObserverFor(runID string) worktree.RemoteObserver {
 // productionRemotePRListerFor is the PR wiring TestMain replaces. It is only
 // ever inspected, never asked: asking it would run a real gh.
 var productionRemotePRListerFor func(string) remote.PRLister
+
+// testGHRepo is the GH_REPO ghRepoPRLister sets: with it gh is asked
+// whatever the remotes are, as it is not when no GitHub remote names a repo
+// (#410).
+const testGHRepo = "o/r"
+
+// ghRepoPRLister is a FakePRLister run with GH_REPO set to testGHRepo.
+func ghRepoPRLister() *remote.FakePRLister {
+	prs := remote.NewFakePRLister()
+	prs.SetRepoEnv(remote.RepoEnv{Repo: testGHRepo})
+	return prs
+}
+
+// onGHRepo is an observed list of prs, each given a URL on testGHRepo, the
+// repository the snapshot checks gh's answer against.
+func onGHRepo(prs []remote.OpenPR) remote.PRList {
+	for i := range prs {
+		prs[i].URL = "https://github.com/" + testGHRepo + "/pull/" + strconv.Itoa(prs[i].Number)
+	}
+	return remote.ObservedPRs(prs)
+}
 
 // usePRLister makes every leg in this test read its open pull requests from
 // prs, and records the run id each leg built its lister for.
@@ -151,7 +174,7 @@ func TestRunGraph_ABranchPushedDuringTheLegIsRecordedAndPrintedWithItsAttributio
 		t.Fatalf("run: %v", err)
 	}
 	for _, want := range []string{
-		"Remote changes (observed: remotes, branches, pull_requests):",
+		"Remote changes (observed: remotes, branches, pull_requests of github.com/o/r (GH_REPO)):",
 		"  branch_created origin/feat/x at 333333333333 — observed during the run; points at a commit this run made\n",
 		"  branch_created origin/human at 444444444444 — observed, not attributable\n",
 	} {
@@ -217,7 +240,7 @@ func TestRunGraph_NothingChangedPrintsTheNoRemoteChangesLine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if !strings.Contains(out, "TOTAL COST: $0.0100\n\nRemote changes: none observed (observed: remotes, branches, pull_requests)\n") {
+	if !strings.Contains(out, "TOTAL COST: $0.0100\n\nRemote changes: none observed (observed: remotes, branches, pull_requests of github.com/o/r (GH_REPO))\n") {
 		t.Errorf("stdout lacks the no-remote-changes line:\n%s", out)
 	}
 	d := lastLegChanges(t, remoteRunSnapshot(t, soleRunID(t)))
@@ -313,7 +336,7 @@ func TestRunGraph_AnUnreadableRemoteNeverChangesTheOutcome(t *testing.T) {
 			if a, b := exitCodeForError(quietErr), exitCodeForError(brokenErr); a != b {
 				t.Errorf("exit code with an unreadable remote = %d, without = %d", b, a)
 			}
-			if !strings.Contains(quietOut, "Remote changes: none observed (observed: remotes, branches, pull_requests)\n") {
+			if !strings.Contains(quietOut, "Remote changes: none observed (observed: remotes, branches, pull_requests of github.com/o/r (GH_REPO))\n") {
 				t.Errorf("the readable run lacks the no-remote-changes line:\n%s", quietOut)
 			}
 			if len(quiet.NotCompared) != 0 {
@@ -327,7 +350,7 @@ func TestRunGraph_AnUnreadableRemoteNeverChangesTheOutcome(t *testing.T) {
 				t.Errorf("observed = %v, want %v", broken.Observed, want)
 			}
 			for _, want := range []string{
-				"Remote changes: none observed in the parts compared (observed: remotes, pull_requests)\n",
+				"Remote changes: none observed in the parts compared (observed: remotes, pull_requests of github.com/o/r (GH_REPO))\n",
 				"  not compared: branches: unavailable before (ls-remote broken: ",
 			} {
 				if !strings.Contains(brokenOut, want) {
@@ -370,7 +393,7 @@ func TestResume_RecordsAndPrintsTheRemoteChanges(t *testing.T) {
 	if !errors.As(err, &paused) {
 		t.Fatalf("expected the first leg to pause, got %v", err)
 	}
-	if !strings.Contains(firstOut, "Remote changes: none observed (observed: remotes, branches, pull_requests)\n") {
+	if !strings.Contains(firstOut, "Remote changes: none observed (observed: remotes, branches, pull_requests of github.com/o/r (GH_REPO))\n") {
 		t.Errorf("the first leg lacks its no-remote-changes line:\n%s", firstOut)
 	}
 
@@ -385,9 +408,9 @@ func TestResume_RecordsAndPrintsTheRemoteChanges(t *testing.T) {
 		t.Fatalf("resume: %v", err)
 	}
 	for _, want := range []string{
-		"Remote changes between leg 1 and leg 2, while no leg ran (observed: remotes, branches, pull_requests):\n" +
+		"Remote changes between leg 1 and leg 2, while no leg ran (observed: remotes, branches, pull_requests of github.com/o/r (GH_REPO)):\n" +
 			"  branch_created origin/paused at 333333333333 — observed, not attributable\n",
-		"Remote changes (observed: remotes, branches, pull_requests):\n" +
+		"Remote changes (observed: remotes, branches, pull_requests of github.com/o/r (GH_REPO)):\n" +
 			"  branch_created origin/shipped at 333333333333 — observed during the run; points at a commit this run made\n",
 	} {
 		if !strings.Contains(out, want) {
@@ -1150,8 +1173,8 @@ func TestRunGraph_PullRequestsChangedDuringTheLegArePrintedWithTheirAttribution(
 	obs := originObserver()
 	obs.SetRunCommit(remoteRunSHA)
 	useRemoteObserver(t, obs, remoteBaseSHA)
-	prs := remote.NewFakePRLister()
-	prs.Set(remote.ObservedPRs([]remote.OpenPR{
+	prs := ghRepoPRLister()
+	prs.Set(onGHRepo([]remote.OpenPR{
 		{Number: 7, HeadRefName: "feat/seven", HeadRefOid: remoteMainSHA},
 		{Number: 8, HeadRefName: "feat/eight", HeadRefOid: remoteMainSHA},
 		{Number: 9, HeadRefName: "feat/nine", HeadRefOid: remoteMainSHA},
@@ -1159,7 +1182,7 @@ func TestRunGraph_PullRequestsChangedDuringTheLegArePrintedWithTheirAttribution(
 	}))
 	usePRLister(t, prs)
 	nodeRunner := hookRunner{FakeRunner: passingWork(), before: func(runner.NodeInvocation) {
-		prs.Set(remote.ObservedPRs([]remote.OpenPR{
+		prs.Set(onGHRepo([]remote.OpenPR{
 			{Number: 7, HeadRefName: "feat/seven", HeadRefOid: remoteRunSHA},
 			{Number: 8, HeadRefName: "feat/eight", HeadRefOid: remoteHumaSHA},
 			{Number: 9, HeadRefName: "feat/nine", HeadRefOid: remoteMainSHA},
@@ -1176,7 +1199,7 @@ func TestRunGraph_PullRequestsChangedDuringTheLegArePrintedWithTheirAttribution(
 		t.Errorf("exit code = %d, want 0: the record is a report", code)
 	}
 	for _, want := range []string{
-		"Remote changes (observed: remotes, branches, pull_requests):\n",
+		"Remote changes (observed: remotes, branches, pull_requests of github.com/o/r (GH_REPO)):\n",
 		"  pr_updated #7 feat/seven 222222222222 -> 333333333333 — observed during the run; points at a commit this run made\n",
 		"  pr_updated #8 feat/eight 222222222222 -> 444444444444 — observed, not attributable\n",
 		"  pr_no_longer_open #10 gone (was 222222222222) — observed, not attributable\n",
@@ -1238,7 +1261,7 @@ func TestRunGraph_AnUnreadablePRListIsNotComparedAndNeverChangesTheOutcome(t *te
 				run := func(t *testing.T, unreadable bool) (string, error) {
 					isolateRunHome(t)
 					useRemoteObserver(t, originObserver(), remoteBaseSHA)
-					prs := remote.NewFakePRLister()
+					prs := ghRepoPRLister()
 					usePRLister(t, prs)
 					after := remote.ObservedPRs(nil)
 					if unreadable {
@@ -1284,7 +1307,7 @@ func TestEveryLegReadsTheOpenPullRequests(t *testing.T) {
 	t.Run("run", func(t *testing.T) {
 		isolateRunHome(t)
 		useRemoteObserver(t, originObserver(), remoteBaseSHA)
-		prs := remote.NewFakePRLister()
+		prs := ghRepoPRLister()
 		runIDs := usePRLister(t, prs)
 		if _, err := runOneNodeGraph(t, passingWork()); err != nil {
 			t.Fatalf("run: %v", err)
@@ -1298,7 +1321,7 @@ func TestEveryLegReadsTheOpenPullRequests(t *testing.T) {
 		isolateRunHome(t)
 		inBuildDir(t, "package.json")
 		useRemoteObserver(t, originObserver(), remoteBaseSHA)
-		prs := remote.NewFakePRLister()
+		prs := ghRepoPRLister()
 		runIDs := usePRLister(t, prs)
 		fake := newCycleFake(map[string]runner.NodeOutcome{
 			"plan-1": {Result: cycleSpec, TotalCostUSD: 0.0417},
@@ -1315,7 +1338,7 @@ func TestEveryLegReadsTheOpenPullRequests(t *testing.T) {
 		if want := []string{soleRunID(t)}; !slices.Equal(*runIDs, want) || prs.Calls() != 2 {
 			t.Errorf("lister built for %v and read %d times, want %v and twice", *runIDs, prs.Calls(), want)
 		}
-		if !strings.Contains(out, "(observed: remotes, branches, pull_requests)") {
+		if !strings.Contains(out, "(observed: remotes, branches, pull_requests of github.com/o/r (GH_REPO))") {
 			t.Errorf("auto's record does not name the PR part:\n%s", out)
 		}
 	})
@@ -1325,7 +1348,7 @@ func TestEveryLegReadsTheOpenPullRequests(t *testing.T) {
 		obs := originObserver()
 		obs.SetRunCommit(remoteRunSHA)
 		useRemoteObserver(t, obs, remoteBaseSHA)
-		prs := remote.NewFakePRLister()
+		prs := ghRepoPRLister()
 		runIDs := usePRLister(t, prs)
 		fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
 			"a":    {Result: "PASS", ExitCode: 0},
@@ -1333,7 +1356,7 @@ func TestEveryLegReadsTheOpenPullRequests(t *testing.T) {
 		})
 		nodeRunner := hookRunner{FakeRunner: fake, before: func(spec runner.NodeInvocation) {
 			if spec.Prompt == "ship" {
-				prs.Set(remote.ObservedPRs([]remote.OpenPR{
+				prs.Set(onGHRepo([]remote.OpenPR{
 					{Number: 1, HeadRefName: "paused", HeadRefOid: remoteRunSHA},
 					{Number: 2, HeadRefName: "shipped", HeadRefOid: remoteRunSHA},
 				}))
@@ -1353,7 +1376,7 @@ func TestEveryLegReadsTheOpenPullRequests(t *testing.T) {
 		}
 
 		// Opened while no leg ran, at a commit the check would pass.
-		prs.Set(remote.ObservedPRs([]remote.OpenPR{{Number: 1, HeadRefName: "paused", HeadRefOid: remoteRunSHA}}))
+		prs.Set(onGHRepo([]remote.OpenPR{{Number: 1, HeadRefName: "paused", HeadRefOid: remoteRunSHA}}))
 		out := captureStdout(t, func() {
 			err = executeResume(parseResumeFlags(t, []string{"run-1", "--approve", "approve"}), nodeRunner, nil)
 		})
@@ -1367,9 +1390,9 @@ func TestEveryLegReadsTheOpenPullRequests(t *testing.T) {
 			t.Errorf("lister built for %v and read %d times, want %v and four times", *runIDs, prs.Calls(), want)
 		}
 		for _, want := range []string{
-			"Remote changes between leg 1 and leg 2, while no leg ran (observed: remotes, branches, pull_requests):\n" +
+			"Remote changes between leg 1 and leg 2, while no leg ran (observed: remotes, branches, pull_requests of github.com/o/r (GH_REPO)):\n" +
 				"  pr_opened #1 paused at 333333333333 — observed, not attributable\n",
-			"Remote changes (observed: remotes, branches, pull_requests):\n" +
+			"Remote changes (observed: remotes, branches, pull_requests of github.com/o/r (GH_REPO)):\n" +
 				"  pr_opened #2 shipped at 333333333333 — observed during the run; points at a commit this run made\n",
 		} {
 			if !strings.Contains(out, want) {
@@ -1402,7 +1425,7 @@ func githubObserver(repos map[string]string) *worktree.FakeRemoteObserver {
 func TestRunGraph_TheRemoteChangesLineNamesThePRRepo(t *testing.T) {
 	isolateRunHome(t)
 	obs := githubObserver(map[string]string{"origin": "me/cli", "upstream": "cli/cli"})
-	obs.SetGHDefaultRemotes([]string{"origin"}, nil)
+	obs.SetGHDefaultRemotes(map[string]string{"origin": "base"}, nil)
 	useRemoteObserver(t, obs, remoteBaseSHA)
 	prs := remote.NewFakePRLister()
 	prs.Set(remote.ObservedPRs([]remote.OpenPR{

@@ -603,7 +603,8 @@ func (m *GitManager) isAncestor(ctx context.Context, a, b string) (bool, error) 
 }
 
 // ghResolvedKey is the config variable `gh repo set-default` writes on the
-// remote it chose, and ghResolvedBase the value that marks it gh's default.
+// remote it chose, and ghResolvedBase the value that names that remote's own
+// repository; any other value is the OWNER/REPO gh chose instead.
 const (
 	ghResolvedKey  = "gh-resolved"
 	ghResolvedBase = "base"
@@ -611,15 +612,15 @@ const (
 
 // GHDefaultRemotes reads remote.<name>.gh-resolved from the invocation
 // repository's config, a local read with prompting off like
-// CommitAttributable's, and names the remotes whose value is "base". `git
+// CommitAttributable's, and maps each remote carrying it to its value. `git
 // config --get-regexp` exits 1 when no key matches, which is no default, not a
 // failure; any other failure is returned.
-func (m *GitManager) GHDefaultRemotes(ctx context.Context) ([]string, error) {
+func (m *GitManager) GHDefaultRemotes(ctx context.Context) (map[string]string, error) {
 	out, err := m.gitEnv(ctx, noPromptEnv, "config", "--get-regexp", `^remote\..*\.`+ghResolvedKey+`$`)
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-			return []string{}, nil
+			return map[string]string{}, nil
 		}
 		return nil, err
 	}
@@ -629,12 +630,12 @@ func (m *GitManager) GHDefaultRemotes(ctx context.Context) ([]string, error) {
 // parseGHResolved reads `git config --get-regexp` lines, "<key> <value>".
 // git prints the section and variable lowercased and the remote name as
 // written, which may itself hold dots. A line of any other shape — combined
-// output may carry a warning — is skipped.
-func parseGHResolved(out string) []string {
-	names := make([]string, 0)
+// output may carry a warning — is skipped, as is an empty value.
+func parseGHResolved(out string) map[string]string {
+	values := map[string]string{}
 	for _, line := range strings.Split(out, "\n") {
 		key, value, ok := strings.Cut(strings.TrimRight(line, "\r"), " ")
-		if !ok || value != ghResolvedBase {
+		if !ok || value == "" {
 			continue
 		}
 		name, ok := strings.CutPrefix(key, "remote.")
@@ -645,8 +646,7 @@ func parseGHResolved(out string) []string {
 		if !ok || name == "" {
 			continue
 		}
-		names = append(names, name)
+		values[name] = value
 	}
-	sort.Strings(names)
-	return names
+	return values
 }

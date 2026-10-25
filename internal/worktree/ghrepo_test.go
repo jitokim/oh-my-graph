@@ -3,6 +3,7 @@ package worktree
 import (
 	"context"
 	"errors"
+	"maps"
 	"strings"
 	"testing"
 
@@ -26,7 +27,7 @@ func TestTakeRemoteSnapshot_ExpectedGHRepo(t *testing.T) {
 		name      string
 		remotes   []Remote
 		remoteErr error
-		defaults  []string
+		defaults  map[string]string
 		env       remote.RepoEnv
 		prs       []remote.OpenPR
 		// wantReason "" means gh is asked and the part is observed.
@@ -44,9 +45,42 @@ func TestTakeRemoteSnapshot_ExpectedGHRepo(t *testing.T) {
 		{
 			name:         "two GitHub remotes, origin is gh's default",
 			remotes:      []Remote{{Name: "origin", FetchURL: originHTTPS}, {Name: "upstream", FetchURL: upstream}},
-			defaults:     []string{"origin"},
+			defaults:     map[string]string{"origin": "base"},
 			prs:          []remote.OpenPR{pr},
 			wantExpected: ExpectedGHRepo{Host: "github.com", Repo: "me/cli", Source: ExpectedFromGHDefault},
+		},
+		{
+			name:         "gh's default is the OWNER/REPO on origin, a fork's parent",
+			remotes:      []Remote{{Name: "origin", FetchURL: originHTTPS}},
+			defaults:     map[string]string{"origin": "cli/cli"},
+			prs:          []remote.OpenPR{prIn("https://github.com/cli/cli/pull/3")},
+			wantExpected: ExpectedGHRepo{Host: "github.com", Repo: "cli/cli", Source: ExpectedFromGHDefault},
+		},
+		{
+			name:         "a gh default OWNER/REPO is on the host of the remote carrying it",
+			remotes:      []Remote{{Name: "corp", FetchURL: "https://ghe.example.com/me/svc.git"}},
+			defaults:     map[string]string{"corp": "team/svc"},
+			env:          remote.RepoEnv{Host: "ghe.example.com"},
+			prs:          []remote.OpenPR{prIn("https://ghe.example.com/team/svc/pull/3")},
+			wantExpected: ExpectedGHRepo{Host: "ghe.example.com", Repo: "team/svc", Source: ExpectedFromGHDefault},
+		},
+		{
+			name:       "a gh-resolved value that is neither base nor OWNER/REPO is not a default",
+			remotes:    []Remote{{Name: "origin", FetchURL: originHTTPS}, {Name: "upstream", FetchURL: upstream}},
+			defaults:   map[string]string{"origin": "other", "upstream": "cli/cli/extra"},
+			wantReason: ReasonAmbiguousGHRepo,
+		},
+		{
+			name:         "a gh base mark and an OWNER/REPO naming the same repository",
+			remotes:      []Remote{{Name: "origin", FetchURL: originHTTPS}, {Name: "upstream", FetchURL: upstream}},
+			defaults:     map[string]string{"origin": "CLI/cli", "upstream": "base"},
+			wantExpected: ExpectedGHRepo{Host: "github.com", Repo: "CLI/cli", Source: ExpectedFromGHDefault},
+		},
+		{
+			name:       "gh's default values naming two repositories",
+			remotes:    []Remote{{Name: "origin", FetchURL: originHTTPS}, {Name: "upstream", FetchURL: upstream}},
+			defaults:   map[string]string{"origin": "other/cli", "upstream": "base"},
+			wantReason: ReasonAmbiguousGHDefault,
 		},
 		{
 			name:         "one GitHub remote and one that is not",
@@ -76,9 +110,20 @@ func TestTakeRemoteSnapshot_ExpectedGHRepo(t *testing.T) {
 			wantReason: ReasonGHRepoRemotesUnreadable,
 		},
 		{
-			name:         "no GitHub remote asks gh as before",
-			remotes:      []Remote{{Name: "origin", FetchURL: "/srv/git/r.git"}},
-			wantExpected: ExpectedGHRepo{},
+			name:       "no GitHub remote: gh is not asked",
+			remotes:    []Remote{{Name: "origin", FetchURL: "/srv/git/r.git"}},
+			wantReason: ReasonNoGitHubRemote,
+		},
+		{
+			name:       "no remote at all: gh is not asked",
+			wantReason: ReasonNoGitHubRemote,
+		},
+		{
+			name:         "GH_REPO with the remotes part unavailable asks gh",
+			remoteErr:    errors.New("fatal: not a git repository"),
+			env:          remote.RepoEnv{Repo: "cli/cli"},
+			prs:          []remote.OpenPR{prIn("https://github.com/cli/cli/pull/3")},
+			wantExpected: ExpectedGHRepo{Host: "github.com", Repo: "cli/cli", Source: ExpectedFromGHRepo},
 		},
 		{
 			name:         "zero open pull requests are observed with the expected repo",
@@ -92,10 +137,10 @@ func TestTakeRemoteSnapshot_ExpectedGHRepo(t *testing.T) {
 			wantExpected: ExpectedGHRepo{Host: "ghe.example.com", Repo: "team/svc", Source: ExpectedFromSingleRemote},
 		},
 		{
-			name:         "GH_HOST with no remote on it",
-			remotes:      []Remote{{Name: "origin", FetchURL: originHTTPS}},
-			env:          remote.RepoEnv{Host: "ghe.example.com"},
-			wantExpected: ExpectedGHRepo{Host: "ghe.example.com"},
+			name:       "GH_HOST with no remote on it: gh is not asked",
+			remotes:    []Remote{{Name: "origin", FetchURL: originHTTPS}},
+			env:        remote.RepoEnv{Host: "ghe.example.com"},
+			wantReason: ReasonNoGitHubRemote,
 		},
 		{
 			name:         "GH_HOST is the host of a GH_REPO naming none",
@@ -111,13 +156,13 @@ func TestTakeRemoteSnapshot_ExpectedGHRepo(t *testing.T) {
 		{
 			name:       "gh's default on two repositories",
 			remotes:    []Remote{{Name: "origin", FetchURL: originHTTPS}, {Name: "upstream", FetchURL: upstream}},
-			defaults:   []string{"origin", "upstream"},
+			defaults:   map[string]string{"origin": "base", "upstream": "base"},
 			wantReason: ReasonAmbiguousGHDefault,
 		},
 		{
 			name:       "gh's default on a remote that is not GitHub is passed over",
 			remotes:    []Remote{{Name: "gitlab", FetchURL: "https://gitlab.com/me/cli.git"}, {Name: "origin", FetchURL: originHTTPS}, {Name: "upstream", FetchURL: upstream}},
-			defaults:   []string{"gitlab"},
+			defaults:   map[string]string{"gitlab": "base"},
 			wantReason: ReasonAmbiguousGHRepo,
 		},
 		{
@@ -155,10 +200,10 @@ func TestTakeRemoteSnapshot_ExpectedGHRepo(t *testing.T) {
 			wantExpected: ExpectedGHRepo{Host: "ghe.example.com", Repo: "team/svc", Source: ExpectedFromSingleRemote},
 		},
 		{
-			name:         "no expected repo: PR urls are not compared",
-			remotes:      []Remote{{Name: "origin", FetchURL: "/srv/git/r.git"}},
-			prs:          []remote.OpenPR{prIn("https://github.com/cli/cli/pull/3")},
-			wantExpected: ExpectedGHRepo{},
+			name:       "no expected repo: gh is not asked for the PRs it would list",
+			remotes:    []Remote{{Name: "origin", FetchURL: "/srv/git/r.git"}},
+			prs:        []remote.OpenPR{prIn("https://github.com/cli/cli/pull/3")},
+			wantReason: ReasonNoGitHubRemote,
 		},
 		{
 			name:       "a GH_REPO that is not OWNER/REPO",
@@ -276,10 +321,22 @@ func TestParseGitHubURL(t *testing.T) {
 func TestParseGHResolved(t *testing.T) {
 	out := "remote.origin.gh-resolved base\n" +
 		"remote.my.fork.gh-resolved base\n" +
-		"remote.upstream.gh-resolved other\n" +
+		"remote.upstream.gh-resolved cli/cli\n" +
+		"remote.other.gh-resolved other\n" +
 		"warning: something\n"
 	got := parseGHResolved(out)
-	if want := []string{"my.fork", "origin"}; strings.Join(got, ",") != strings.Join(want, ",") {
+	want := map[string]string{"origin": "base", "my.fork": "base", "upstream": "cli/cli", "other": "other"}
+	if !maps.Equal(got, want) {
 		t.Errorf("parseGHResolved = %v, want %v", got, want)
+	}
+}
+
+func TestParseGHResolvedRepo(t *testing.T) {
+	for v, ok := range map[string]bool{
+		"cli/cli": true, "base": false, "": false, "/cli": false, "cli/": false, "a/b/c": false, "github.com/cli/cli": false,
+	} {
+		if got, gotOK := parseGHResolvedRepo(v); gotOK != ok || (ok && got != v) {
+			t.Errorf("parseGHResolvedRepo(%q) = %q, %v; want ok %v", v, got, gotOK, ok)
+		}
 	}
 }

@@ -22,8 +22,9 @@ import (
 // gh reads a GitHub repository, not a remote, and with more than one GitHub
 // remote it may read the wrong one without failing. So before gh is asked,
 // expectGHRepo works out which repository it will read; when that cannot be
-// told — the remotes could not be read, or two GitHub repositories with no
-// gh default — the pull-request part is unavailable and gh is not asked. When
+// told — the remotes could not be read, no GitHub remote, or two GitHub
+// repositories with no gh default — the pull-request part is unavailable and
+// gh is not asked. When
 // gh does answer, the repository its PRs' URLs name must be the expected one,
 // or the part is unavailable too.
 //

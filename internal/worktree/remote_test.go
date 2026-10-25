@@ -578,7 +578,8 @@ func lastValue(env []string, key string) string {
 }
 
 // gh's default is read from the repository's own config, as `gh repo
-// set-default` leaves it: remote.<name>.gh-resolved = base.
+// set-default` leaves it: remote.<name>.gh-resolved = base, or the
+// OWNER/REPO of a related repository that is not a remote.
 func TestGitManager_GHDefaultRemotesReadsGHResolved(t *testing.T) {
 	m, repo := newTestManager(t)
 	gitIn(t, repo, "remote", "add", "origin", "https://github.com/me/cli.git")
@@ -591,7 +592,20 @@ func TestGitManager_GHDefaultRemotesReadsGHResolved(t *testing.T) {
 
 	gitIn(t, repo, "config", "remote.origin.gh-resolved", "base")
 	got, err = m.GHDefaultRemotes(context.Background())
-	if err != nil || !reflect.DeepEqual(got, []string{"origin"}) {
-		t.Fatalf("GHDefaultRemotes = %v, %v; want [origin]", got, err)
+	if err != nil || !reflect.DeepEqual(got, map[string]string{"origin": "base"}) {
+		t.Fatalf("GHDefaultRemotes = %v, %v; want origin=base", got, err)
+	}
+}
+
+// A gh default on a related repository that is not a remote is read back
+// with its value, the OWNER/REPO gh chose.
+func TestGitManager_GHDefaultRemotesReadsAnOwnerRepoValue(t *testing.T) {
+	m, repo := newTestManager(t)
+	gitIn(t, repo, "remote", "add", "origin", "https://github.com/me/cli.git")
+	gitIn(t, repo, "config", "remote.origin.gh-resolved", "cli/cli")
+
+	got, err := m.GHDefaultRemotes(context.Background())
+	if err != nil || !reflect.DeepEqual(got, map[string]string{"origin": "cli/cli"}) {
+		t.Fatalf("GHDefaultRemotes = %v, %v; want origin=cli/cli", got, err)
 	}
 }

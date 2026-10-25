@@ -2,7 +2,9 @@ package worktree
 
 import (
 	"context"
+	"maps"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/jitokim/oh-my-graph/internal/remote"
@@ -13,8 +15,9 @@ import (
 const (
 	// ExpectedFromGHRepo: GH_REPO in the env the gh child runs with.
 	ExpectedFromGHRepo = "GH_REPO"
-	// ExpectedFromGHDefault: the remote `gh repo set-default` marked with
-	// remote.<name>.gh-resolved.
+	// ExpectedFromGHDefault: the repository `gh repo set-default` recorded
+	// in remote.<name>.gh-resolved — the remote's own, or the OWNER/REPO the
+	// value names.
 	ExpectedFromGHDefault = "gh default"
 	// ExpectedFromSingleRemote: the only GitHub repository among the
 	// configured remotes.
@@ -37,6 +40,9 @@ const (
 	ReasonGHDefaultUnreadable = "gh repo unknown: gh's default repo could not be read from git config"
 	// ReasonBadGHRepo: GH_REPO is set but is not [HOST/]OWNER/REPO.
 	ReasonBadGHRepo = "gh repo unknown: GH_REPO is not [HOST/]OWNER/REPO"
+	// ReasonNoGitHubRemote: no GH_REPO and no remote on a host gh would
+	// read, so no rule names a repository.
+	ReasonNoGitHubRemote = "gh repo unknown: no GitHub remote (set GH_REPO or add a GitHub remote)"
 )
 
 // reasonGHReadAnotherRepo is the prefix of the reason the pull-request part
@@ -54,9 +60,9 @@ const defaultGHHost = "github.com"
 // ExpectedGHRepo is the GitHub repository the snapshot expects `gh pr list`
 // to read, worked out before gh is asked (#410). Host is the GitHub host,
 // lowercased; Repo is "owner/name" as the source wrote it; Source is one of
-// the Expected* constants. A zero Repo with an empty Source means no rule
-// applied — no GH_REPO, no gh default and no GitHub remote — and gh is asked
-// as it always was; Host then holds GH_HOST, if set.
+// the Expected* constants. gh is asked only once a rule has named one: with
+// no GH_REPO and no GitHub remote it is not asked at all, and the zero value
+// stands for that.
 //
 // It never holds a credential: parseGitHubURL keeps only host and path.
 type ExpectedGHRepo struct {
@@ -86,13 +92,17 @@ type ghRepoUnknown struct {
 //
 //  1. GH_REPO in env, the env the gh child runs with: gh reads exactly that,
 //     whatever the remotes say, so the rest is skipped.
-//  2. A remote marked gh's default (remote.<name>.gh-resolved = base),
-//     read through obs.
+//  2. gh's default, read through obs from remote.<name>.gh-resolved: the
+//     value base names that remote's own repository, and a value OWNER/REPO
+//     — written when the default is a related repository that is not a
+//     remote, such as a fork's parent — names that repository on the
+//     remote's host. Any other value is not a default.
 //  3. Exactly one distinct GitHub repository among the remotes' fetch URLs.
 //     More than one is ambiguous and gh is not asked.
 //
-// No GitHub remote at all leaves gh to its own resolution, as before. A
-// remote is a GitHub remote when its host is GH_HOST — gh considers only
+// When no rule applies — no GitHub remote at all — gh is not asked either:
+// it would resolve a repository the engine cannot check its answer against.
+// A remote is a GitHub remote when its host is GH_HOST — gh considers only
 // that host when it is set — or, with GH_HOST unset, github.com or a
 // *.ghe.com host. remotesErr is the remotes part's own failure: with it, and
 // no GH_REPO, rules 2 and 3 have nothing to read and nothing is guessed.
@@ -132,7 +142,7 @@ func expectGHRepo(ctx context.Context, obs RemoteObserver, env remote.RepoEnv, r
 		}
 	}
 	if len(distinct) == 0 {
-		return ExpectedGHRepo{Host: ghHost}, nil
+		return ExpectedGHRepo{}, &ghRepoUnknown{Reason: ReasonNoGitHubRemote}
 	}
 
 	defaults, err := obs.GHDefaultRemotes(ctx)
@@ -143,9 +153,18 @@ func expectGHRepo(ctx context.Context, obs RemoteObserver, env remote.RepoEnv, r
 	// mark on any other remote is passed over, as gh passes it over.
 	var marked []ghRepoRef
 	markedSeen := map[string]bool{}
-	for _, name := range defaults {
+	for _, name := range slices.Sorted(maps.Keys(defaults)) {
+		value := defaults[name]
 		ref, ok := byName[name]
-		if ok && !markedSeen[ref.key()] {
+		if !ok {
+			continue
+		}
+		if value != ghResolvedBase {
+			if ref.repo, ok = parseGHResolvedRepo(value); !ok {
+				continue
+			}
+		}
+		if !markedSeen[ref.key()] {
 			markedSeen[ref.key()] = true
 			marked = append(marked, ref)
 		}
@@ -160,6 +179,16 @@ func expectGHRepo(ctx context.Context, obs RemoteObserver, env remote.RepoEnv, r
 	default:
 		return ExpectedGHRepo{}, &ghRepoUnknown{Reason: ReasonAmbiguousGHRepo}
 	}
+}
+
+// parseGHResolvedRepo reads a gh-resolved value naming a repository:
+// OWNER/REPO, exactly one slash with both parts non-empty.
+func parseGHResolvedRepo(v string) (string, bool) {
+	owner, name, ok := strings.Cut(v, "/")
+	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+		return "", false
+	}
+	return v, true
 }
 
 // checkGHRepoRead reports whether the PRs gh listed are the expected

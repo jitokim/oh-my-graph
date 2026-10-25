@@ -2,6 +2,7 @@ package worktree
 
 import (
 	"context"
+	"maps"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -89,7 +90,7 @@ type FakeRemoteObserver struct {
 	headsErr    map[string]error
 	runCommits  map[string]bool
 	attribCalls []string
-	ghDefaults  []string
+	ghDefaults  map[string]string
 	ghDefErr    error
 	ghDefCalls  int
 }
@@ -176,18 +177,18 @@ func (f *FakeRemoteObserver) AttributionCalls() []string {
 	return append([]string{}, f.attribCalls...)
 }
 
-// SetGHDefaultRemotes scripts what GHDefaultRemotes returns: the remotes
-// carrying gh-resolved, or a non-nil err in their place.
-func (f *FakeRemoteObserver) SetGHDefaultRemotes(names []string, err error) {
+// SetGHDefaultRemotes scripts what GHDefaultRemotes returns: each remote
+// carrying gh-resolved mapped to its value, or a non-nil err in their place.
+func (f *FakeRemoteObserver) SetGHDefaultRemotes(values map[string]string, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.ghDefaults = append([]string(nil), names...)
+	f.ghDefaults = maps.Clone(values)
 	f.ghDefErr = err
 }
 
-// GHDefaultRemotes returns the scripted names, sorted, or the scripted error.
-// Nothing scripted is no default. It counts each call.
-func (f *FakeRemoteObserver) GHDefaultRemotes(ctx context.Context) ([]string, error) {
+// GHDefaultRemotes returns a copy of the scripted values, or the scripted
+// error. Nothing scripted is no default. It counts each call.
+func (f *FakeRemoteObserver) GHDefaultRemotes(ctx context.Context) (map[string]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -197,8 +198,8 @@ func (f *FakeRemoteObserver) GHDefaultRemotes(ctx context.Context) ([]string, er
 	if f.ghDefErr != nil {
 		return nil, f.ghDefErr
 	}
-	out := append([]string{}, f.ghDefaults...)
-	sort.Strings(out)
+	out := map[string]string{}
+	maps.Copy(out, f.ghDefaults)
 	return out, nil
 }
 
