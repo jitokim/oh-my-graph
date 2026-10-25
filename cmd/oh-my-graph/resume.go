@@ -700,13 +700,23 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// rather than taking new ones, and dropping them here would let the
 		// first settling node erase what the next resume must check.
 		VerifyPins: snap.VerifyPins,
-		Nodes:      records,
-		// PausedAt starts empty: the run is actively continuing, not paused,
-		// until (if at all) this leg pauses again at a later gate.
-		Gate: runstate.GateState{Decisions: decisions},
-		// LimitPause is deliberately NOT carried, for the same reason: the
-		// first write of this leg clears an earlier leg's limit pause, and a
-		// limit this leg hits records its own (ADR 0031 §8.1).
+		// And the remote change record (ADR 0046 §3.1) with the base commit
+		// its attribution excludes: this leg appends its own leg to the
+		// earlier ones, and checks against the base the first leg read —
+		// never a new one, so an old run with none attributes nothing.
+		RunBaseSHA:    snap.RunBaseSHA,
+		RemoteChanges: snap.RemoteChanges,
+		// The node records, and the pause, as loaded, until the before remote
+		// snapshot has completed uninterrupted: only then does RecordLegGate
+		// write this leg's carried records — a retry's retained subset, its
+		// failed records and their cost dropped — and its decisions with
+		// PausedAt empty and no limit pause — the run actively continuing
+		// until (if at all) this leg pauses again, a limit it hits recording
+		// its own (ADR 0031 §8.1). A Ctrl-C during that snapshot so leaves the
+		// run where it was, resumable by the same command (#410).
+		Nodes:      snap.Nodes,
+		Gate:       snap.Gate,
+		LimitPause: snap.LimitPause,
 	})
 
 	// Reopened in append mode, so the resumed leg continues the same
@@ -747,6 +757,8 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// (#363): a pinned file changed while the run was stopped faults here
 	// exactly as one changed mid-run would. No pins, no wrapper.
 	verifier := resumedVerifyPins(verifyCmd.Command, snap.VerifyPins).guard(verify.NewShellVerifier())
+	// run_finished is held until the leg's after remote snapshot ends (finish).
+	hold := &finishHold{sink: feed}
 	scheduler := schedule.NewScheduler(nodeRunner, schedule.Options{
 		Concurrency:    flags.concurrency,
 		ContinueOnFail: snap.ContinueOnFail,
@@ -774,7 +786,7 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// shown (#346); every other record is written exactly as before. A
 		// leg that pauses again stores the new gate's shown description (#348).
 		Recorder:  decided.recorderFor(describePauses(recorder, g, h)),
-		EventSink: feed,
+		EventSink: hold,
 		Engine:    engine,
 		// CompletedNodes seeds the resumed leg's ready set from
 		// graph.ReadyGiven(completed) instead of graph.Roots(), so a node the
@@ -809,11 +821,43 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		defer startLiveView(ctx, web, runID)()
 	}
 
-	runErr := scheduler.Run(ctx, g, h, led)
+	// A resumed leg takes its own before snapshot (ADR 0046 §3.1): what
+	// changed while the run was stopped is recorded between the legs and
+	// never attributed.
+	remote := beginRemoteLeg(ctx, runID, recorder, snap.RunBaseSHA, snap.RemoteChanges)
+	// An interrupt during the before snapshot ends the leg before any node
+	// starts, its record printed, as in executeGraph, and before this leg's
+	// gate decisions and carried records are written, so the run is still
+	// paused, or still holds its failed records, as it was.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		remote.end(ctx)
+		remote.print(os.Stdout)
+		return ctxErr
+	}
+	// A failed write of this leg's decisions ends the leg the same way, before
+	// any node starts, but as a failure — a plain wrapped error that
+	// mainExitCode maps to exit 1 and prints as its `oh-my-graph: ` stderr
+	// line, like the other state.json writes a leg cannot run without:
+	// executeGraph's WriteInitial (`prepare run snapshot: %w`) and the
+	// scheduler's RecordPause (`persist pause snapshot for gate %q: %w`),
+	// which this leg's own pause would reach. Its after snapshot is taken,
+	// not recorded interrupted, and no run_finished is written: the scheduler
+	// writes this leg's run_started, so nothing opened a leg on the stream.
+	// The recorder kept the pause and the node records as loaded, so the run
+	// is still stopped where it was and the same command can be retried.
+	if err := recorder.RecordLegGate(decisions, records); err != nil {
+		remote.end(ctx)
+		remote.print(os.Stdout)
+		return legGateWriteError(snap.Gate.PausedAt, err)
+	}
+	// The after snapshot ends the leg, not the scheduler: an interrupt during
+	// it ends the leg interrupted (finish), so its run_finished waits for it.
+	runErr := remote.finish(ctx, hold, scheduler.Run(ctx, g, h, led))
 	reportWorktreeCleanup(os.Stderr, worktrees.Cleanup(context.Background()))
 
 	fmt.Fprintln(os.Stdout)
 	led.Print(os.Stdout)
+	remote.print(os.Stdout)
 	// The next leg needs the pair re-supplied exactly as this one did: the
 	// snapshot this leg rewrites carries snap.Graph forward verbatim — the
 	// verification stays on disk and stays untrusted — so the hint repeats the
@@ -825,6 +869,16 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	printDescribedPauseHint(os.Stdout, runID, runErr, verifyCmd, description, recordedLimitPause(runID, runErr))
 
 	return runErr
+}
+
+// legGateWriteError is the error a resumed leg ends with when its gate
+// decisions could not be written to state.json: no node ran, and the run is
+// still stopped as it was, so the same resume command can be retried.
+func legGateWriteError(pausedAt string, err error) error {
+	if pausedAt == "" {
+		return fmt.Errorf("record this leg's gate decisions in state.json: %w; no node ran and the run is unchanged, so the same resume command can be retried", err)
+	}
+	return fmt.Errorf("record this leg's gate decisions in state.json: %w; no node ran and the run is still paused at gate %q, so the same resume command can be retried", err, pausedAt)
 }
 
 // resumeDecision turns the flags this invocation was given, plus the gate the

@@ -381,7 +381,7 @@ func TestGitManager_ScrubsBillingVarsFromGitChildren(t *testing.T) {
 		}
 	}
 
-	cmd := m.gitCmd(context.Background(), "status")
+	cmd := m.gitCmd(context.Background(), nil, "status")
 	for _, kv := range cmd.Env {
 		if strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") || strings.HasPrefix(kv, "ANTHROPIC_AUTH_TOKEN=") ||
 			strings.HasPrefix(kv, "OPENAI_API_KEY=") || strings.HasPrefix(kv, "CODEX_API_KEY=") {

@@ -1077,6 +1077,112 @@ path stays spawn-free in CI). Cleanup is deliberately not on the interface:
 the Scheduler only asks where a node runs; teardown is the CLI's job against
 the concrete `GitManager`. See ADR 0005.
 
+## Remote change record — what changed on the remote during a run (#410)
+
+A node holding `Bash(git *)` can push a branch or add a remote, and no check
+node is asked to notice. The engine records it itself, outside any model, as
+a report: the record itself changes no verdict, no exit code and no run
+status, and nothing in the engine reads it to decide anything. A Ctrl-C
+while a snapshot is taken is the interrupt's doing, not the record's: it
+ends the leg interrupted, below.
+
+**Timing: two snapshots per leg.** `run`, `auto` and `resume` take a *before*
+snapshot of the **invocation repository** (the one the command was started
+in, where worktrees come from) after the leg's `state.json` exists and
+before `scheduler.Run` starts its first node, and an *after* snapshot when
+`scheduler.Run` returns — whatever it returned, a pause or a halt included,
+on a context of its own that only the run's interrupt cancels — before
+worktree cleanup. Every leg takes its own
+*before*, a resumed one included. A resumed leg also diffs the previous leg's
+*after* against its own *before* into the `between_legs` set: what changed
+while no leg ran, recorded and never attributed.
+
+**A snapshot** has two parts, each `observed` or `unavailable` with the
+reason: the configured **remotes** (`git remote -v`: name, fetch and push
+URL) and the remote **branches** (`git ls-remote --heads` per remote: branch
+and sha). An unavailable part is never treated as empty and never compared.
+The branches part is all or nothing: if any one remote's `ls-remote` fails,
+the whole part is unavailable, every failing remote named, since a list
+missing one remote would compare as that remote's branches all deleted.
+Credentials in URLs and reasons are replaced with `***` before they are
+recorded. Reading never stops the run: a failure, a timeout or "not a git
+repository" becomes an unavailable part. `ls-remote` reads the network on
+every run, each git command bounded by the 30 s git timeout, so one
+unreachable remote can add up to 30 s at the start and at the end of each
+leg. Ctrl-C cuts that short: Ctrl-C during either snapshot, *before* or
+*after*, ends the leg as interrupted, as an interrupt during a node does —
+exit 1, no pause hint, and `run_finished` `"failed"` once the leg has a
+`run_started`. One during the *before* snapshot ends the leg there, before
+any node starts — so only an `auto` run, whose planning `run_started` is
+already written, gets that `run_finished`, while a `run` or resumed leg
+writes neither event — and on a resumed leg
+leaves the run paused as it was, resumable by the same `resume --approve
+<gate>`; once a leg is
+interrupted its *after* snapshot is not taken, or is cut short, and is
+recorded with both parts unavailable, reason `interrupted`, the record
+printed either way. A leg's `run_finished` is therefore written after its
+*after* snapshot, not when `scheduler.Run` returns, and an interrupt there
+overrides the pause or pass the scheduler reached: a gate or session-limit
+pause is withdrawn from `state.json` — the leg resumes with
+`--retry-failed`, its gate pausing again when reached — and the run reads
+`FAIL`. The one disagreement left is a leg whose every node had already
+passed: `state.json` holds them all `PASS`, so the run reads `PASS` while
+the invocation exits 1, an exception to ADR 0023 §2.6 pinned by
+`TestExitCode_DoesNotAgreeWithStatusWhenAnInterruptLandsOnAPassedLegsAfterSnapshot`.
+
+**Entries.** The diff of two snapshots gives `remote_added`,
+`remote_removed`, `remote_url_changed`, `branch_created`, `branch_moved`
+(old and new sha) and `branch_deleted`. Branch refs are compared only for a
+remote both sides list with the same fetch URL; an added, removed or
+re-pointed remote gets a `not_compared` item for its branches instead. A
+part unavailable on either side gives a `not_compared` item with the reason,
+so "no change" and "could not see" never read the same.
+
+**Attribution.** A `branch_created` or `branch_moved` entry in a leg is
+`run_commit` when its new sha passes a local check, all through
+`GitManager.CommitAttributable`: the sha is a commit in the invocation
+repository, it is not an ancestor of `run_base_sha` (the invocation
+repository's `HEAD` when the run's first leg started, carried by `resume`),
+and it is an ancestor of one of the run's own `refs/heads/omg/<run-id>/`
+branches. Every other entry — the no-sha kinds, a sha that fails the check,
+every between-legs entry, and every entry of a run with no `run_base_sha` —
+is `not_attributable`. The check proves where a commit came from, never who
+moved the ref.
+
+**Printing.** After the ledger table, `run`, `auto` and `resume` print the
+leg's record (a resumed leg first prints its between-legs set):
+
+```
+Remote changes (observed: remotes, branches):
+  branch_created origin/feat/x at 333333333333 — observed during the run; points at a commit this run made
+  remote_added mirror https://example.com/m.git — observed, not attributable
+  not compared: branches of mirror: remote added: it has no before refs to compare
+```
+
+`run_commit` reads "observed during the run; points at a commit this run
+made"; `not_attributable` reads "observed, not attributable". No entry and
+nothing uncompared prints one line, `Remote changes: none observed
+(observed: remotes, branches)`. With nothing changed but a part not
+compared, the line says `none observed in the parts compared` and a
+`not compared:` line follows for each such part.
+
+**Storage.** `state.json` carries `run_base_sha` and `remote_changes`
+(`legs`, each with `before`, `after` and `changes`, and `between_legs`),
+additive and optional, so the schema stays 3 and no event is added
+(docs/RUN-FEED.md). Every command runs on `worktree.GitManager`, through the
+`worktree.RemoteObserver` interface, with `GIT_TERMINAL_PROMPT=0` and an
+empty `GIT_ASKPASS` added to the scrubbed environment. That stops only git's
+own prompts, an askpass helper's included — ssh asks on
+`/dev/tty` itself for an unknown host key or a locked key — so `git remote
+-v` and `ls-remote` also get `GIT_SSH_COMMAND=ssh -o BatchMode=yes` unless
+the user chose an ssh command (`GIT_SSH_COMMAND` or `GIT_SSH` in the
+environment, or `core.sshCommand` in the repository), which is left
+untouched; an ssh prompt then fails at once into an unavailable part. This
+widens the third seam's scope from the `git worktree` commands to the git
+commands the engine issues against the invocation repository, and adds no
+spawner. Tests inject `worktree.FakeRemoteObserver`. What the record cannot
+see is listed in docs/LIMITATIONS.md.
+
 ## Execution engine
 Scheduler = Kahn on `depends_on`, but maintains a **ready set** run concurrently:
 1. Validate on load: all depends_on ids exist; no cycles (DFS colour); fail fast
@@ -2359,9 +2465,11 @@ incompatible snapshot is refused rather than misread:
   in-flight siblings drain and before the gate branch, so a leg that pauses on
   a limit and at a gate persists both records while the gate still wins the
   returned error. It is cleared the way `gate.paused_at` is: `continueRun`
-  (`cmd/oh-my-graph/resume.go`) seeds the resumed leg's recorder without it,
-  so that leg's first write drops it, and a limit the leg hits records its
-  own. Display only: `runs list` and the end-of-leg pause hint name the cause
+  (`cmd/oh-my-graph/resume.go`) seeds the resumed leg's recorder with it as
+  loaded, and `RecordLegGate` drops it once the leg's before remote snapshot
+  completes uninterrupted (a failed write of that drop ends the leg before
+  any node starts, the run still paused and resumable by the same command),
+  and a limit the leg hits records its own. Display only: `runs list` and the end-of-leg pause hint name the cause
   from it, and `resume --approve/--reject` on such a run says it is paused on
   a limit rather than "not paused"; `runstatus` does not read it, nothing a
   resume re-launches depends on it, and its write is non-fatal, like a node's.

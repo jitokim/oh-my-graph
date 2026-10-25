@@ -1,6 +1,7 @@
 package runstate
 
 import (
+	"maps"
 	"slices"
 	"sync"
 )
@@ -39,6 +40,7 @@ func NewSnapshotRecorder(path string, base Snapshot) *SnapshotRecorder {
 		nodes[id] = rec
 	}
 	base.Nodes = nodes
+	base.RemoteChanges = base.RemoteChanges.clone()
 	return &SnapshotRecorder{path: path, snap: base}
 }
 
@@ -143,6 +145,70 @@ func (r *SnapshotRecorder) RecordLimitPause(pause LimitPause) error {
 	defer r.mu.Unlock()
 	pause.NodeIDs = slices.Sorted(slices.Values(pause.NodeIDs))
 	r.snap.LimitPause = &pause
+	return Write(r.path, r.snap)
+}
+
+// ClearPause withdraws the leg's pause record — the gate it paused at, that
+// gate's shown description and its "pause" decision, and a limit pause — and
+// persists the snapshot in one write. The CLI calls it when an interrupt lands
+// on the leg's after remote snapshot (#410): the leg then ends interrupted,
+// not paused, and the snapshot must not offer a gate resume for it. Nodes and
+// every other gate decision are untouched, so the leg resumes like any
+// interrupted one, its gate pausing again when it is reached.
+func (r *SnapshotRecorder) ClearPause() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if id := r.snap.Gate.PausedAt; id != "" && r.snap.Gate.Decisions[id] == GatePause {
+		delete(r.snap.Gate.Decisions, id)
+	}
+	r.snap.Gate.PausedAt = ""
+	r.snap.Gate.PausedGateDescription = ""
+	r.snap.LimitPause = nil
+	return Write(r.path, r.snap)
+}
+
+// RecordLegGate replaces the earlier leg's gate state, limit pause and node
+// records with the ones a resumed leg starts from — decisions, no paused
+// gate, no limit pause, and nodes, the records the leg carries forward (all
+// of them for a gate resume, the retained subset for --retry-failed) — and
+// persists the snapshot in one write. The CLI seeds a resumed leg's recorder
+// with the snapshot's pause and node records as loaded and calls this once
+// its before remote snapshot has completed uninterrupted (#410): a Ctrl-C
+// during that snapshot then leaves the run exactly where it was — paused at
+// its gate, its failed records and their cost still on disk — resumable by
+// the same command. decisions and nodes are copied, so the caller's maps are
+// never mutated.
+//
+// The new state is written before it is kept: a failed write leaves the
+// recorder holding the loaded pause and records, so no later record persists
+// "not paused", or a failed node's record dropped, for a leg whose start never
+// reached disk.
+func (r *SnapshotRecorder) RecordLegGate(decisions map[string]GateDecision, nodes map[string]NodeRecord) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	next := r.snap
+	next.Gate = GateState{Decisions: maps.Clone(decisions)}
+	next.LimitPause = nil
+	next.Nodes = maps.Clone(nodes)
+	if next.Nodes == nil {
+		next.Nodes = make(map[string]NodeRecord)
+	}
+	if err := Write(r.path, next); err != nil {
+		return err
+	}
+	r.snap = next
+	return nil
+}
+
+// RecordRemoteChanges stores the run's remote change record (ADR 0046 §2.2)
+// and persists the snapshot in one write. The record is deep-copied, so the
+// caller may go on beginning and ending legs on its own value without
+// touching what the recorder writes next. Nodes, Gate and LimitPause are
+// untouched.
+func (r *SnapshotRecorder) RecordRemoteChanges(changes RemoteChanges) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.snap.RemoteChanges = changes.clone()
 	return Write(r.path, r.snap)
 }
 

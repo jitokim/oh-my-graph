@@ -183,6 +183,7 @@ runs only — see "Goal cycles" below), `build_evidence` (auto-mode launches onl
 — see below), `baseline` (`auto --no-baseline` launches only — see below),
 `conventions` (`auto --conventions` launches only — see below),
 `verify_pins` (`auto --verify-cmd` launches only — see below),
+`run_base_sha` and `remote_changes` (the remote change record — see below),
 `nodes` (map of node id →
 terminal record: `verdict`, `session_id`, `cost_usd`, `cost_unknown`, `usage`
 (`input_tokens`, `cached_input_tokens`, `output_tokens`,
@@ -233,8 +234,10 @@ before you print it, and any reset time stays inside it, unparsed; and `at`,
 when the pause was taken, after in-flight siblings drained. It records the
 **pause**, not the nodes: a limited node is still recorded nowhere in `nodes`,
 so `resume --retry-failed` re-launches it. The scheduler writes it once, at the
-end of the leg that hit the limit, and a resumed leg's first snapshot write
-clears it, since that leg's recorder is seeded without it — the lifecycle of
+end of the leg that hit the limit, and a resumed leg clears it in the write
+that follows its before remote snapshot, kept if a Ctrl-C interrupts that
+snapshot or that write fails (the leg then ends before any node starts, still
+paused, resumable by the same command) — the lifecycle of
 `gate.paused_at`. A leg that pauses on a limit and at a gate holds both
 records, and each is cleared by the leg that runs past it. Its write is
 non-fatal (a warning on the progress output), so a limit-paused run may lack
@@ -349,6 +352,57 @@ run as it resumes any of its own, pinning nothing — it cannot misread the
 record, only not enforce it — and drops the key if it rewrites the snapshot, so
 a later leg of this build has no pins to check either. No event carries it; the
 feed schema is unchanged.
+
+`remote_changes` is the remote change record
+([#410](https://github.com/jitokim/oh-my-graph/issues/410)): what the engine
+observed changing on the invocation repository's remotes while the run ran.
+It is a report: nothing reads it to decide anything, and no exit code or
+verdict depends on it. `run`, `auto` and `resume` write it on every leg; it is
+absent only on a run that predates it. A leg's `run_finished` comes after its
+`after` snapshot, and a Ctrl-C during that snapshot closes the leg `"failed"`,
+with any pause its nodes reached withdrawn from `state.json`. The record holds:
+
+- `legs`, one per leg in order, each with `before` (a snapshot taken before
+  the leg's first node), `after` (taken when its last node ended; absent on a
+  leg that has not ended) and `changes` (the diff of the two; absent with
+  `after`).
+- `between_legs` (omitted when empty), one per resumed leg: `from_leg` and
+  `to_leg` (1-based indexes into `legs`) and `changes`, the diff of the
+  earlier leg's `after` against the later leg's `before` — what changed while
+  no leg ran. Its entries are always `not_attributable`. The indexes count
+  recorded legs, not the run's: resuming a run whose `state.json` predates
+  the record starts `legs` at that resumed leg, so its "leg 1" is the first
+  leg recorded, and the printed "between leg 1 and leg 2" counts the same way.
+
+A snapshot has two parts, each with `status` `"observed"` or `"unavailable"`
+and, when unavailable, `reason`: `remotes` (`configured`: `name`,
+`fetch_url`, `push_url` from `git remote -v`) and `branches` (`refs`:
+`remote`, `branch`, `sha` from `git ls-remote --heads` per remote). An empty
+observed list is an observed "none"; an unavailable part is never treated as
+empty. `branches` is unavailable as a whole when any one remote's
+`ls-remote` failed, with every failing remote in the reason. Credentials in
+a URL, and in a reason that quotes one, are replaced with `***`.
+
+A `changes` object always spells out three arrays: `observed` (the parts
+compared, i.e. observed on both sides), `entries` and `not_compared` (`part`,
+`remote` when it names one remote's refs, `reason`). An entry has `kind` —
+`remote_added`, `remote_removed`, `remote_url_changed`, `branch_created`,
+`branch_moved` or `branch_deleted` — `remote`, and as the kind needs
+`branch`, `old_sha`/`new_sha` and `old_fetch_url`/`new_fetch_url`/
+`old_push_url`/`new_push_url`. Its `attribution` is `run_commit` when a
+`branch_created` or `branch_moved` entry's new sha is a commit reachable from
+one of the run's own `omg/<run-id>/` branches and not from `run_base_sha`,
+and `not_attributable` otherwise. `run_commit` says the sha is the run's, not
+that the run moved the ref.
+
+`run_base_sha` is the invocation repository's `HEAD` when the run's first leg
+started: the commit that attribution excludes, carried unchanged by `resume`.
+It is absent when the run started outside a repository, and then no entry is
+attributed.
+
+Both are **additive optional fields and the schema stays 3**: an older binary
+that ignores them loses the report and runs the rest of the run as this one
+does. No event carries them; the feed schema is unchanged.
 
 `conventions` records the operator's `auto --conventions` files (ADR 0041):
 `staged_sha256`, the SHA-256 of the run directory's `conventions.md` — the
@@ -581,8 +635,8 @@ write leaves its event on the stream and its `⚠` on the progress feed.
 | `node_passed` | `node_id`, `verdict` (`"PASS"`), `cost_usd`, `cost_unknown`, `usage`, `reported_cost_usd` *(optional)*, `session_id`, `retries`, `detail`, `provenance` *(optional)* | A node reaches a terminal PASS (including an approved gate). `provenance` says **how** — see below. |
 | `node_failed` | `node_id`, `verdict` (`"FAIL"`), `cost_usd`, `cost_unknown`, `usage`, `reported_cost_usd` *(optional)*, `session_id`, `retries`, `detail` | A node reaches a terminal FAIL (any check, the verifier, its budget, the runner, or a rejected gate). |
 | `node_retried` | `node_id`, `retries` (1-based retry ordinal), `session_id`, `round`, `cost_usd`, `cost_unknown`, `usage`, `compound_shell_rule` *(optional)* | A retry attempt begins after a failed one — or a feedback arc fires (ADR 0010): the declarer's non-final judgment failure re-arms its loop body, with `round` the 1-based round now beginning, `retries` 0, no `session_id` (the re-run's ids arrive on its own `node_started`s), and a `detail` of the form `feedback round 1/2: re-running impl → review`. That feedback form carries the completed declarer attempt's accounting because no terminal event is emitted for it. |
-| `run_finished` | `outcome` (`"passed"` \| `"failed"` \| `"paused"`), `detail`, `cost_usd`, `cost_unknown`, `usage` *(optional)* | The leg ends — every launch settled. A plan rejected before a graph exists carries the paid planner call's accounting here. A gate pause is `"paused"`, not `"failed"`. A subscription session-limit pause (ADR 0009) is also `"paused"`, distinguished by a `detail` naming the limited node(s) and the CLI's own limit message (an additive field — no schema bump; absent on every other outcome). The limited nodes carry **no** terminal node event: they are un-run, not FAILED, and re-run on `resume --retry-failed`. |
-| `gate_paused` | `node_id` | *(schema 2)* A gate node decided to pause: no new work launches, in-flight siblings drain, and the leg closes with outcome `"paused"`. `node_id` is the gate a resume must decide. |
+| `run_finished` | `outcome` (`"passed"` \| `"failed"` \| `"paused"`), `detail`, `cost_usd`, `cost_unknown`, `usage` *(optional)* | The leg ends — every launch settled. A plan rejected before a graph exists carries the paid planner call's accounting here. A gate pause is `"paused"`, not `"failed"` — except when a Ctrl-C lands during the leg's after remote snapshot, which closes even a paused leg `"failed"` (see `gate_paused`). A subscription session-limit pause (ADR 0009) is also `"paused"`, distinguished by a `detail` naming the limited node(s) and the CLI's own limit message (an additive field — no schema bump; absent on every other outcome). The limited nodes carry **no** terminal node event: they are un-run, not FAILED, and re-run on `resume --retry-failed`. |
+| `gate_paused` | `node_id` | *(schema 2)* A gate node decided to pause: no new work launches, in-flight siblings drain, and the leg closes with outcome `"paused"`. `node_id` is the gate a resume must decide. The one exception ([#410](https://github.com/jitokim/oh-my-graph/issues/410)): a Ctrl-C during the leg's after remote snapshot closes it `"failed"` instead, with `gate.paused_at` empty in `state.json`; that gate is then not one a resume decides, and it pauses again when `resume --retry-failed` reaches it. The `gate_paused` line stays in the feed, so a node event can say the gate paused under a leg that closed `"failed"`. |
 | `gate_approved` | `node_id` | *(schema 2)* A gate decision of approve was applied — a resumed leg replaying `--approve`, or any leg reaching a gate `run --auto-approve` pre-approved at launch; the gate's terminal `node_passed` follows. |
 | `gate_rejected` | `node_id` | *(schema 2)* A gate decision of reject was applied (a resumed leg replaying `--reject`); the gate's terminal `node_failed` follows and its subtree is pruned. |
 
@@ -724,7 +778,15 @@ emitted the moment the gate decides to pause — in-flight siblings drain
 `run_finished` (outcome `"paused"`). If several gates evaluate concurrently,
 each pausing gate emits its own `gate_paused`; the gate the run is actually
 resumable at is the one `state.json` records in `gate.paused_at` (the first
-to pause).
+to pause). The one exception is a Ctrl-C during the leg's after remote
+snapshot ([#410](https://github.com/jitokim/oh-my-graph/issues/410)): the leg
+then closes with `run_finished` outcome `"failed"`, not `"paused"`, and
+`gate.paused_at` is empty, so no gate is resumable by a decision — the gate
+that emitted `gate_paused` is un-run and pauses again when
+`resume --retry-failed` reaches it. Its `gate_paused` line is not withdrawn
+(the feed is append-only), so a consumer that derives a node's state from its
+last event — the dashboard card among them — still shows that gate as paused
+under a leg that closed `"failed"`; the leg's `run_finished` is the authority.
 
 ### Guarantees
 

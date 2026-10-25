@@ -3,6 +3,7 @@ package worktree
 import (
 	"context"
 	"path/filepath"
+	"sort"
 	"sync"
 )
 
@@ -73,3 +74,102 @@ func (f *FakeManager) Calls() []string {
 	copy(out, f.calls)
 	return out
 }
+
+// FakeRemoteObserver is the scripted RemoteObserver — FakeManager's
+// counterpart for the remote snapshot. It answers from what a test set on it
+// (no git, no network): the remotes list or an error for it, each remote's
+// heads or an error for them, and the set of shas CommitAttributable passes.
+// Mutating it between two snapshots is how a test scripts a change.
+type FakeRemoteObserver struct {
+	mu          sync.Mutex
+	remotes     []Remote
+	remotesErr  error
+	heads       map[string][]RemoteHead
+	headsErr    map[string]error
+	runCommits  map[string]bool
+	attribCalls []string
+}
+
+// NewFakeRemoteObserver builds a FakeRemoteObserver with no remotes.
+func NewFakeRemoteObserver() *FakeRemoteObserver {
+	return &FakeRemoteObserver{
+		heads:      make(map[string][]RemoteHead),
+		headsErr:   make(map[string]error),
+		runCommits: make(map[string]bool),
+	}
+}
+
+// SetRemotes scripts what Remotes returns; a non-nil err replaces the list.
+func (f *FakeRemoteObserver) SetRemotes(remotes []Remote, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.remotes = append([]Remote(nil), remotes...)
+	f.remotesErr = err
+}
+
+// SetHeads scripts what LsRemoteHeads returns for remote; a non-nil err
+// replaces the list.
+func (f *FakeRemoteObserver) SetHeads(remote string, heads []RemoteHead, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.heads[remote] = append([]RemoteHead(nil), heads...)
+	f.headsErr[remote] = err
+}
+
+// SetRunCommit scripts CommitAttributable to pass for sha, with any base.
+func (f *FakeRemoteObserver) SetRunCommit(sha string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.runCommits[sha] = true
+}
+
+// Remotes returns the scripted remotes, sorted by name, or the scripted error.
+func (f *FakeRemoteObserver) Remotes(ctx context.Context) ([]Remote, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.remotesErr != nil {
+		return nil, f.remotesErr
+	}
+	out := append([]Remote{}, f.remotes...)
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// LsRemoteHeads returns the scripted heads for remote, sorted by branch, or
+// the scripted error. A remote nothing was scripted for advertises no heads.
+func (f *FakeRemoteObserver) LsRemoteHeads(ctx context.Context, remote string) ([]RemoteHead, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.headsErr[remote]; err != nil {
+		return nil, err
+	}
+	out := append([]RemoteHead{}, f.heads[remote]...)
+	sort.Slice(out, func(i, j int) bool { return out[i].Branch < out[j].Branch })
+	return out, nil
+}
+
+// CommitAttributable passes exactly the shas SetRunCommit named, except the
+// base itself, which §5.1 never counts. It records each sha it was asked
+// about.
+func (f *FakeRemoteObserver) CommitAttributable(_ context.Context, sha, baseSHA string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.attribCalls = append(f.attribCalls, sha)
+	return baseSHA != "" && sha != baseSHA && f.runCommits[sha]
+}
+
+// AttributionCalls returns every sha CommitAttributable was asked about, in
+// order. Returns a copy; never nil.
+func (f *FakeRemoteObserver) AttributionCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string{}, f.attribCalls...)
+}
+
+var _ RemoteObserver = (*FakeRemoteObserver)(nil)
