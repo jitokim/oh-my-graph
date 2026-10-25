@@ -1,8 +1,10 @@
 # ADR 0046 — The engine records the remote changes it observes during a run, and fails the run only when the operator forbids them
 
-**Status:** Proposed. No code exists. This record decides the shape; §8 lists
-the tests the implementation lane owes and §9 what would show the decision
-wrong. Nothing here is implemented, and the flag it names does not yet parse.
+**Status:** Accepted on 2026-10-26: §5.1's position (Option B by default,
+Option A behind `--forbid-remote-changes`) is the decision. No code exists
+yet. This record decides the shape; §8 lists the tests the implementation
+lane owes and §9 what would show the decision wrong. The git half of the
+record lands in #431; the `gh` part and the flag follow in a later change.
 
 **Where the addresses point.** Written against `ac7391c`, the `main` this
 branch (`docs/adr-0046-remote-changes`) left. Every `file:line` below was read
