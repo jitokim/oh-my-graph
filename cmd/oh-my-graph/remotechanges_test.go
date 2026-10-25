@@ -28,6 +28,7 @@ import (
 // a leg reaches a real remote from the package directory's own repository.
 // A test about the record swaps in its own through useRemoteObserver.
 func TestMain(m *testing.M) {
+	productionRemotePRListerFor = remotePRListerFor
 	remoteObserverFor = func(string) worktree.RemoteObserver { return worktree.NewFakeRemoteObserver() }
 	remotePRListerFor = func(string) remote.PRLister { return remote.NewFakePRLister() }
 	runBaseCommit = func() string { return "" }
@@ -38,6 +39,24 @@ func TestMain(m *testing.M) {
 // that drives the real GitManager against a temp repository.
 func productionRemoteObserverFor(runID string) worktree.RemoteObserver {
 	return worktreeManagerFor(runID)
+}
+
+// productionRemotePRListerFor is the PR wiring TestMain replaces. It is only
+// ever inspected, never asked: asking it would run a real gh.
+var productionRemotePRListerFor func(string) remote.PRLister
+
+// usePRLister makes every leg in this test read its open pull requests from
+// prs, and records the run id each leg built its lister for.
+func usePRLister(t *testing.T, prs remote.PRLister) *[]string {
+	t.Helper()
+	prev := remotePRListerFor
+	t.Cleanup(func() { remotePRListerFor = prev })
+	var runIDs []string
+	remotePRListerFor = func(runID string) remote.PRLister {
+		runIDs = append(runIDs, runID)
+		return prs
+	}
+	return &runIDs
 }
 
 // useRemoteObserver makes every leg in this test read obs, with base as the
@@ -1113,4 +1132,246 @@ func TestRunGraph_AnInterruptDuringTheAfterSnapshotEndsTheLegInterrupted(t *test
 			}
 		})
 	}
+}
+
+// The production wiring reads open pull requests through the fifth seam's
+// GHRunner — never asked here, so no test runs a real gh.
+func TestRemotePRListerFor_IsTheGHRunner(t *testing.T) {
+	if _, ok := productionRemotePRListerFor("run-1").(*remote.GHRunner); !ok {
+		t.Errorf("remotePRListerFor builds %T, want *remote.GHRunner", productionRemotePRListerFor("run-1"))
+	}
+}
+
+// Each PR entry kind is printed with its number, head branch and short sha,
+// under the attribution label its head sha earns (ADR 0046 §8.6), and no
+// line says the run made it.
+func TestRunGraph_PullRequestsChangedDuringTheLegArePrintedWithTheirAttribution(t *testing.T) {
+	isolateRunHome(t)
+	obs := originObserver()
+	obs.SetRunCommit(remoteRunSHA)
+	useRemoteObserver(t, obs, remoteBaseSHA)
+	prs := remote.NewFakePRLister()
+	prs.Set(remote.ObservedPRs([]remote.OpenPR{
+		{Number: 7, HeadRefName: "feat/seven", HeadRefOid: remoteMainSHA},
+		{Number: 8, HeadRefName: "feat/eight", HeadRefOid: remoteMainSHA},
+		{Number: 9, HeadRefName: "feat/nine", HeadRefOid: remoteMainSHA},
+		{Number: 10, HeadRefName: "gone", HeadRefOid: remoteMainSHA},
+	}))
+	usePRLister(t, prs)
+	nodeRunner := hookRunner{FakeRunner: passingWork(), before: func(runner.NodeInvocation) {
+		prs.Set(remote.ObservedPRs([]remote.OpenPR{
+			{Number: 7, HeadRefName: "feat/seven", HeadRefOid: remoteRunSHA},
+			{Number: 8, HeadRefName: "feat/eight", HeadRefOid: remoteHumaSHA},
+			{Number: 9, HeadRefName: "feat/nine", HeadRefOid: remoteMainSHA},
+			{Number: 11, HeadRefName: "omg-out", HeadRefOid: remoteRunSHA},
+			{Number: 12, HeadRefName: "human", HeadRefOid: remoteHumaSHA},
+		}))
+	}}
+
+	out, err := runOneNodeGraph(t, nodeRunner)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if code := exitCodeForError(err); code != 0 {
+		t.Errorf("exit code = %d, want 0: the record is a report", code)
+	}
+	for _, want := range []string{
+		"Remote changes (observed: remotes, branches, pull_requests):\n",
+		"  pr_updated #7 feat/seven 222222222222 -> 333333333333 — observed during the run; points at a commit this run made\n",
+		"  pr_updated #8 feat/eight 222222222222 -> 444444444444 — observed, not attributable\n",
+		"  pr_no_longer_open #10 gone (was 222222222222) — observed, not attributable\n",
+		"  pr_opened #11 omg-out at 333333333333 — observed during the run; points at a commit this run made\n",
+		"  pr_opened #12 human at 444444444444 — observed, not attributable\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "#9") {
+		t.Errorf("an unchanged PR was printed:\n%s", out)
+	}
+	if strings.Contains(out, "made by") {
+		t.Errorf("the record must never say an entry was made by the run:\n%s", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "  pr_") && !strings.Contains(line, "observed") {
+			t.Errorf("PR entry %q does not say it was observed", line)
+		}
+	}
+	if calls := prs.Calls(); calls != 2 {
+		t.Errorf("the PR list was read %d times, want the before and the after", calls)
+	}
+	got := lastLegChanges(t, remoteRunSnapshot(t, soleRunID(t))).Entries
+	if len(got) != 5 {
+		t.Fatalf("entries = %+v, want five PR entries", got)
+	}
+}
+
+// A PR part that cannot be read on either side prints a not_compared line
+// naming why, never "none observed" for PRs, and changes neither the error
+// nor the exit code of the same run with a readable list.
+func TestRunGraph_AnUnreadablePRListIsNotComparedAndNeverChangesTheOutcome(t *testing.T) {
+	limit := make([]remote.OpenPR, remote.PRListLimit)
+	for i := range limit {
+		limit[i] = remote.OpenPR{Number: i + 1, HeadRefName: "b", HeadRefOid: remoteMainSHA}
+	}
+	for _, tc := range []struct {
+		name          string
+		before, after remote.PRList
+		want          string
+	}{
+		{"not authenticated after", remote.ObservedPRs(nil), remote.UnavailablePRs(remote.ReasonNotAuthenticated, ""),
+			"  not compared: pull_requests: unavailable after: not authenticated"},
+		{"gh not found before", remote.UnavailablePRs(remote.ReasonGHNotFound, ""), remote.ObservedPRs(nil),
+			"  not compared: pull_requests: unavailable before: gh not found"},
+		{"truncated", remote.ObservedPRs(limit), remote.ObservedPRs(limit),
+			"  not compared: pull_requests: unavailable before (truncated) and after (truncated)"},
+	} {
+		for _, outcome := range []runner.NodeOutcome{{Result: "PASS", ExitCode: 0}, {Result: "boom", ExitCode: 1}} {
+			t.Run(tc.name+"/"+outcome.Result, func(t *testing.T) {
+				run := func(t *testing.T, unreadable bool) (string, error) {
+					isolateRunHome(t)
+					useRemoteObserver(t, originObserver(), remoteBaseSHA)
+					prs := remote.NewFakePRLister()
+					usePRLister(t, prs)
+					after := remote.ObservedPRs(nil)
+					if unreadable {
+						prs.Set(tc.before)
+						after = tc.after
+					}
+					return runOneNodeGraph(t, hookRunner{
+						FakeRunner: runner.NewFakeRunner(map[string]runner.NodeOutcome{"work": outcome}),
+						before:     func(runner.NodeInvocation) { prs.Set(after) },
+					})
+				}
+				var quietErr, err error
+				var out string
+				t.Run("readable", func(t *testing.T) { _, quietErr = run(t, false) })
+				t.Run("unreadable", func(t *testing.T) { out, err = run(t, true) })
+
+				if (quietErr == nil) != (err == nil) || (err != nil && err.Error() != quietErr.Error()) {
+					t.Errorf("error with an unreadable PR list = %v, without = %v", err, quietErr)
+				}
+				if a, b := exitCodeForError(quietErr), exitCodeForError(err); a != b {
+					t.Errorf("exit code with an unreadable PR list = %d, without = %d", b, a)
+				}
+				for _, want := range []string{
+					"Remote changes: none observed in the parts compared (observed: remotes, branches)\n",
+					tc.want + "\n",
+				} {
+					if !strings.Contains(out, want) {
+						t.Errorf("stdout lacks %q:\n%s", want, out)
+					}
+				}
+				if strings.Contains(out, "  pr_") {
+					t.Errorf("an unreadable PR part produced entries:\n%s", out)
+				}
+			})
+		}
+	}
+}
+
+// Every leg builds its PR lister for the run and reads it at its before and
+// its after: the first leg of run and auto, and a resumed leg, whose before
+// is a fresh read and whose between-legs diff compares PRs too.
+func TestEveryLegReadsTheOpenPullRequests(t *testing.T) {
+	t.Run("run", func(t *testing.T) {
+		isolateRunHome(t)
+		useRemoteObserver(t, originObserver(), remoteBaseSHA)
+		prs := remote.NewFakePRLister()
+		runIDs := usePRLister(t, prs)
+		if _, err := runOneNodeGraph(t, passingWork()); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		if want := []string{soleRunID(t)}; !slices.Equal(*runIDs, want) || prs.Calls() != 2 {
+			t.Errorf("lister built for %v and read %d times, want %v and twice", *runIDs, prs.Calls(), want)
+		}
+	})
+
+	t.Run("auto", func(t *testing.T) {
+		isolateRunHome(t)
+		inBuildDir(t, "package.json")
+		useRemoteObserver(t, originObserver(), remoteBaseSHA)
+		prs := remote.NewFakePRLister()
+		runIDs := usePRLister(t, prs)
+		fake := newCycleFake(map[string]runner.NodeOutcome{
+			"plan-1": {Result: cycleSpec, TotalCostUSD: 0.0417},
+			"work-1": {SessionID: "s-work", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.50},
+		})
+		var err error
+		out := captureStdout(t, func() {
+			err = runAutoWith([]string{"add a README section", "--accept-no-build-evidence",
+				"--no-agent-mapping", "--no-skill-activation"}, fake, browser.NewFakeOpener(), os.Stdout)
+		})
+		if err != nil {
+			t.Fatalf("auto: %v", err)
+		}
+		if want := []string{soleRunID(t)}; !slices.Equal(*runIDs, want) || prs.Calls() != 2 {
+			t.Errorf("lister built for %v and read %d times, want %v and twice", *runIDs, prs.Calls(), want)
+		}
+		if !strings.Contains(out, "(observed: remotes, branches, pull_requests)") {
+			t.Errorf("auto's record does not name the PR part:\n%s", out)
+		}
+	})
+
+	t.Run("resume", func(t *testing.T) {
+		isolateRunHome(t)
+		obs := originObserver()
+		obs.SetRunCommit(remoteRunSHA)
+		useRemoteObserver(t, obs, remoteBaseSHA)
+		prs := remote.NewFakePRLister()
+		runIDs := usePRLister(t, prs)
+		fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+			"a":    {Result: "PASS", ExitCode: 0},
+			"ship": {Result: "PASS", ExitCode: 0},
+		})
+		nodeRunner := hookRunner{FakeRunner: fake, before: func(spec runner.NodeInvocation) {
+			if spec.Prompt == "ship" {
+				prs.Set(remote.ObservedPRs([]remote.OpenPR{
+					{Number: 1, HeadRefName: "paused", HeadRefOid: remoteRunSHA},
+					{Number: 2, HeadRefName: "shipped", HeadRefOid: remoteRunSHA},
+				}))
+			}
+		}}
+		g := mustParse(t, `{"name":"gate-flow","nodes":[
+			{"id":"a","prompt":"a"},
+			{"id":"approve","type":"gate","depends_on":["a"]},
+			{"id":"ship","prompt":"ship","depends_on":["approve"]}]}`)
+		var err error
+		captureStdout(t, func() {
+			err = executeGraph(context.Background(), "run-1", g, nodeRunner, commonRunFlags{inputs: inputFlag{}}, nil, 0, "gate-flow.yaml", []byte("name: gate-flow\n"), false, nil, nil, nil)
+		})
+		var paused *schedule.PausedError
+		if !errors.As(err, &paused) {
+			t.Fatalf("expected the first leg to pause, got %v", err)
+		}
+
+		// Opened while no leg ran, at a commit the check would pass.
+		prs.Set(remote.ObservedPRs([]remote.OpenPR{{Number: 1, HeadRefName: "paused", HeadRefOid: remoteRunSHA}}))
+		out := captureStdout(t, func() {
+			err = executeResume(parseResumeFlags(t, []string{"run-1", "--approve", "approve"}), nodeRunner, nil)
+		})
+		if err != nil {
+			t.Fatalf("resume: %v", err)
+		}
+		if code := exitCodeForError(err); code != 0 {
+			t.Errorf("exit code = %d, want 0", code)
+		}
+		if want := []string{"run-1", "run-1"}; !slices.Equal(*runIDs, want) || prs.Calls() != 4 {
+			t.Errorf("lister built for %v and read %d times, want %v and four times", *runIDs, prs.Calls(), want)
+		}
+		for _, want := range []string{
+			"Remote changes between leg 1 and leg 2, while no leg ran (observed: remotes, branches, pull_requests):\n" +
+				"  pr_opened #1 paused at 333333333333 — observed, not attributable\n",
+			"Remote changes (observed: remotes, branches, pull_requests):\n" +
+				"  pr_opened #2 shipped at 333333333333 — observed during the run; points at a commit this run made\n",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("stdout lacks %q:\n%s", want, out)
+			}
+		}
+		if strings.Contains(out, "made by") {
+			t.Errorf("the record must never say an entry was made by the run:\n%s", out)
+		}
+	})
 }
