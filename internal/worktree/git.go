@@ -216,6 +216,40 @@ func (m *GitManager) branchExists(ctx context.Context, branch string) bool {
 	return err == nil
 }
 
+// HeadCommit returns the full object name of HEAD in the repository
+// containing dir, or "" — silently — when dir is in no repository, HEAD is
+// unborn, or git cannot be run. `auto` and `design` call it once at launch and
+// hand the result to coordinator.WithStartCommit, so every cycle of one goal
+// measures scope from the same commit (#414).
+//
+// It lives here rather than in the CLI because reading HEAD means spawning
+// git, and the exec-seam invariant allows exactly four spawners (docs/adr/0005
+// and 0006); running it through m.git keeps the env scrub and the per-command
+// timeout. It addresses dir with -C and never touches repoDir, baseDir or the
+// branch prefix, so a NewGitManager("", "", "") serves it. The output is
+// combined stdout+stderr, so anything that is not a single full hex object
+// name — a git warning riding along — is discarded rather than returned.
+func (m *GitManager) HeadCommit(ctx context.Context, dir string) string {
+	out, err := m.git(ctx, "-C", dir, "rev-parse", "--verify", "HEAD")
+	if err != nil || !isFullSHA(out) {
+		return ""
+	}
+	return out
+}
+
+// isFullSHA accepts a SHA-1 (40) or SHA-256 (64) object name in hex.
+func isFullSHA(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
+}
+
 // Cleanup tears down every worktree this manager created, in name order, and
 // returns one human-readable note per outcome the user should see. The
 // governing rule is that cleanup may remove directories but never work:

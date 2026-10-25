@@ -128,6 +128,12 @@ func runDesignWithRuntime(runtime runner.Runtime, args []string, nodeRunner runn
 		return errDesignNeedsTerminal
 	}
 
+	// Read once, here — before the interview, which a person may take minutes
+	// over while HEAD moves — so the planner measures scope from the commit
+	// the design launched on, exactly as `auto --interview` does (#414). ""
+	// outside a repository adds nothing.
+	startCommit := launchCommitOfWorkingDir()
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -144,7 +150,8 @@ func runDesignWithRuntime(runtime runner.Runtime, args []string, nodeRunner runn
 	ivCost, ivUnknown, ivUsage := interviewAccounting(result)
 	fmt.Fprintf(out, "\nInterview ended (%s): %d asked, %d answered, %d skipped; cost %s.\n",
 		result.Ending, result.Asked, result.Answered, result.Skipped, formatCost(ivCost, ivUnknown))
-	var options []coordinator.Option
+	// The commit read above, before the interview (#414).
+	options := []coordinator.Option{coordinator.WithStartCommit(startCommit)}
 	if prefix == "" {
 		fmt.Fprint(out, "No answer was given, so the planner's prompt is exactly what `auto` would send.\n\n")
 	} else {

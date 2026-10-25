@@ -231,6 +231,75 @@ func TestPlannerPromptAsksForRepositoryStateNotCheckoutState(t *testing.T) {
 	}
 }
 
+// TestPlannerPromptForbidsCheckNodesFromChangingRepositoryState pins the
+// write-side twin of the repository-state rule, in BOTH spellings of the
+// final-check paragraph (#427). A planner told a final check node to
+// 'git checkout' a branch; that moves HEAD in a checkout other people or runs
+// may be using. The rule must forbid the checkout by name and offer the
+// read-only spelling instead, since a prohibition with no offer is the shape
+// DESIGN.md's "Verdict patterns" already records. It must also say the check
+// node still runs its own commands, done-list ones included, in the tree as it
+// finds it, so the rule never reads as taking the done-list command (#426) away
+// from the final check node. Running in the tree as it finds it is only right
+// when that tree's HEAD is the work, so on a branch goal the node first
+// compares HEAD with the branch tip in the tree that holds the work (git -C,
+// which covers a worktree or another repository) and FAILs, still checking
+// nothing out, when they differ — a sha comparison that must sit beside, not
+// replace, the --abbrev-ref prohibition.
+func TestPlannerPromptForbidsCheckNodesFromChangingRepositoryState(t *testing.T) {
+	for _, verifyCmd := range []string{"make test", ""} {
+		prompt := plannerPromptNoMenu(t, "fix the bug on a feature branch", verifyCmd)
+
+		for _, want := range []string{
+			"it never\n  changes repository state.",
+			"'git checkout'",
+			"'git show <ref>:<path>'",
+			"never a checkout.",
+			"A command that would need another\n  ref checked out to run",
+			"done-list ones\n  included, in the tree as it finds it.",
+			"Before it runs a done-list command, a check node on such a goal\n    confirms, in the tree that holds the work, that\n    'git -C <tree> rev-parse HEAD' equals 'git -C <tree> rev-parse <branch>'",
+			"That\n    tree may be a git worktree of the same repository or another\n    repository",
+			"It runs its done-list commands in that same tree too\n    ('go -C <tree> ...', 'make -C <tree> ...', 'git -C <tree> ...')",
+			"nothing is checked out anywhere.",
+			"and still checks\n    nothing out.",
+			"If the path of that tree is unknown, or the command that\n    reaches it is not covered by a planned pattern, the command belongs to\n    the node that made the work or to --verify-cmd, and the check node\n    replies FAIL saying so.",
+			"This compares two commit shas",
+			"NEVER assert on 'git rev-parse --abbrev-ref HEAD'",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("verify-cmd %q: prompt lost the no-state-change rule: missing %q", verifyCmd, want)
+			}
+		}
+
+		// The HEAD-equals-tip bullet itself, read as one sentence with the
+		// prompt's wrapping folded away: it names the tree (git -C, a
+		// worktree), keeps the no-checkout clause, and sits after the
+		// --abbrev-ref prohibition rather than replacing it.
+		start := strings.Index(prompt, "  - Before it runs a done-list command")
+		if start < 0 {
+			t.Fatalf("verify-cmd %q: prompt lost the HEAD-equals-tip bullet", verifyCmd)
+		}
+		end := strings.Index(prompt[start:], "  When the assertion holds")
+		if end < 0 {
+			t.Fatalf("verify-cmd %q: HEAD-equals-tip bullet has no end", verifyCmd)
+		}
+		rule := strings.Join(strings.Fields(prompt[start:start+end]), " ")
+		for _, want := range []string{
+			"git -C",
+			"worktree",
+			"still checks nothing out",
+			"not the '--abbrev-ref HEAD' assertion forbidden above",
+		} {
+			if !strings.Contains(rule, want) {
+				t.Errorf("verify-cmd %q: HEAD-equals-tip bullet is missing %q: %s", verifyCmd, want, rule)
+			}
+		}
+		if !strings.Contains(prompt[:start], "NEVER assert on 'git rev-parse --abbrev-ref HEAD'") {
+			t.Errorf("verify-cmd %q: the --abbrev-ref prohibition no longer precedes the HEAD-equals-tip bullet", verifyCmd)
+		}
+	}
+}
+
 // TestPlannerPromptReservesTheWholeReplyPinForAssertingNodes pins the rule that
 // decides WHICH node may carry the whole-reply PASS pin, in BOTH spellings of
 // the final-check paragraph — it is one prompt, and a rule that holds only when
@@ -439,6 +508,50 @@ func TestPlan_PromptRequiresCommittableSliceDecomposition(t *testing.T) {
 	}
 }
 
+// TestPlan_PromptDoesNotSplitPerFile pins the sizing rule #393 added: a
+// medium goal split into one node per file or per numbered change pays for a
+// fresh session that re-reads the same code at every node. So the rendered
+// prompt — every variant the golden tests render — forbids that split, keeps
+// a change's tests and docs with the change, and limits "prefer more, smaller
+// nodes" to substantial implementation in the very sentence that gives the
+// advice, not merely somewhere else in the prompt.
+func TestPlan_PromptDoesNotSplitPerFile(t *testing.T) {
+	first, repair, continuation := plannerPrompts(t)
+	for name, inv := range map[string]runner.NodeInvocation{
+		"first": first, "repair": repair, "continuation": continuation,
+	} {
+		// The template wraps at 76 columns, so join it into one line first.
+		prompt := strings.Join(strings.Fields(inv.Prompt), " ")
+		for _, want := range []string{
+			"Do not split a goal into one node per file or one node per numbered change.",
+			"Keep a change's tests and docs in the node that makes the change.",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("%s planner prompt lost the no-split guidance: missing %q", name, want)
+			}
+		}
+
+		const advice = "prefer more, smaller nodes (within the node cap)"
+		i := strings.Index(prompt, advice)
+		if i < 0 {
+			t.Errorf("%s planner prompt lost the advice %q", name, advice)
+			continue
+		}
+		// The sentence runs from the previous sentence end or rule bullet to
+		// the next sentence end.
+		start := max(strings.LastIndex(prompt[:i], ". "), strings.LastIndex(prompt[:i], " - ")) + 1
+		end := len(prompt)
+		if j := strings.Index(prompt[i:], ". "); j >= 0 {
+			end = i + j + 1
+		}
+		sentence := prompt[start:end]
+		if !strings.Contains(sentence, "Only if the goal involves substantial implementation") {
+			t.Errorf("%s planner prompt does not limit %q to substantial implementation in the same sentence: %q",
+				name, advice, sentence)
+		}
+	}
+}
+
 // TestPlan_PromptGuidesFeedbackLoops pins the review-loop guidance ADR 0010
 // adds: an iterative implement→review shape is declared as one feedback arc,
 // never hand-unrolled into repeated review/apply pairs, with a small max
@@ -613,14 +726,18 @@ func TestPlan_ToleratesFenceAndProseAroundJSON(t *testing.T) {
 	}
 }
 
-func TestPlan_BracesInProseFailLoudly(t *testing.T) {
-	// extractJSON spans first '{' to last '}', so braces in surrounding prose
-	// corrupt the extracted spec. Pin that this fails loudly, never silently.
+func TestPlan_ToleratesBracesInProseBeforeJSON(t *testing.T) {
+	// extractPlanJSON skips a '{' from which no JSON object decodes, so braces in
+	// prose before the plan no longer corrupt the extracted spec (#387).
 	reply := "Note {an aside} first.\n" + validSpec
 	fake, _ := newPlannerFake(runner.NodeOutcome{Result: reply})
 
-	if _, err := New(fake).Plan(context.Background(), "lint the repo", nil); err == nil {
-		t.Fatal("expected an error for a reply with braces in prose")
+	plan, err := New(fake).Plan(context.Background(), "lint the repo", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(plan.Graph.Nodes) != 2 {
+		t.Errorf("got %d nodes, want 2", len(plan.Graph.Nodes))
 	}
 }
 
@@ -1302,5 +1419,84 @@ func TestPlannedVerdictPatternMatchesE2EVerifyFragment(t *testing.T) {
 	}
 	if got != plannedVerdictPattern {
 		t.Errorf("the two spellings of the whole-reply PASS pin drifted:\n  %s: %q\n  coordinator.plannedVerdictPattern: %q", fragment, got, plannedVerdictPattern)
+	}
+}
+
+// cutOffSpec is validSpec with its closing "]}" lost, as a reply truncated
+// mid-plan arrives: every node object inside it is still whole.
+var cutOffSpec = strings.TrimSuffix(validSpec, "]}")
+
+func TestPlan_ToleratesTemplatePlaceholderInProse(t *testing.T) {
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: templateQuote + "\n" + validSpec})
+
+	plan, err := New(fake).Plan(context.Background(), "lint the repo", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(plan.Graph.Nodes) != 2 {
+		t.Errorf("got %d nodes, want 2", len(plan.Graph.Nodes))
+	}
+}
+
+func TestPlan_ToleratesUnbalancedBraceInProse(t *testing.T) {
+	fake, _ := newPlannerFake(runner.NodeOutcome{Result: "I will use the {name field for this.\n" + validSpec})
+
+	plan, err := New(fake).Plan(context.Background(), "lint the repo", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(plan.Graph.Nodes) != 2 {
+		t.Errorf("got %d nodes, want 2", len(plan.Graph.Nodes))
+	}
+}
+
+// TestPlan_RefusesMoreThanOneJSONObject pins that the planner never picks
+// one of several objects: two decodable top-level objects, or two valid json
+// fences, refuse the reply once, without a repair call.
+func TestPlan_RefusesMoreThanOneJSONObject(t *testing.T) {
+	other := `{"name":"other","nodes":[{"id":"only","prompt":"p"}]}`
+	cases := []struct {
+		name  string
+		reply string
+	}{
+		{"two top-level objects", validSpec + "\nor, alternatively:\n" + other},
+		{"two json fences", "```json\n" + validSpec + "\n```\nor:\n```json\n" + other + "\n```"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, _ := newPlannerFake(runner.NodeOutcome{Result: tc.reply})
+
+			planErr := planExpectingError(t, fake, "lint the repo")
+			if !strings.Contains(planErr.Reason, "more than one JSON object") {
+				t.Errorf("reason = %q, want it to say the reply holds more than one JSON object", planErr.Reason)
+			}
+			if n := fake.InvocationCount(plannerKey); n != 1 {
+				t.Errorf("planner called %d times, want 1 (not repairable)", n)
+			}
+		})
+	}
+}
+
+// TestPlan_CutOffPlanIsASyntaxError pins that a plan truncated before its
+// closing brackets reaches the parser whole and fails on its JSON syntax,
+// rather than yielding a plan built from one of its inner node objects.
+func TestPlan_CutOffPlanIsASyntaxError(t *testing.T) {
+	pretty := "{\n  " + strings.TrimPrefix(cutOffSpec, "{")
+	for name, reply := range map[string]string{"compact": cutOffSpec, "pretty-printed": pretty} {
+		t.Run(name, func(t *testing.T) {
+			fake, _ := newPlannerFake(runner.NodeOutcome{Result: "Here is the plan:\n" + reply})
+
+			plan, err := New(fake).Plan(context.Background(), "lint the repo", nil)
+			if err == nil {
+				t.Fatalf("got a plan with %d nodes, want a syntax error", len(plan.Graph.Nodes))
+			}
+			var validationErr *graph.GraphValidationError
+			if errors.As(err, &validationErr) {
+				t.Fatalf("err = %v, want a decode error, not a validation of some extracted object", err)
+			}
+			if !strings.Contains(err.Error(), "parse graph") {
+				t.Errorf("err = %v, want the parser's syntax error", err)
+			}
+		})
 	}
 }

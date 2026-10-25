@@ -112,6 +112,10 @@ func runChatWith(runtime runner.Runtime, args []string, in io.Reader, out io.Wri
 	// Outside the runtime branch: the menu is in the planner prompt, which
 	// both runtimes render.
 	options = append(options, reuseOptions(flags.noReuse)...)
+	// Read once, here, like `auto`'s: every plan of the session measures scope
+	// from the commit chat launched on, never from a HEAD an earlier turn's run
+	// moved (#414). "" outside a repository adds nothing.
+	options = append(options, coordinator.WithStartCommit(launchCommitOfWorkingDir()))
 	// `chat` asks the build-evidence question and never refuses on it (ADR 0030
 	// §2.6): it registers no verification flags, so a refusal here could only
 	// name a flag `chat` rejects — the dead end #198 was. What it gets instead is

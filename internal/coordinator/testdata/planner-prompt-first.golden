@@ -76,7 +76,24 @@ Rules:
   open; raise a NEW finding only where the rework changed the work or where
   missing it last round was a real mistake. A re-run reviewer is a fresh
   session, and without its earlier findings it finds new nits every round
-  until the rounds are spent. Keep max small (2): every round
+  until the rounds are spent. The reviewing node's reply starts with
+  exactly one of the bare tokens CLEAN, MINOR: or FINDINGS: as its very
+  first characters — no markdown emphasis ("**CLEAN**" is WRONG), nothing
+  before the token. It judges each item by whether it would merge with it
+  unfixed: a defect, wrong behaviour, or a changed behaviour with no test
+  is blocking (FINDINGS:); naming, wording, line wrapping and style are
+  minor (MINOR:). Wording is minor only while what it says is true: a
+  claim that is not true — in code, a comment or docs — and anything that
+  changes behaviour or correctness is FINDINGS:, never MINOR:, however
+  small the fix; MINOR: is only for an item whose meaning is already
+  right and only its form differs. A reply's verdict is its worst item.
+  On a re-run, an item rated MINOR: in {{ self.previous }} stays minor
+  unless the rework changed the code that item concerns, or the item is a
+  claim that is not true (that was never minor). Its success_check is
+  {"exit_zero": true, "result_matches": "^[*_`\\s]*(MINOR[*_`\\s]*:|CLEAN\\b)"}
+  so CLEAN and MINOR: pass (a MINOR: reply records its items) and only
+  FINDINGS: fails and fires the arc. Do not gate it on CLEAN alone: that
+  re-runs the implementer over a nit. Keep max small (2): every round
   re-runs the whole rerun→reviewer path at full cost, and a max above 3
   is rejected outright. The arc must point
   backward along depends_on, no node outside the loop may depend on a
@@ -102,10 +119,16 @@ Rules:
   them — and <id> must name the node that DECLARES the feedback block (the
   reviewer), never the node being re-run. A token breaking any of those
   three rules is rejected outright.
-- If the goal involves substantial implementation, decompose it into work
-  units sized so each node's output is a reviewable, committable slice —
-  prefer more, smaller nodes (within the node cap) over one node that does
-  everything. A node whose prompt commits MUST also state its commit
+- Only if the goal involves substantial implementation — several packages
+  or several independent features — prefer more, smaller nodes (within the
+  node cap) over one node that does everything; a small or medium goal (a
+  few files plus their tests and docs) is one doing node. Split work into
+  separate doing nodes only where a part is a reviewable, committable slice
+  on its own AND the parts do not need to re-read the same code: every node
+  is a fresh session that re-reads the code it works on. Do not split a
+  goal into one node per file or one node per numbered change. Keep a
+  change's tests and docs in the node that makes the change.
+  A node whose prompt commits MUST also state its commit
   granularity in its prompt: one commit per refactoring unit (commit-unit)
   for refactors, per file (file-unit) for mechanical sweeps, or per feature
   slice (feature-slice) for new code — and commit as it goes, so a timeout
@@ -120,21 +143,46 @@ Rules:
   branch and not on the repository's default branch (e.g. main or master).
   Assert that against state belonging to the REPOSITORY, never against what
   some working directory currently has checked out:
-  - Prefer what the remote says: 'gh pr list --head <branch> --state open'
+  - ONLY when the goal's own nodes push the branch and open the pull
+    request, assert what the remote says: 'gh pr list --head <branch> --state open'
     (declare "Bash(gh pr *)"), asserting an open pull request exists for the
     feature branch. For a branch in a repository other than the one
     oh-my-graph was invoked from, read that repository's slug first
     ('git -C <path> remote get-url origin', declare "Bash(git *)") and name
     it: 'gh pr list --repo <slug> --head <branch> --state open'.
-  - If the goal never reaches a pull request, assert the branch REF instead:
+  - Otherwise — the goal does not push the branch and open the pull request
+    itself, including any goal that says not to push or not to open or edit
+    a pull request — assert the branch REF instead:
     'git rev-parse --verify <branch>' or 'git log --oneline -1 <branch>'
     (declare "Bash(git *)"). Every worktree of a repository shares its refs;
-    a checked-out HEAD belongs to one directory only.
+    a checked-out HEAD belongs to one directory only. Such a check node
+    never asserts remotes, pushes or pull-request state. Forbidding only a
+    NEW remote does not change this: a goal whose own nodes push to an
+    existing remote and open the pull request takes the first bullet.
   - NEVER assert on 'git rev-parse --abbrev-ref HEAD', with or without
     '-C <path>'. A node is free to do its work in a git worktree it made
     itself, which leaves every other checkout's HEAD untouched, and
     oh-my-graph isolates no repository but the one it was invoked from — so
     a HEAD assertion reports FAIL on work that in fact succeeded.
+  - Before it runs a done-list command, a check node on such a goal
+    confirms, in the tree that holds the work, that
+    'git -C <tree> rev-parse HEAD' equals 'git -C <tree> rev-parse <branch>',
+    under the "Bash(git *)" pattern a check node already declares. That
+    tree may be a git worktree of the same repository or another
+    repository; run in the directory oh-my-graph was invoked from, the
+    comparison reads that checkout's HEAD instead (often main's) and FAILs
+    correct work. It runs its done-list commands in that same tree too
+    ('go -C <tree> ...', 'make -C <tree> ...', 'git -C <tree> ...'), under
+    the "Bash(go *)", "Bash(make *)" and "Bash(git *)" patterns already
+    planned; nothing is checked out anywhere. If HEAD and the tip differ
+    it replies FAIL saying the command cannot run against the work from
+    here (HEAD <sha> is not the tip of <branch> <sha>), and still checks
+    nothing out. If the path of that tree is unknown, or the command that
+    reaches it is not covered by a planned pattern, the command belongs to
+    the node that made the work or to --verify-cmd, and the check node
+    replies FAIL saying so. This compares two commit shas — whether the
+    content is the same — not a branch name, so it is not the
+    '--abbrev-ref HEAD' assertion forbidden above.
   When the assertion holds, instruct the node that its whole reply is
   exactly the four bare characters PASS and nothing else, with no markdown
   emphasis ("**PASS**" is WRONG), no heading, no backticks and no preamble;
@@ -158,7 +206,27 @@ Rules:
   held, what did not, and what the reader should do about it. An
   observation a reader would not act on is not a reason to withhold PASS:
   the threshold is whether it changes what they do, not whether it is
-  worth mentioning.
+  worth mentioning. An action the goal forbids the run to take (pushing,
+  opening or editing a pull request, creating a remote) is the operator's
+  next step, not a qualification a reader would act on, so it is never a
+  reason to reply FAIL.
+- Every planned check node, final or not, asserts only what this run's own
+  nodes produce or change: files in the working tree, commits on the
+  branch, test results, artifacts. It never asserts state the goal forbids
+  the run to change, and it never asserts the ABSENCE of something the goal
+  only forbids creating — a remote that already existed is not a violation
+  of "do not create a remote".
+- Every planned check node, final or not, observes and judges; it never
+  changes repository state. It runs no 'git checkout', 'git switch',
+  'git reset', 'git restore', 'git stash', 'git commit', 'git merge' or
+  'git rebase', creates or deletes no branch, and creates no tag: a
+  checked-out HEAD belongs to one directory, which other people or runs
+  may be using, and switching it is the write-side form of asserting on
+  it. To read content on another ref it uses 'git show <ref>:<path>' or
+  'git diff <a>..<b>', never a checkout. A command that would need another
+  ref checked out to run belongs to the node that made the work, or to
+  --verify-cmd; a check node runs its own commands, done-list ones
+  included, in the tree as it finds it.
 - That whole-reply pin belongs ONLY on a node whose entire job is to
   ASSERT: it observes, it judges, and its reply IS the verdict, because
   nothing else it produced is needed afterwards. Being the LAST node of the
@@ -209,7 +277,17 @@ Rules:
   test", "pytest" and the like — no planned node can run it, so the final
   check node does NOT try to: it replies FAIL and states that this done
   item could not be run by any planned node, naming the command. Never a
-  PASS over a done item nothing ran.
+  PASS over a done item nothing ran. A different command that checks the
+  same thing — a stand-in, a re-implementation, a test that covers the
+  same rule — never satisfies a done item: the done item names a command,
+  and only that command running counts.
+  When the final check node replies FAIL because a done item names a
+  command none of those patterns covers, its reply also carries one line
+  per such command, at the start of the line and with no markdown, in
+  exactly this form:
+      UNRUNNABLE: <the command as the goal wrote it>
+  The engine reads those lines and stops the goal loop: no new cycle can
+  run a command the planned patterns do not cover.
 - Beyond that, a check node's prompt must only assert things it can
   actually observe with the tools it declared, and must never be written
   as though its PASS meant the code works: even when that PASS requires a

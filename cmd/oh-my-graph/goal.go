@@ -12,6 +12,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/browser"
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/fence"
+	"github.com/jitokim/oh-my-graph/internal/handoff"
 	"github.com/jitokim/oh-my-graph/internal/interview"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
@@ -235,7 +236,16 @@ func isRunFailure(err error) bool {
 // cannot be read back contributes its verdict without content rather than
 // failing the assessment. A node's engine verification record (#332) is
 // carried across as-is, so the assessor can see what the engine itself
-// observed of the node's success_check.verify.
+// observed of the node's success_check.verify. A FAILED node registers no
+// artifact, so its own reply — handoff.PersistFailure's failed/<node-id>.out,
+// located by the same handoff.FailedOutputPath that wrote it — is read, with
+// the same bound, into FailedReply, used only to find the UNRUNNABLE: marker a
+// failed final check writes (#333); the assessor never renders it, and it
+// never reaches another node. The read's head+tail cut can drop the middle of
+// a long reply, and the write's own 256 KiB cut can too, so a marker line in
+// the middle would be lost to one or the other — PersistFailure copies every
+// marker line to the front of the file, whose first bytes survive both cuts,
+// and this read stays as it is.
 func cycleEvidence(runID string, plan coordinator.Plan, runPassed bool) (coordinator.CycleEvidence, error) {
 	snap, err := runstate.Load(filepath.Join(runDirFor(runID), stateFileName))
 	if err != nil {
@@ -247,6 +257,13 @@ func cycleEvidence(runID string, plan coordinator.Plan, runPassed bool) (coordin
 		RunCostUSD:     plan.CostUSD,
 		RunCostUnknown: plan.CostUnknown,
 		Usage:          plan.Usage,
+	}
+	// A sink is a node no other node depends on; the assessor budgets those first (#408).
+	dependedOn := make(map[string]bool)
+	for _, node := range plan.Graph.Nodes {
+		for _, parent := range node.DependsOn {
+			dependedOn[parent] = true
+		}
 	}
 	// Graph order, not map order, so the assessor's material is
 	// deterministic for a given run.
@@ -267,6 +284,7 @@ func cycleEvidence(runID string, plan coordinator.Plan, runPassed bool) (coordin
 			Detail:      rec.Detail,
 			CostUSD:     rec.CostUSD,
 			CostUnknown: rec.CostUnknown,
+			Sink:        !dependedOn[node.ID],
 			Usage: runner.TokenUsage{
 				InputTokens: rec.Usage.InputTokens, CachedInputTokens: rec.Usage.CachedInputTokens,
 				OutputTokens: rec.Usage.OutputTokens, ReasoningOutputTokens: rec.Usage.ReasoningOutputTokens,
@@ -283,14 +301,19 @@ func cycleEvidence(runID string, plan coordinator.Plan, runPassed bool) (coordin
 				nodeEvidence.Artifact = content
 			}
 		}
+		if rec.Verdict == runstate.VerdictFail {
+			if reply, readErr := readArtifactBounded(handoff.FailedOutputPath(runDirFor(runID), node.ID)); readErr == nil {
+				nodeEvidence.FailedReply = reply
+			}
+		}
 		evidence.Nodes = append(evidence.Nodes, nodeEvidence)
 	}
 	return evidence, nil
 }
 
-// maxArtifactReadBytes bounds what one node's artifact may contribute to the
-// assessor's material BEFORE the coordinator's own excerpting runs, so a huge
-// artifact cannot inflate the cycle's peak memory on its way to a 2KB excerpt.
+// maxArtifactReadBytes bounds a node's artifact BEFORE the assessor's own
+// fair-share excerpting (2000 bytes minimum, up to the 12000-byte budget left)
+// runs, so a huge artifact cannot inflate the cycle's peak memory on the way.
 const maxArtifactReadBytes = 64 << 10
 
 // artifactReadCutMarker marks the bytes readArtifactBounded dropped from the
@@ -431,6 +454,9 @@ func printGoalSummary(w io.Writer, goal string, result coordinator.GoalResult, l
 			c.Cycle, c.RunID, outcome, formatCost(c.RunCostUSD, c.RunCostUnknown), formatCost(c.Assessment.CostUSD, c.Assessment.CostUnknown), verdict)
 	}
 	if loopErr == nil {
+		if result.Stop == coordinator.StopUnrunnableDoneItem {
+			printUnrunnableCommands(w, result.UnrunnableCommands)
+		}
 		fmt.Fprintf(w, "GOAL TOTAL: %s across %d cycle(s)\n", formatCost(total, anyUnknown), len(result.Cycles))
 		if usage != (runner.TokenUsage{}) {
 			fmt.Fprintf(w, "GOAL TOKENS: %s\n", formatUsage(usage))
@@ -464,6 +490,18 @@ func printGoalSummary(w io.Writer, goal string, result coordinator.GoalResult, l
 	if usage != (runner.TokenUsage{}) {
 		fmt.Fprintf(w, "GOAL TOKENS: %s\n", formatUsage(usage))
 	}
+}
+
+// printUnrunnableCommands is the goal summary's StopUnrunnableDoneItem block
+// (#333): the stop reason, each done-list command the final check named as
+// unrunnable, and what to do instead, since another cycle could not run it.
+// The commands are a node's own reply, so each is terminal-sanitised (#349).
+func printUnrunnableCommands(w io.Writer, commands []string) {
+	fmt.Fprintf(w, "  stopped: %s — the final check named a done-list command no planned node can run\n", coordinator.StopUnrunnableDoneItem)
+	for _, command := range commands {
+		fmt.Fprintf(w, "    unrunnable: %s\n", fence.SanitizeTerminalLine(command))
+	}
+	fmt.Fprintln(w, "  No planned node can run it; check it with --verify-cmd instead, or start the run with a configuration that allows it.")
 }
 
 func addTokenUsage(a, b runner.TokenUsage) runner.TokenUsage {
@@ -500,6 +538,9 @@ func goalExit(w io.Writer, result coordinator.GoalResult) error {
 	case coordinator.StopBudgetUnmeasurable:
 		return fmt.Errorf("goal not met: the goal budget can no longer be measured — %s, so the ceiling cannot be evaluated (ADR 0025); %s",
 			unmeasurableCause(result), finalRemaining(result))
+	case coordinator.StopUnrunnableDoneItem:
+		return fmt.Errorf("goal not met: cycle %d's final check named a done-list command no planned node can run, so another cycle cannot fix it; %s",
+			len(result.Cycles), finalRemaining(result))
 	default: // StopCyclesExhausted
 		return fmt.Errorf("goal not met after %d cycle(s); %s", len(result.Cycles), finalRemaining(result))
 	}

@@ -43,7 +43,7 @@ func (c *Coordinator) plannerBase(goal string, inputKeys []string, remaining str
 	if err != nil {
 		return "", ReuseCatalog{}, err
 	}
-	base, err := plannerPromptFor(goal, inputKeys, remaining, c.verifyCommand.Command, catalog.Offered)
+	base, err := plannerPromptFor(goal, inputKeys, remaining, c.verifyCommand.Command, catalog.Offered, c.startCommit)
 	if err != nil {
 		return "", ReuseCatalog{}, err
 	}

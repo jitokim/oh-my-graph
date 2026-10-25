@@ -1558,7 +1558,31 @@ So a verdict pattern is written in two halves, and both are load-bearing:
   (`branchEvidenceRule`, `internal/coordinator/coordinator.go`). The threshold
   is stated with it, so the rule does not convert every remark into a halted
   run: an observation a reader would not act on is not a reason to withhold
-  `PASS`. The pattern itself is unchanged — the caveat found a home in the
+  `PASS`. Nor is an action the goal forbids the run to take — pushing,
+  opening or editing a pull request, creating a remote: that is the
+  operator's next step, not a qualification a reader would act on, so it is
+  never a reason to reply `FAIL` (#388). The same check node observes and
+  judges and never changes repository state: no `git checkout`, `switch`,
+  `reset`, `restore`, `stash`, `commit`, `merge` or `rebase`, no branch
+  created or deleted and no tag. A checked-out HEAD belongs to one directory,
+  so switching it is the write-side form of asserting on it. The node reads
+  another ref with `git show <ref>:<path>` or `git diff <a>..<b>`. A command
+  that would need another ref checked out to run belongs to the node that
+  made the work, or to `--verify-cmd`; a check node runs its own commands,
+  done-list ones included, in the tree as it finds it (#427). On a branch goal
+  it first confirms, in the tree that holds the work,
+  `git -C <tree> rev-parse HEAD` equals `git -C <tree> rev-parse <branch>` and
+  replies `FAIL`, still checking nothing out, if they differ. That tree may be
+  a git worktree of the same repository or another repository, and the
+  done-list commands run in it too (`go -C <tree> ...`, `make -C <tree> ...`,
+  `git -C <tree> ...`, under the `Bash(go *)`, `Bash(make *)` and
+  `Bash(git *)` patterns already planned), so nothing is checked out anywhere.
+  If the tree's path is unknown, or the command that reaches it is not covered
+  by a planned pattern, the command belongs to the node that made the work or
+  to `--verify-cmd`, and the `FAIL` reason says so. The sha comparison compares
+  whether the CONTENT is the same (two commit shas), not the branch NAME, so it
+  does not conflict with the rule that a check node asserts repository state,
+  not checkout state, and never asserts on `--abbrev-ref HEAD`. The pattern itself is unchanged — the caveat found a home in the
   prompt, not in a relaxed anchor (#264). Every `success_check` that prompt
   hands out with a `result_matches` — this whole-reply pin, the prefix
   verdict a report node may take instead, and the alternative it names to a
@@ -1623,10 +1647,21 @@ loop by something other than the reviewer's silence.
 The severity floor shipped second (ADR 0043): the review fragments answer in
 three values, below, and the shipped gates (`gated-lane`'s `review`,
 `self-dev`'s `review-verdict`) accept `MINOR:` and fail only `FINDINGS:`, so
-a nit rides into the PR body and only a blocking finding fires the arc. A
+a nit rides into the PR body and only a blocking finding fires the arc.
+**Planned** review nodes now use the same gating verdict: the planner prompt's
+feedback-arc rule tells the node declaring `feedback` to open with one of the
+three bare tokens, graded the same way — a claim that is not true (code,
+comment or docs) or a change to behaviour or correctness is `FINDINGS:`, never
+`MINOR:`, which is only for form when the meaning is already right — and hands it
+`{"exit_zero": true, "result_matches": <the gating pattern>}`, rendered from
+`coordinator.plannedReviewGatingPattern`, which
+`TestPlannedReviewGatingPatternMatchesReviewFragments` holds byte-identical to
+the fragments' spelling. Only that node gets it; the planned final check keeps
+its whole-reply `PASS` pin (`branchEvidenceRule`). A
 re-run reviewer is also told that an item it rated minor stays minor unless
-the rework changed the code it is about, so a nit cannot be promoted into a
-new round over code nobody touched. Neither half is a convergence proof —
+the rework changed the code it is about — a claim that is not true was never
+minor, so it is the exception — so a nit cannot be promoted into a new round
+over code nobody touched. Neither half is a convergence proof —
 whether #288's first half, `{{ self.previous }}`, made the shipped loops
 converge is still unmeasured, and #288 stays open for that measurement and
 for the ledger, which does not tell a `MINOR:` pass from a `CLEAN` one.
@@ -3105,23 +3140,60 @@ in its place — and `pin.go` imports no `os/exec`. What it does not cover is in
 LIMITATIONS.md.
 
 **The planner is told what the engine's verify run covers, so no node repeats
-it (#392, #399).** With `--verify-cmd`, the planner's final-check paragraph
+it (#392, #399, #333).** With `--verify-cmd`, the planner's final-check paragraph
 (`finalCheckWithVerifyCommand`) quotes the command's exact text, `strconv.Quote`'d
 onto a line of its own, and says no planned node runs it: the engine runs it
-once, after the final node. A node that changes code runs only the tests for
-what it changed (for Go, the changed packages), never the whole suite. A
-whole-suite command the goal's done list names that is not the verify command,
-character for character, belongs to the final check node: if one of the Bash
-patterns a planned node can declare (`plannedBashPatterns`) covers it, that node
-runs it once and its PASS requires it to exit 0; if none does (`npm test`,
+at each sink node, which with the single final check node means once, after
+that node. So the paragraph also asks for exactly one sink, the final check
+node, with every other node its ancestor (#396): `attachVerifyCommand` attaches
+the command to every sink (ADR 0016 §2), so a second sink would run the whole
+suite again. The fix is the prompt's alone; the attachment is unchanged. A
+node that changes code runs only the tests for what it changed (for Go, the
+changed packages), never the whole suite. Any command the goal's done list names
+that is not the verify command, character for character, belongs to the final
+check node — a script, a linter or a single-package test as much as a whole
+suite (#333; the rule once named only whole-suite commands, so a done-list
+script slipped past it and the planner wrote a stand-in check). If one of the
+Bash patterns a planned node can declare (`plannedBashPatterns`) covers it, that
+node runs it once and its PASS requires it to exit 0; if none does (`npm test`,
 `pytest`), it replies FAIL naming the command — never a PASS over a done item
-nothing ran. That half is one string, `doneListCommandRule`, shared verbatim with
-the without-command paragraph (`finalCheckWithoutVerifyCommand`, #399), where
-there is no engine run to defer to. The match is exact text on purpose: a
+nothing ran. That FAIL also carries one line per such command, at the start of
+the line and without markdown, `UNRUNNABLE: <the command as the goal wrote
+it>`; the marker is one constant, `handoff.UnrunnableDoneItemMarker` (in
+`internal/handoff`, because the coordinator imports handoff and the write
+needs it too), rendered into the prompt, and the goal loop reads those lines
+— from the failed node's reply file, `failed/<node-id>.out`, since a FAIL
+registers no artifact — to stop (below, "Goal cycles"). A different command that checks the same thing — a stand-in, a
+re-implementation, a test covering the same rule — never satisfies a done item:
+the item names a command, and only that command running counts. That half is
+one string, `doneListCommandRule`, shared verbatim with the without-command
+paragraph (`finalCheckWithoutVerifyCommand`, #399), where there is no engine run
+to defer to. The match is exact text on purpose: a
 wrapper such as `sh v.sh` whose script runs `make local` does not match a
 done-list `make local`, so the suite runs twice. That is the safe direction and
 must not be "fixed" into a skip — the planner cannot see inside the wrapper, and
 a looser match that guessed wrong would skip a suite nothing then runs.
+
+**The planner is told the commit the run started from (#414).** `auto`,
+`design` and `chat` read the invocation repository's HEAD once, at launch
+(`launchCommit`, `cmd/oh-my-graph/launchcommit.go`). `auto --interview` and
+`design` read it before the interview starts, so it is the commit the run
+launched on even when the interview takes minutes; `chat` reads it once when it
+starts, and every plan of the session uses that one commit. The helper asks git
+through `worktree.GitManager.HeadCommit` (`git rev-parse --verify HEAD`), the
+third exec seam (ADR 0005), so the CLI itself spawns nothing and no fifth
+spawner is added. It is empty when the directory is not a repository.
+They pass it with `coordinator.WithStartCommit`, and since one coordinator
+serves the whole goal loop, every cycle of a goal gets the same launch commit. The planner prompt
+then tells planned nodes to measure any scope or changed-files check from
+`<sha>..HEAD`, never from main, and never to revert, restore or check out a
+file the goal did not ask them to change. A file changed before the start
+commit is left alone: a finding about it is reported, never a reason to FAIL or
+to rework. No planned check asserts that main has not moved since the start
+commit, since main moves in a shared repository: to show that the run's work is
+not on main, a check asserts that `git merge-base --is-ancestor <a commit this
+run made> main` exits non-zero. With no start commit the prompt is unchanged,
+byte for byte.
 
 **The planner may cite a shape the operator already keeps (ADR 0038, #338).**
 Reuse is ON by default, on `auto` and on `chat`'s planning path, and
@@ -3951,34 +4023,118 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   the command. The output tail is the command's own text,
   so it goes INSIDE a nonce-fenced `engine verification` block as DATA, like
   an artifact. The blocks render after the node results and before every
-  artifact, and their tails share the artifacts' caps (2000 bytes each, 12000
-  in total), so a node's own artifact cannot spend the room the engine's
-  observation of it needs. A tail is cut from its head, and every cut is said
-  above the fence. When the record's `output_truncated` is set, the engine's
-  own line says so (`output: the command printed more than the engine
-  retains, so the engine kept only the last N bytes of its output; everything
-  earlier was dropped when the check was recorded`). It is written from the
-  record's flag, not the tail's marker, which the command could forge and the
-  material cap could trim away. A further cut for the material cap adds
-  `output: the last N of M bytes; the earlier K bytes were dropped for the
-  material cap`. Once the total cap is spent the line reads
-  `output: omitted (total material cap reached)`. The engine-observed lines
-  always render: a cap may drop output, never the record that a check
-  failed. The assessor prompt gains one sentence: an engine verification
-  block is the engine's own observation of a command it ran itself, and it
-  outranks a node's reply about the same check. That is a ranking of
-  evidence, **not a claim that exit 0 means the goal is met** — a passing
-  check is still only as wide as the command, and the assessor judges the
-  goal on all the material. The next cycle's planner prompt fences the `remaining` it
-  quotes the same way. The verdict is a hard JSON
-  contract; garbage is an `*AssessError` that stops the loop. Each verdict
-  is printed the moment it returns (`GoalOptions.OnCycleAssessed`) and
-  persisted as `assess.json` in that cycle's run directory (`goal_met`,
+  artifact, and their tails share the artifacts' 12000-byte total cap, each
+  tail cut to 2000 bytes (`maxAssessArtifactExcerpt`), so a node's own
+  artifact cannot spend the room the engine's observation of it needs. All
+  the tails together spend at most half of that cap
+  (`maxVerifyTailShareNum`/`maxVerifyTailShareDen`, #419), because they
+  render first: six 2500-byte tails kept at 2000 bytes each used to spend
+  all 12000 bytes and push out every artifact, the final check's four-byte
+  `PASS` included. Before the tails spend anything, the sink artifacts'
+  minimum is reserved: each sink its whole length when shorter than 2000
+  bytes, 2000 bytes otherwise, the reservation capped at the sinks' half
+  priority share below. The tails get the smaller of the half and what the
+  reservation leaves (`verifyTailBudget`); with both shares at half, the
+  half binds, and the artifacts always keep at least the other half. That
+  share is split across the tails before any block renders
+  (`tailAllowances`), never as a running remainder in graph order, which
+  kept the first tails whole and omitted the later ones by position alone.
+  Each tail asks for at most its 2000-byte cap, and the split is the
+  artifacts' pass 2 below (`restAllowances`) over those asks, with failing
+  checks in place of the non-sinks: a tail is failing when its status is
+  not `passed` or it holds an exit code other than the expected one, and
+  the failing tails take their floors before any passing one, because a
+  failing check's output is the evidence the verdict most needs. The
+  half-floor rule for equal groups and node ID as the last tie-break apply
+  as there, so six equal 2500-byte tails each keep 1000 bytes wherever they
+  sit, and one failing tail behind five passing ones keeps its 2000 bytes
+  while passing ones are omitted. The allowances sum to at most the share.
+  The artifacts then split what the tails did not use in two passes, sink nodes' artifacts
+  first (`sinkFirstAllowances`, #408), and every artifact's allowance is
+  fixed before any of them renders. The allowances never sum to more than
+  the artifact budget, and the split depends only on the artifacts' lengths,
+  sink flags and node IDs, never on their graph order. A sink is a node no
+  other node depends on — the final check node is one, and it comes last in
+  graph order, so with enough large artifacts it used to be the one dropped.
+  Every plan has at least one sink, because a DAG always has one. Pass 1,
+  the priority share: the sinks together get at most half of the artifact
+  budget (`maxSinkPriorityShareNum`/`maxSinkPriorityShareDen`), water-filled
+  among them (`artifactAllowances`): a sink no longer than a fair level gets
+  its whole length, and the budget the short ones leave is split evenly
+  among the longer ones, each still at least 2000 bytes when the half allows
+  it. Where that floor would push the sinks past the half, they are trimmed
+  shortest first, each group of equal-length sinks as one: a group keeps its
+  water-filled share only if every member's fits, otherwise its members split
+  what is left of the half equally and the longer sinks get nothing in pass
+  1. The few bytes that do not split evenly go back to pass 2's budget rather
+  than to one member, so equal sinks stay equal, and their total never
+  exceeds the half.
+  Half, because the verdict needs both the final check and the evidence of
+  the work: a single large sink can never push every other artifact out.
+  Pass 2, the rest (`restAllowances`): whatever pass 1 left is shared across
+  every artifact's remaining length — the non-sinks, and the sinks pass 1
+  cut, which can get more. Each artifact that still needs something asks for
+  a 2000-byte floor (or its remaining length, if shorter). When the budget
+  cannot hold every floor, the floor goes to non-sinks before sinks, then
+  shorter remaining length first, never by graph position or node ID.
+  Artifacts of the same kind (sink or non-sink) and the same remaining
+  length form one group: groups take their floors in that order while the
+  budget left holds the whole group's. The first group it cannot hold is
+  split evenly only when each member's share of what is left is at least
+  1000 bytes (`minAssessEqualShare`, half the floor): then its members split
+  it equally, so equal artifacts get equal shares, and node ID only hands
+  out the few bytes that do not split evenly. Below that half-floor, as many
+  members as the budget left holds get the floor, chosen in node-ID order,
+  and join the artifacts taking part; the rest of the group gets nothing and
+  is omitted with its own omission line, because slices that small are
+  useless as evidence. Every later group gets nothing in pass 2 (a sink
+  keeps its pass-1 share). The artifacts taking part share the whole pass-2
+  budget by the same water-filling, with no floor, so the budget a floor
+  left over, less than one floor on the node-ID path, is shared fairly and
+  the allowances sum to at or near the budget, never above it. When not
+  even one member fits a floor, only what the artifacts taking part cannot
+  use, because they are already whole, goes to the first member by node ID,
+  and only when it is at least 1000 bytes; otherwise the first is omitted
+  too.
+  A sink's allowance is its pass-1 share plus its pass-2 share, so one
+  12 KB sink beside three 1 KB non-sinks gets 9000 bytes and each non-sink
+  renders whole. The no-sink path exists only for evidence built without
+  `Sink` set (older callers, tests): there pass 1 is empty and the whole
+  budget splits as in pass 2. Artifacts still render in graph order, each
+  cut to its fixed allowance. An artifact whose allowance is zero is
+  omitted with its own loud line,
+  `(artifact of node <id> omitted: material cap reached)`, outside the
+  fences where its block would have been, and rendering carries on past
+  it: every dropped node is named, and a sink later in graph order still
+  renders. A tail is cut from its head, and every cut is said above the
+  fence. When the record's `output_truncated` is set, the engine's own line
+  says so (`output: the command printed more than the engine retains, so the
+  engine kept only the last N bytes of its output; everything earlier was
+  dropped when the check was recorded`). It is written from the record's
+  flag, not the tail's marker, which the command could forge and the material
+  cap could trim away. A further cut for the material cap adds `output: the
+  last N of M bytes; the earlier K bytes were dropped for the material cap
+  (…)`, naming the 2000-byte per-tail cap and the verification tails'
+  share of the material cap. A tail whose allowance is zero reads
+  `output: omitted (verification output cap reached: …)`. Neither line
+  says "half", because a tail's share can be smaller. Every block's engine-observed lines (command, status,
+  exit code, expected exit code) always render: a cap may drop
+  output, never the record that a check failed. The assessor prompt gains one
+  sentence: an engine verification block is the engine's own observation of a
+  command it ran itself, and it outranks a node's reply about the same check.
+  That is a ranking of evidence, **not a claim that exit 0 means the goal is
+  met** — a passing check is still only as wide as the command, and the
+  assessor judges the goal on all the material. The next cycle's planner
+  prompt fences the `remaining` it quotes the same way. The verdict is a hard
+  JSON contract; garbage is an `*AssessError` that stops the loop. Each
+  verdict is printed the moment it returns (`GoalOptions.OnCycleAssessed`)
+  and persisted as `assess.json` in that cycle's run directory (`goal_met`,
   `remaining`, `evidence`, `assess_cost_usd` — the assessment cost the
   cycle's ledger cannot include, since the ledger prints before assessment).
   The printed `remaining:` and `evidence:` lines, the final `remaining` an
-  unmet-goal exit error quotes, and the assessor reply an `*AssessError` quotes (cleaned before its `maxOutputInError` cut), are
-  sanitised for the terminal by `fence.SanitizeTerminalLine`; `assess.json`,
+  unmet-goal exit error quotes, and the assessor reply an `*AssessError`
+  quotes (cleaned before its `maxOutputInError` cut), are sanitised for the
+  terminal by `fence.SanitizeTerminalLine`; `assess.json`,
   `AssessError.Output` and the next cycle's planner prompt keep the raw text,
   and the goal is still judged on the raw run output (#349).
 
@@ -3990,7 +4146,40 @@ flip an engine-reported failure. Unmet-and-exhausted (or the optional
 declined confirm on a later cycle) exits 1 with the final `remaining`; a
 session-limit pause pauses the whole loop (exit 2, standard resume hint —
 the resumed run completes as an ordinary run; the goal loop does not
-re-enter). The ceiling is rejected at parse without `--max-cycles ≥ 2` — a
+re-enter). A done-list command no planned node can run also ends the loop
+(`StopUnrunnableDoneItem`, `unrunnable_done_item`, #333): when a cycle is
+judged not met, `RunGoal` scans that cycle's sinks (every node when none is
+marked a sink) for lines that start with the `UNRUNNABLE:` marker the
+done-list rule asks the final check node for, and stops if any names a
+command. The marker counts only at the start of a line in the reply of a
+final check that FAILED: only a node whose verdict is FAIL is read, and only
+its own reply, never an artifact — an artifact belongs to a node that passed,
+so a marker line a passing node wrote (a model mistake, or a doing node
+quoting the brief) stops nothing. A failed node
+registers no artifact — `handoff.PersistFailure` writes its reply only to
+`failed/<node-id>.out`. `cycleEvidence` reads that file back, bounded like an
+artifact and located by the same `handoff.FailedOutputPath` that wrote it,
+into `NodeEvidence.FailedReply`. The file is cut twice — head and tail at the
+256 KiB write bound, and head and tail again at the 64 KiB read bound — so a
+marker line in the middle of a long reply would fall in one gap or the other;
+`PersistFailure` therefore copies every line opening with the marker (after
+leading whitespace) to the FRONT of the file before the reply, so they survive
+both cuts. The copied block holds whole lines only, at most 4 KiB of them, and
+counts toward the 256 KiB bound (the reply's excerpt budget shrinks by it); a
+reply with no marker line is written exactly as before, and the duplicate
+lines are harmless because the scan de-duplicates. `NodeEvidence.FailedReply`
+exists for this scan alone: it is never
+shown to the assessor and never reaches another node, so a failed reply still
+reaches a human, never a prompt. Another cycle cannot fix it — the planned node
+allowlist is fixed — so the loop plans none, whatever `--max-cycles` is. The
+marker counts only at the start of a line, trimmed; prose that mentions it
+does not stop anything, and a met goal still stops as `goal_met`. The
+commands, trimmed and de-duplicated, are `GoalResult.UnrunnableCommands`; the
+goal summary prints the reason, each command and the advice to check it with
+`--verify-cmd` instead or start the run with a configuration that allows it,
+and the exit is the unmet-goal exit 1. The assessor is unchanged: the scan is
+the loop's own, over the engine-assembled evidence, and `assessMaterial`
+does not render `FailedReply`. The ceiling is rejected at parse without `--max-cycles ≥ 2` — a
 flag that could never fire would read as a bound that isn't one. When the
 loop ends, the **goal summary** prints below the final ledger: one line per
 cycle (run id, outcome, run total with planning included, assessment cost,

@@ -3,6 +3,7 @@ package browser
 import (
 	"context"
 	"sync"
+	"time"
 )
 
 // FakeOpener is the scripted Opener that keeps auto-open paths spawn-free in
@@ -51,4 +52,24 @@ func (f *FakeOpener) URLs() []string {
 	out := make([]string, len(f.urls))
 	copy(out, f.urls)
 	return out
+}
+
+// WaitForURLs reports whether Open has recorded at least n URLs within timeout,
+// polling under the same mutex Open records under. It exists for a caller that
+// launches Open on another goroutine and must not cancel that goroutine's
+// context before the call lands — a cancelled Open records nothing.
+func (f *FakeOpener) WaitForURLs(n int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		f.mu.Lock()
+		got := len(f.urls)
+		f.mu.Unlock()
+		if got >= n {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }

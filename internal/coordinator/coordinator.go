@@ -23,6 +23,7 @@ package coordinator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -322,6 +323,10 @@ type Coordinator struct {
 	// WithoutReuse: no scan, no menu in the planner prompt, and reuse:
 	// refused by its disposition case exactly as when nothing is admitted.
 	reuseOff bool
+	// startCommit is the commit the goal started from, set via
+	// WithStartCommit. Empty means unknown, and the planner prompt is then
+	// byte-identical to one built without the option.
+	startCommit string
 }
 
 // Option configures a Coordinator at construction.
@@ -391,6 +396,17 @@ func WithoutSkillActivation() Option {
 // other opt-outs here it only removes: no option turns a menu on.
 func WithoutReuse() Option {
 	return func(c *Coordinator) { c.reuseOff = true }
+}
+
+// WithStartCommit records the commit the goal started from (#414). A run that
+// starts on a branch with earlier commits otherwise leaves a planned scope
+// check guessing its base — main, typically — so it flags accepted work as out
+// of scope and reverts it. Set, every planning call's prompt (each cycle's,
+// and each repair's, since both are built from the same base) names the commit
+// and measures scope from it. Empty means unknown and changes nothing: the
+// planner prompt is byte-identical to one built without this option.
+func WithStartCommit(sha string) Option {
+	return func(c *Coordinator) { c.startCommit = sha }
 }
 
 // WithLoadedUserConfig states that this run's planned nodes load the
@@ -599,9 +615,10 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 // that re-planned against another would be answering a different question
 // than the one that was refused. offered travels for the same
 // reason: it is the menu this base shows, and every attempt built from the
-// base is judged against it.
-func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyCommand string, offered []ReuseEntry) (string, error) {
-	prompt, err := plannerPrompt(goal, inputKeys, verifyCommand, offered)
+// base is judged against it. startCommit travels the same way, so every cycle
+// and every repair measures scope from the same commit (WithStartCommit).
+func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyCommand string, offered []ReuseEntry, startCommit string) (string, error) {
+	prompt, err := plannerPrompt(goal, inputKeys, verifyCommand, offered, startCommit)
 	if err != nil {
 		return "", err
 	}
@@ -663,7 +680,15 @@ func (c *Coordinator) attemptPlan(ctx context.Context, goal, prompt string, offe
 		}}
 	}
 
-	spec := extractJSON(outcome.Result)
+	spec, err := extractPlanJSON(outcome.Result)
+	if err != nil {
+		// Like a decode failure, not repairable: there is no single plan to
+		// diagnose, so a re-plan would be a blind retry on a paid runtime.
+		return Plan{}, accounting, &planRefusal{err: &PlanError{
+			Reason: "planner " + err.Error(),
+			Output: outcome.Result,
+		}}
+	}
 	if spec == "" {
 		return Plan{}, accounting, &planRefusal{err: &PlanError{
 			Reason: "planner reply contained no JSON object",
@@ -1193,7 +1218,11 @@ func plannedNodeKeys(reply string) [][]string {
 	var raw struct {
 		Nodes []yaml.Node `yaml:"nodes"`
 	}
-	if err := yaml.Unmarshal([]byte(extractJSON(reply)), &raw); err != nil {
+	spec, err := extractPlanJSON(reply)
+	if err != nil {
+		return nil
+	}
+	if err := yaml.Unmarshal([]byte(spec), &raw); err != nil {
 		return nil
 	}
 	declared := make([][]string, len(raw.Nodes))
@@ -1975,6 +2004,129 @@ func extractJSON(result string) string {
 	return result[start : end+1]
 }
 
+// extractPlanJSON isolates the plan (or route decision) from a planner or
+// router reply, whose prose may quote template syntax or carry stray braces
+// before the plan (#387). Rules, in order:
+//
+//   - If the reply has ```json fenced blocks and exactly one of them is a
+//     valid JSON object, that object is returned (trimmed). More than one
+//     valid json fence is an error: the reply holds more than one JSON object.
+//   - Else every '{' is a candidate, left to right. Its span runs to the
+//     matching '}' by brace-depth counting that ignores braces inside JSON
+//     strings, and a '{' inside an earlier candidate's span is never tried.
+//     An unmatched '{' whose first non-whitespace successor is '"' looks like
+//     a cut-off object, so its span runs to the end of the reply and nothing
+//     after it is tried — a cut-off plan never yields one of its inner node
+//     objects. With an earlier hit, a cut-off candidate is an error: the
+//     reply may be truncated, so that hit is never taken as the plan. Any
+//     other unmatched '{' (prose like "use the {name field", a cut-off
+//     placeholder) skips only itself. A candidate whose span decodes as one
+//     JSON object is a hit: exactly one hit is returned, more than one is an
+//     error.
+//   - No hit falls back to extractJSON's first '{' to last '}' cut, so a
+//     broken or cut-off reply still reaches the parser and its real syntax
+//     error. "" with a nil error when the reply has no '{'.
+//
+// The goal assessor does NOT use this: its reply quotes untrusted artifacts
+// by design, and picking one object out of several could hand it a quoted
+// verdict, so it keeps extractJSON's strict cut and fails to decode instead.
+func extractPlanJSON(reply string) (string, error) {
+	if fenced := jsonFenceObjects(reply); len(fenced) == 1 {
+		return fenced[0], nil
+	} else if len(fenced) > 1 {
+		return "", fmt.Errorf("reply holds more than one JSON object (%d valid ```json fences)", len(fenced))
+	}
+
+	var hits []string
+	cutOff := false
+	for i := 0; i < len(reply); i++ {
+		if reply[i] != '{' {
+			continue
+		}
+		end := matchingBrace(reply, i)
+		if end == -1 {
+			if strings.HasPrefix(strings.TrimLeft(reply[i+1:], " \t\r\n"), `"`) {
+				// A cut-off object: its span is the rest of the reply, which
+				// cannot decode with a '{' left open.
+				cutOff = true
+				break
+			}
+			continue
+		}
+		if span := reply[i : end+1]; json.Valid([]byte(span)) {
+			hits = append(hits, span)
+		}
+		i = end
+	}
+	if cutOff && len(hits) > 0 {
+		return "", errors.New("reply holds a JSON object followed by an unterminated one (it may be cut off)")
+	}
+	switch len(hits) {
+	case 1:
+		return hits[0], nil
+	case 0:
+		return extractJSON(reply), nil
+	default:
+		return "", fmt.Errorf("reply holds more than one JSON object (%d decodable top-level objects)", len(hits))
+	}
+}
+
+// jsonFenceObjects is the trimmed content of every closed ```json fenced block
+// in reply that is a valid JSON object, in order.
+func jsonFenceObjects(reply string) []string {
+	const fenceOpen = "```json"
+	var objects []string
+	for rest := reply; ; {
+		i := strings.Index(rest, fenceOpen)
+		if i == -1 {
+			return objects
+		}
+		rest = rest[i+len(fenceOpen):]
+		end := strings.Index(rest, "```")
+		if end == -1 {
+			return objects
+		}
+		content := strings.TrimSpace(rest[:end])
+		if strings.HasPrefix(content, "{") && json.Valid([]byte(content)) {
+			objects = append(objects, content)
+		}
+		rest = rest[end+len("```"):]
+	}
+}
+
+// matchingBrace is the index of the '}' closing the '{' at s[open], counting
+// brace depth outside JSON strings (escapes honoured); -1 when it never closes.
+func matchingBrace(s string, open int) int {
+	depth := 0
+	inString, escaped := false, false
+	for j := open; j < len(s); j++ {
+		c := s[j]
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return j
+			}
+		}
+	}
+	return -1
+}
+
 // plannerRetryCauses is the closed retry.on cause set, rendered into the
 // planner prompt. It IS the validator's own list — graph.RetryCauses() — not a
 // re-typing of the same constants, for the same reason the tool list is
@@ -1999,7 +2151,10 @@ var plannerRetryCauses = graph.RetryCauses()
 // directly after the reply shape that describes a node's fields and before the
 // rules (§9.5), and omitted entirely when it is empty. The error is the menu's
 // fence failing to mint a nonce.
-func plannerPrompt(goal string, inputKeys []string, verifyCommand string, offered []ReuseEntry) (string, error) {
+//
+// startCommit, when not empty, appends plannerStartCommitTemplate after the
+// rules (#414); empty renders exactly the prompt built without it.
+func plannerPrompt(goal string, inputKeys []string, verifyCommand string, offered []ReuseEntry, startCommit string) (string, error) {
 	keys := "none"
 	if len(inputKeys) > 0 {
 		sorted := append([]string(nil), inputKeys...)
@@ -2022,14 +2177,19 @@ func plannerPrompt(goal string, inputKeys []string, verifyCommand string, offere
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf(plannerPromptTemplate,
+	prompt := fmt.Sprintf(plannerPromptTemplate,
 		goal,
 		keys,
 		strings.Join(plannedToolAllowlist, ", "),
 		finalCheck,
 		strings.Join(plannerRetryCauses, ", "),
 		menu,
-	), nil
+		strconv.Quote(plannedReviewGatingPattern),
+	)
+	if startCommit != "" {
+		prompt += fmt.Sprintf(plannerStartCommitTemplate, startCommit)
+	}
+	return prompt, nil
 }
 
 // finalCheckWithoutVerifyCommand / finalCheckWithVerifyCommand are the two
@@ -2044,11 +2204,13 @@ func plannerPrompt(goal string, inputKeys []string, verifyCommand string, offere
 // command exists, and a reply carrying anything besides the verdict fails it.
 //
 // The with-command spelling also carries the verify command's exact text and
-// tells the planner (#392): no node runs that command (the engine already
-// does, once, after the final node), a node that changes code runs only the
-// tests for what it changed and never the whole suite, and a whole-suite
-// command the goal's done list names that is NOT the verify command is run
-// once by the final check node, whose PASS then requires it to exit 0. The
+// tells the planner (#392): no node runs that command (the engine runs it at
+// each sink node, which with the single final check node is once, after that
+// node), a node that changes code runs only the tests for what it changed and
+// never the whole suite, and any command the goal's done list names that is
+// NOT the verify command (#333: a script, a linter or a single-package test as
+// much as a whole suite) is run once by the final check node, whose PASS then
+// requires it to exit 0. The
 // verify command is not assumed to be the whole suite: a narrow one ("sh
 // v.sh", "go test ./internal/x/...") would otherwise leave a done-list
 // "make local" run by nobody.
@@ -2091,9 +2253,11 @@ func finalCheckWithoutVerifyCommand() string {
 // own, so a command cannot read as prompt prose or close the paragraph early,
 // and its % signs are doubled because the result is still the format string
 // plannerPrompt hands the verdict pattern and the reporting pointer to.
-// The final check node runs a done-list suite only when one of
-// plannedBashPatterns covers it, and otherwise replies FAIL naming it — the
-// rule doneListCommandRule spells for both paragraphs.
+// It requires a single sink, the final check node, because the engine runs
+// the verify command at every sink (attachVerifyCommand, #396).
+// The final check node runs a done-list command of any kind (#333) only
+// when one of plannedBashPatterns covers it, and otherwise replies FAIL
+// naming it — the rule doneListCommandRule spells for both paragraphs.
 func finalCheckWithVerifyCommand(command string) string {
 	quoted := strings.ReplaceAll(strconv.Quote(command), "%", "%%")
 	return `- oh-my-graph itself runs an independent build verification after the final
@@ -2107,19 +2271,37 @@ func finalCheckWithVerifyCommand(command string) string {
   what it can observe with the tools it declared, and its PASS is a
   statement about those specific checks and nothing wider.
 - No planned node runs that verify command itself, even when the goal text
-  names it: the engine runs it once after the final node, outside every node.
+  names it: the engine runs it at each sink node, outside every node, which
+  with the single final check node below means once, after that node.
+- The graph ends in exactly ONE sink, the final check node, so every other
+  node is an ancestor of it: the engine runs the verify command at every
+  sink node, so a second sink runs the whole suite again.
 - A node that changes code never runs the project's whole suite — that is,
   not "make local", "make test", "make check", "go test ./..." or similar.
   It runs only the tests for what it changed (for Go, the changed packages,
   e.g. "go test ./internal/x/..."), with the matching Bash pattern in its
   allowed_tools.
-- If the goal's done list names a whole-suite command ("make local", "make
-  test", "make check", "go test ./..." or similar) that is NOT the verify
+- If the goal's done list names any command that is NOT the verify
   command shown above, character for character, the engine's run does not
-  cover it.` + doneListCommandRule() + `  If the named command IS that verify command, the same
+  cover it. That holds for every such command, not only a whole suite
+  ("make local", "go test ./..."): a script ("sh check.sh"), a linter
+  ("go vet ./...") and a single-package test ("go test ./internal/x/...")
+  count too.` + doneListCommandRule() + `  If the named command IS that verify command, the same
   exact text, no node runs it — the engine's run covers it.
 ` + branchEvidenceRule
 }
+
+// unrunnableDoneItemMarker opens each line of a final check node's FAIL reply
+// that names a done-list command no plannedBashPatterns entry covers (#333).
+// doneListCommandRule renders it into the prompt, and RunGoal scans the sinks
+// for it — only a sink whose verdict is FAIL, and only the reply it left in
+// failed/<node-id>.out (NodeEvidence.FailedReply, which neither the assessor
+// nor any other node ever sees), never an artifact: a command no planned node
+// can run cannot be fixed by another cycle, so the loop stops with
+// StopUnrunnableDoneItem. The spelling is handoff.UnrunnableDoneItemMarker's,
+// because handoff.PersistFailure copies these lines to the front of that file
+// and must match the same text the prompt asks for and the scan looks for.
+const unrunnableDoneItemMarker = handoff.UnrunnableDoneItemMarker
 
 // doneListCommandRule is the done-list half both final-check spellings share
 // (#392, #399): it names plannedBashPatterns — never a retyped list — and says
@@ -2138,7 +2320,17 @@ func doneListCommandRule() string {
   test", "pytest" and the like — no planned node can run it, so the final
   check node does NOT try to: it replies FAIL and states that this done
   item could not be run by any planned node, naming the command. Never a
-  PASS over a done item nothing ran.
+  PASS over a done item nothing ran. A different command that checks the
+  same thing — a stand-in, a re-implementation, a test that covers the
+  same rule — never satisfies a done item: the done item names a command,
+  and only that command running counts.
+  When the final check node replies FAIL because a done item names a
+  command none of those patterns covers, its reply also carries one line
+  per such command, at the start of the line and with no markdown, in
+  exactly this form:
+      ` + unrunnableDoneItemMarker + ` <the command as the goal wrote it>
+  The engine reads those lines and stops the goal loop: no new cycle can
+  run a command the planned patterns do not cover.
 `
 }
 
@@ -2154,9 +2346,10 @@ func plannedBashPatterns() []string {
 	return patterns
 }
 
-// branchEvidenceRule is the branch half of the final-check paragraph, shared
-// by both spellings because it is one prompt and the rule does not depend on
-// who gathers build evidence. It carries two verbs, in order: the %s the
+// branchEvidenceRule is the branch half of the final-check paragraph, with the
+// scope rule for every planned check node beside it, shared by both spellings
+// because it is one prompt and the rule does not depend on who gathers build
+// evidence. It carries two verbs, in order: the %s the
 // verdict pattern renders into, and the %s reportingShapePointer fills — so it
 // must appear exactly once per rendered paragraph.
 //
@@ -2175,6 +2368,39 @@ func plannedBashPatterns() []string {
 // It still closes the bug the branch assertion was added for (a node that
 // commits on the default branch and PASSes anyway), and closes it wider: work
 // committed on the right branch but never pushed has no pull request either.
+//
+// The pull-request assertion is for a goal whose own nodes push and open the
+// pull request, and for no other (#388). A goal that forbids pushing or
+// opening a pull request leaves those to the operator, so a check node
+// asserting them asserts state the run was told not to change and FAILs a
+// cycle whose work landed. Such a goal gets the branch-ref bullet. A goal that
+// forbids only a new remote, and whose own nodes push to an existing remote
+// and open the pull request, keeps the open-PR assertion: it would otherwise
+// lose the catch for work committed but never pushed. The paragraph also
+// carries the scope rule every planned check node shares — it asserts only
+// what this run's own nodes produce, never the absence of what the goal only
+// forbids creating — and the verdict clause says a forbidden action is the
+// operator's next step, never a reason to reply FAIL. Beside it sits the
+// write-side rule (#427): a check node changes no repository state. A planner
+// once told a final check node to 'git checkout' a branch, which moves HEAD in
+// a checkout other people or runs may be using; the rule names the read-only
+// spellings ('git show <ref>:<path>', 'git diff <a>..<b>') it uses instead.
+// Running in the tree as it finds it is only right when that tree's HEAD IS
+// the work: a doing node in its own worktree, or one that switched back to
+// main, leaves a done-list command PASSing on main's tree. So on a branch goal
+// the check node first compares, in the tree that holds the work,
+// 'git -C <tree> rev-parse HEAD' with 'git -C <tree> rev-parse <branch>' — two
+// commit shas, not the branch-name assertion forbidden above — and replies
+// FAIL, still checking nothing out, if they differ. That tree may be a git
+// worktree of the same repository or another repository; run in the
+// invocation directory instead, the comparison reads that checkout's HEAD
+// (often main's) and FAILs correct work. The done-list commands run in the
+// same tree ('go -C <tree> ...', 'make -C <tree> ...', 'git -C <tree> ...'),
+// already covered by the Bash(go *), Bash(make *) and Bash(git *) patterns, so
+// nothing is checked out anywhere. When the tree's path is unknown, or the
+// command that reaches it is not covered by a planned pattern, the command
+// belongs to the node that made the work or to --verify-cmd, and the check
+// node's FAIL reason says so.
 //
 // Its closing rule names WHICH node may carry the whole-reply pin, which every
 // earlier spelling assumed and never said. The paragraph speaks of "the final
@@ -2200,21 +2426,46 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
   branch and not on the repository's default branch (e.g. main or master).
   Assert that against state belonging to the REPOSITORY, never against what
   some working directory currently has checked out:
-  - Prefer what the remote says: 'gh pr list --head <branch> --state open'
+  - ONLY when the goal's own nodes push the branch and open the pull
+    request, assert what the remote says: 'gh pr list --head <branch> --state open'
     (declare "Bash(gh pr *)"), asserting an open pull request exists for the
     feature branch. For a branch in a repository other than the one
     oh-my-graph was invoked from, read that repository's slug first
     ('git -C <path> remote get-url origin', declare "Bash(git *)") and name
     it: 'gh pr list --repo <slug> --head <branch> --state open'.
-  - If the goal never reaches a pull request, assert the branch REF instead:
+  - Otherwise — the goal does not push the branch and open the pull request
+    itself, including any goal that says not to push or not to open or edit
+    a pull request — assert the branch REF instead:
     'git rev-parse --verify <branch>' or 'git log --oneline -1 <branch>'
     (declare "Bash(git *)"). Every worktree of a repository shares its refs;
-    a checked-out HEAD belongs to one directory only.
+    a checked-out HEAD belongs to one directory only. Such a check node
+    never asserts remotes, pushes or pull-request state. Forbidding only a
+    NEW remote does not change this: a goal whose own nodes push to an
+    existing remote and open the pull request takes the first bullet.
   - NEVER assert on 'git rev-parse --abbrev-ref HEAD', with or without
     '-C <path>'. A node is free to do its work in a git worktree it made
     itself, which leaves every other checkout's HEAD untouched, and
     oh-my-graph isolates no repository but the one it was invoked from — so
     a HEAD assertion reports FAIL on work that in fact succeeded.
+  - Before it runs a done-list command, a check node on such a goal
+    confirms, in the tree that holds the work, that
+    'git -C <tree> rev-parse HEAD' equals 'git -C <tree> rev-parse <branch>',
+    under the "Bash(git *)" pattern a check node already declares. That
+    tree may be a git worktree of the same repository or another
+    repository; run in the directory oh-my-graph was invoked from, the
+    comparison reads that checkout's HEAD instead (often main's) and FAILs
+    correct work. It runs its done-list commands in that same tree too
+    ('go -C <tree> ...', 'make -C <tree> ...', 'git -C <tree> ...'), under
+    the "Bash(go *)", "Bash(make *)" and "Bash(git *)" patterns already
+    planned; nothing is checked out anywhere. If HEAD and the tip differ
+    it replies FAIL saying the command cannot run against the work from
+    here (HEAD <sha> is not the tip of <branch> <sha>), and still checks
+    nothing out. If the path of that tree is unknown, or the command that
+    reaches it is not covered by a planned pattern, the command belongs to
+    the node that made the work or to --verify-cmd, and the check node
+    replies FAIL saying so. This compares two commit shas — whether the
+    content is the same — not a branch name, so it is not the
+    '--abbrev-ref HEAD' assertion forbidden above.
   When the assertion holds, instruct the node that its whole reply is
   exactly the four bare characters PASS and nothing else, with no markdown
   emphasis ("**PASS**" is WRONG), no heading, no backticks and no preamble;
@@ -2238,7 +2489,27 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
   held, what did not, and what the reader should do about it. An
   observation a reader would not act on is not a reason to withhold PASS:
   the threshold is whether it changes what they do, not whether it is
-  worth mentioning.
+  worth mentioning. An action the goal forbids the run to take (pushing,
+  opening or editing a pull request, creating a remote) is the operator's
+  next step, not a qualification a reader would act on, so it is never a
+  reason to reply FAIL.
+- Every planned check node, final or not, asserts only what this run's own
+  nodes produce or change: files in the working tree, commits on the
+  branch, test results, artifacts. It never asserts state the goal forbids
+  the run to change, and it never asserts the ABSENCE of something the goal
+  only forbids creating — a remote that already existed is not a violation
+  of "do not create a remote".
+- Every planned check node, final or not, observes and judges; it never
+  changes repository state. It runs no 'git checkout', 'git switch',
+  'git reset', 'git restore', 'git stash', 'git commit', 'git merge' or
+  'git rebase', creates or deletes no branch, and creates no tag: a
+  checked-out HEAD belongs to one directory, which other people or runs
+  may be using, and switching it is the write-side form of asserting on
+  it. To read content on another ref it uses 'git show <ref>:<path>' or
+  'git diff <a>..<b>', never a checkout. A command that would need another
+  ref checked out to run belongs to the node that made the work, or to
+  --verify-cmd; a check node runs its own commands, done-list ones
+  included, in the tree as it finds it.
 - That whole-reply pin belongs ONLY on a node whose entire job is to
   ASSERT: it observes, it judges, and its reply IS the verdict, because
   nothing else it produced is needed afterwards. Being the LAST node of the
@@ -2310,6 +2581,17 @@ const branchEvidenceRule = `- If the goal involves creating a branch or committi
 // literal the planner must copy is "^[*_`\\s]*PASS[*_`\\s]*$" — one place to
 // get right, and Quote gets it right.
 const plannedVerdictPattern = "^[*_`\\s]*PASS[*_`\\s]*$"
+
+// plannedReviewGatingPattern is the verdict regex the planner is told to give a
+// node that declares a feedback arc: the GATING pattern the shipped review
+// fragments document (ADR 0043, graphs/fragments/review-style.yaml), which
+// accepts CLEAN and MINOR: and fails only FINDINGS:, so a cosmetic finding is
+// recorded instead of buying a whole round (#288). It is a prefix pattern, not
+// a whole-reply pin, because the reply goes on to list its items.
+// TestPlannedReviewGatingPatternMatchesReviewFragments holds it byte-identical
+// to the fragments' spelling. Like plannedVerdictPattern it reaches the
+// planner through strconv.Quote.
+const plannedReviewGatingPattern = "^[*_`\\s]*(MINOR[*_`\\s]*:|CLEAN\\b)"
 
 const plannerPromptTemplate = `You are the planning coordinator for oh-my-graph, an orchestrator that runs
 each node of a DAG through its selected model CLI.
@@ -2389,7 +2671,24 @@ prose before or after:
   open; raise a NEW finding only where the rework changed the work or where
   missing it last round was a real mistake. A re-run reviewer is a fresh
   session, and without its earlier findings it finds new nits every round
-  until the rounds are spent. Keep max small (2): every round
+  until the rounds are spent. The reviewing node's reply starts with
+  exactly one of the bare tokens CLEAN, MINOR: or FINDINGS: as its very
+  first characters — no markdown emphasis ("**CLEAN**" is WRONG), nothing
+  before the token. It judges each item by whether it would merge with it
+  unfixed: a defect, wrong behaviour, or a changed behaviour with no test
+  is blocking (FINDINGS:); naming, wording, line wrapping and style are
+  minor (MINOR:). Wording is minor only while what it says is true: a
+  claim that is not true — in code, a comment or docs — and anything that
+  changes behaviour or correctness is FINDINGS:, never MINOR:, however
+  small the fix; MINOR: is only for an item whose meaning is already
+  right and only its form differs. A reply's verdict is its worst item.
+  On a re-run, an item rated MINOR: in {{ self.previous }} stays minor
+  unless the rework changed the code that item concerns, or the item is a
+  claim that is not true (that was never minor). Its success_check is
+  {"exit_zero": true, "result_matches": %[7]s}
+  so CLEAN and MINOR: pass (a MINOR: reply records its items) and only
+  FINDINGS: fails and fires the arc. Do not gate it on CLEAN alone: that
+  re-runs the implementer over a nit. Keep max small (2): every round
   re-runs the whole rerun→reviewer path at full cost, and a max above 3
   is rejected outright. The arc must point
   backward along depends_on, no node outside the loop may depend on a
@@ -2415,10 +2714,16 @@ prose before or after:
   them — and <id> must name the node that DECLARES the feedback block (the
   reviewer), never the node being re-run. A token breaking any of those
   three rules is rejected outright.
-- If the goal involves substantial implementation, decompose it into work
-  units sized so each node's output is a reviewable, committable slice —
-  prefer more, smaller nodes (within the node cap) over one node that does
-  everything. A node whose prompt commits MUST also state its commit
+- Only if the goal involves substantial implementation — several packages
+  or several independent features — prefer more, smaller nodes (within the
+  node cap) over one node that does everything; a small or medium goal (a
+  few files plus their tests and docs) is one doing node. Split work into
+  separate doing nodes only where a part is a reviewable, committable slice
+  on its own AND the parts do not need to re-read the same code: every node
+  is a fresh session that re-reads the code it works on. Do not split a
+  goal into one node per file or one node per numbered change. Keep a
+  change's tests and docs in the node that makes the change.
+  A node whose prompt commits MUST also state its commit
   granularity in its prompt: one commit per refactoring unit (commit-unit)
   for refactors, per file (file-unit) for mechanical sweeps, or per feature
   slice (feature-slice) for new code — and commit as it goes, so a timeout
@@ -2429,6 +2734,24 @@ prose before or after:
   untracked files that are not part of the task, and sweeping them into
   the commit is a bug.
 %[4]s`
+
+// plannerStartCommitTemplate is appended to the planner prompt when the commit
+// the goal started from is known (WithStartCommit, #414); %[1]s is that sha.
+// Without it a planned scope check guesses its base, flags commits accepted
+// before the run as out of scope, and reverts them.
+const plannerStartCommitTemplate = `
+
+This run started from commit %[1]s. Any scope, "only these files" or
+changed-files check a planned node writes is measured from that commit, with
+'git diff --name-only %[1]s..HEAD' or 'git log %[1]s..HEAD', and never from
+main or any other base. No planned node reverts, restores or checks out a file
+the goal did not ask it to change. A file changed by commits before %[1]s is
+left as it is: a finding about such a file is reported, and is never a reason
+to FAIL or to rework. Main, or the default branch, moves all the time in a
+shared repository: no planned node asserts that it has not moved since %[1]s,
+and none uses %[1]s to prove that nothing landed on it. To show that the run's
+work is not on main, a check asserts that
+'git merge-base --is-ancestor <a commit this run made> main' exits non-zero.`
 
 // plannerContinuationTemplate is appended to the planner prompt on cycle
 // k ≥ 2 of a goal loop (ADR 0011 §2): the statement that a previous attempt

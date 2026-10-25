@@ -30,6 +30,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/graph"
@@ -575,7 +576,30 @@ const failedDir = "failed"
 // is RENDERED because the full cause is still on disk — there is no other copy
 // of this text to fall back to. The cut keeps head and tail and says out loud
 // how much it dropped, so a reader is never told a truncated reply is whole.
+// The UNRUNNABLE: lines copied to the file's front (unrunnableFrontBlock)
+// count toward this bound too.
 const maxFailedReplyBytes = 256 * 1024
+
+// UnrunnableDoneItemMarker opens each line of a final check node's FAIL reply
+// that names a done-list command no planned Bash pattern covers (#333). It is
+// the ONE spelling: the coordinator renders it into the planner prompt and
+// scans for it in a failed sink's reply, and PersistFailure copies the lines it
+// opens to the front of failed/<node-id>.out. It lives here, not in
+// internal/coordinator, because coordinator imports handoff — the write needs
+// it, and the import cannot run the other way.
+const UnrunnableDoneItemMarker = "UNRUNNABLE:"
+
+// maxUnrunnableFrontBytes caps the marker lines unrunnableFrontBlock copies to
+// the front of a failed reply file. The lines are model-written, so a reply
+// made of nothing but marker lines must not be able to crowd the reply itself
+// out of the file; a final check names a handful of commands, which fit many
+// times over.
+const maxUnrunnableFrontBytes = 4 * 1024
+
+// unrunnableFrontNote ends the front block, so a human (or a retry quoting the
+// file back) can tell the copied lines from the reply that follows. Like
+// failedExcerptMarker it is engine-written text and not a trust boundary.
+const unrunnableFrontNote = "… oh-my-graph copied the lines above from the reply below …\n\n"
 
 // PersistFailure writes a FAILED node's own reply to
 // <run-dir>/failed/<node-id>.out and returns the path it wrote, so a caller can
@@ -594,7 +618,12 @@ const maxFailedReplyBytes = 256 * 1024
 // the file itself safe regardless, and a node reaches its terminal failure
 // once per leg.
 //
-// The reply is bounded on the way in (see maxFailedReplyBytes).
+// The reply is bounded on the way in (see maxFailedReplyBytes). Every line of
+// it that opens with UnrunnableDoneItemMarker is first copied to the front of
+// the file (unrunnableFrontBlock), because the file is cut twice — here, and
+// again when the goal loop reads it back head-and-tail — and a marker line in
+// the middle of a long reply would fall in the gap of either cut. The file's
+// first bytes survive both.
 func (h *Handoff) PersistFailure(nodeID, reply string) (string, error) {
 	if strings.TrimSpace(reply) == "" {
 		return "", nil
@@ -652,14 +681,50 @@ const failedExcerptMarker = "\n\n… oh-my-graph excerpted %d bytes here: this r
 // so the space for it is RESERVED at the widest that figure can be: the whole
 // reply's length, which cannot have fewer digits than the part of it that was
 // dropped. One cut, an exact figure, and a file still inside the cap.
+//
+// The front block of copied marker lines comes first and is counted against the
+// same bound: the reply's own budget is maxFailedReplyBytes less the block, so
+// the file as a whole stays inside the cap. A reply with no marker line has an
+// empty block and is written byte for byte as it was before the block existed.
 func excerptFailedReply(reply string) string {
-	if len(reply) <= maxFailedReplyBytes {
-		return reply
+	front := unrunnableFrontBlock(reply)
+	budget := maxFailedReplyBytes - len(front)
+	if len(reply) <= budget {
+		return front + reply
 	}
 	reserve := len(fmt.Sprintf(failedExcerptMarker, len(reply), maxFailedReplyBytes))
-	head, tail := fence.HeadAndTail(reply, maxFailedReplyBytes-reserve)
+	head, tail := fence.HeadAndTail(reply, budget-reserve)
 	marker := fmt.Sprintf(failedExcerptMarker, len(reply)-len(head)-len(tail), maxFailedReplyBytes)
-	return head + marker + tail
+	return front + head + marker + tail
+}
+
+// unrunnableFrontBlock returns every line of reply that opens with
+// UnrunnableDoneItemMarker after leading whitespace, in reply order, each
+// ending in a newline, followed by unrunnableFrontNote — or "" when there is no
+// such line. The reply is split with strings.Split, not a bufio.Scanner, whose
+// token limit would fail on a long line before ever reaching a marker after it.
+//
+// Only whole lines are copied, at most maxUnrunnableFrontBytes of them; a line
+// that does not fit is skipped rather than cut, so one oversized line cannot
+// keep a later, ordinary one off the front. The copies duplicate lines still in
+// the reply, which is harmless: the reader de-duplicates the commands it finds.
+func unrunnableFrontBlock(reply string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(reply, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if !strings.HasPrefix(strings.TrimLeftFunc(line, unicode.IsSpace), UnrunnableDoneItemMarker) {
+			continue
+		}
+		if b.Len()+len(line)+1 > maxUnrunnableFrontBytes {
+			continue
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	return b.String() + unrunnableFrontNote
 }
 
 // SeedPriorReply rehydrates one node's failed reply from the failed/<id>.out

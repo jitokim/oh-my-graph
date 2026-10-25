@@ -509,9 +509,10 @@ func TestPlannerPromptStatesWhoGathersBuildEvidence(t *testing.T) {
 }
 
 // TestPlannerPromptKeepsTheFullSuiteOutOfNodesWhenTheEngineRunsIt pins #392:
-// with a --verify-cmd the engine runs the full suite once after the final node,
-// so the planner is told no node runs it again and a node that changes code
-// runs only the tests for what it changed. Without one there is no end-of-run
+// with a --verify-cmd the engine runs the full suite at each sink node — once,
+// after the final node, in the single-sink plan the prompt asks for — so the
+// planner is told no node runs it again and a node that changes code runs only
+// the tests for what it changed. Without one there is no end-of-run
 // suite to defer to, so the rule is absent. The goal names neither command, so
 // only the rule can satisfy the presence checks.
 func TestPlannerPromptKeepsTheFullSuiteOutOfNodesWhenTheEngineRunsIt(t *testing.T) {
@@ -533,8 +534,35 @@ func TestPlannerPromptKeepsTheFullSuiteOutOfNodesWhenTheEngineRunsIt(t *testing.
 	}
 }
 
-// doneListSuiteRule is the with-command rule that hands a done-list whole-suite
-// command the verify command is not to the final check node (#392).
+// singleSinkRule is the with-command rule that the plan ends in one sink, the
+// final check node (#396).
+const singleSinkRule = "The graph ends in exactly ONE sink, the final check node"
+
+// TestPlannerPromptAsksForASingleSinkWhenTheEngineRunsTheVerifyCommand pins
+// #396: attachVerifyCommand attaches the --verify-cmd to every sink node, so a
+// second sink would run the whole suite again. With a --verify-cmd the planner
+// is told the graph ends in exactly one sink and why; without one there is no
+// engine run to repeat, so the rule is absent.
+func TestPlannerPromptAsksForASingleSinkWhenTheEngineRunsTheVerifyCommand(t *testing.T) {
+	with := plannerPromptNoMenu(t, "build it", "make test")
+	for _, want := range []string{
+		singleSinkRule,
+		"so a second sink runs the whole suite again",
+	} {
+		if !strings.Contains(with, want) {
+			t.Errorf("with a --verify-cmd, the planner prompt lacks %q", want)
+		}
+	}
+
+	without := plannerPromptNoMenu(t, "build it", "")
+	if strings.Contains(without, singleSinkRule) {
+		t.Error("with no --verify-cmd, the planner is told to end in one sink for a verify run that will not happen")
+	}
+}
+
+// doneListSuiteRule is the with-command rule that hands a done-list command
+// the verify command is not to the final check node (#392; any such command
+// since #333, not only a whole suite).
 const doneListSuiteRule = "that is NOT the verify\n  command shown above, character for character"
 
 // TestPlannerPromptCarriesTheVerifyCommandText pins #392's second half through
@@ -621,6 +649,57 @@ func TestPlannerPromptFailsADoneListSuiteNoAllowedPatternCovers(t *testing.T) {
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("with a done-list \"npm test\", the planner prompt lacks %q", want)
+		}
+	}
+}
+
+// TestPlannerPromptSendsAnyDoneListCommandToTheFinalCheck is #333's bug: with
+// --verify-cmd the done-list rule named only whole-suite commands, so a
+// done-list script slipped past it, the planner wrote a stand-in check and the
+// goal looped "not met". The rule now covers every done-list command that is
+// not the verify command.
+func TestPlannerPromptSendsAnyDoneListCommandToTheFinalCheck(t *testing.T) {
+	prompt := plannerPromptNoMenu(t, "build it; done when sh check.sh passes", "make local")
+	for _, want := range []string{
+		"If the goal's done list names any command that is NOT the verify\n  command shown above",
+		"That holds for every such command, not only a whole suite",
+		"a script (\"sh check.sh\"), a linter\n  (\"go vet ./...\") and a single-package test",
+		"the FINAL check node runs that command once",
+		"check node does NOT try to: it replies FAIL",
+		"could not be run by any planned node, naming the command",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("with --verify-cmd \"make local\" and a done-list \"sh check.sh\", the planner prompt lacks %q", want)
+		}
+	}
+	if strings.Contains(prompt, "names a whole-suite command") {
+		t.Error("the with-command done-list rule is still restricted to whole-suite commands")
+	}
+}
+
+// TestPlannerPromptRefusesAStandInForADoneListCommand is #333's second half,
+// carried by doneListCommandRule into both spellings: a different command that
+// checks the same thing never satisfies a done item that names a command.
+func TestPlannerPromptRefusesAStandInForADoneListCommand(t *testing.T) {
+	const want = "A different command that checks the\n  same thing — a stand-in, a re-implementation, a test that covers the\n  same rule — never satisfies a done item: the done item names a command,\n  and only that command running counts."
+	for _, verifyCmd := range []string{"make local", ""} {
+		prompt := plannerPromptNoMenu(t, "build it; done when sh check.sh passes", verifyCmd)
+		if !strings.Contains(prompt, want) {
+			t.Errorf("verify-cmd %q: the planner prompt lacks the no-stand-in rule %q", verifyCmd, want)
+		}
+	}
+}
+
+// TestPlannerPromptCarriesTheUnrunnableDoneItemMarker is #333's engine half:
+// both spellings tell the final check node to name an uncovered done-list
+// command on a line opened by unrunnableDoneItemMarker, the line RunGoal
+// scans for to stop the loop.
+func TestPlannerPromptCarriesTheUnrunnableDoneItemMarker(t *testing.T) {
+	want := "\n      " + unrunnableDoneItemMarker + " <the command as the goal wrote it>\n"
+	for _, verifyCmd := range []string{"make local", ""} {
+		prompt := plannerPromptNoMenu(t, "build it; done when npm test passes", verifyCmd)
+		if !strings.Contains(prompt, want) {
+			t.Errorf("verify-cmd %q: the planner prompt lacks the marker line %q", verifyCmd, want)
 		}
 	}
 }
@@ -721,6 +800,58 @@ func TestPlannerPromptGivesTheFailBranchAPlaceForTheCaveat(t *testing.T) {
 		}
 		if !strings.Contains(prompt, "is not a reason to withhold PASS") {
 			t.Errorf("verify-cmd %q: the planner is not told an immaterial observation still PASSes", verifyCmd)
+		}
+	}
+}
+
+// TestPlannerPromptKeepsCheckNodesOffStateTheGoalForbids pins #388, in BOTH
+// spellings of the final-check paragraph. A goal that said not to push, not to
+// open a PR and not to create a remote got a final check node asserting an
+// open pull request — state the run was forbidden to change — and the cycle
+// FAILed over work that had landed. The pull-request assertion is scoped to a
+// goal whose own nodes push and open it, every check node asserts only what
+// this run produces, and a forbidden action is never a reason to reply FAIL.
+func TestPlannerPromptKeepsCheckNodesOffStateTheGoalForbids(t *testing.T) {
+	for _, verifyCmd := range []string{"make test", ""} {
+		prompt := plannerPromptNoMenu(t, "fix it on a branch; do not push, open a PR or create a remote", verifyCmd)
+		for _, want := range []string{
+			// 1: the PR assertion only for a goal that pushes and opens it itself
+			"ONLY when the goal's own nodes push the branch and open the pull\n    request",
+			"including any goal that says not to push or not to open or edit\n    a pull request — assert the branch REF instead",
+			"never asserts remotes, pushes or pull-request state.",
+			// 2: one scope rule for every planned check node
+			"- Every planned check node, final or not, asserts only what this run's own\n  nodes produce or change",
+			"It never asserts state the goal forbids\n  the run to change",
+			"it never asserts the ABSENCE of something the goal\n  only forbids creating",
+			"a remote that already existed is not a violation\n  of \"do not create a remote\"",
+			// 3: a forbidden action is the operator's next step, never a FAIL
+			"is the operator's\n  next step, not a qualification a reader would act on, so it is never a\n  reason to reply FAIL.",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("verify-cmd %q: prompt lost the #388 rule: missing %q", verifyCmd, want)
+			}
+		}
+	}
+}
+
+// TestPlannerPromptKeepsPRAssertionWhenOnlyANewRemoteIsForbidden pins the
+// other edge of #388. A goal that pushes to the existing origin and opens a PR
+// but says not to add a remote still pushes and opens the PR itself, so its
+// final check node keeps the open-PR assertion — sending it to the branch-ref
+// case would lose the catch for work committed but never pushed.
+func TestPlannerPromptKeepsPRAssertionWhenOnlyANewRemoteIsForbidden(t *testing.T) {
+	for _, verifyCmd := range []string{"make test", ""} {
+		prompt := plannerPromptNoMenu(t, "push to origin and open a PR; do not add a remote", verifyCmd)
+		for _, want := range []string{
+			"including any goal that says not to push or not to open or edit\n    a pull request — assert the branch REF instead",
+			"Forbidding only a\n    NEW remote does not change this: a goal whose own nodes push to an\n    existing remote and open the pull request takes the first bullet.",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("verify-cmd %q: prompt lost the #388 remote rule: missing %q", verifyCmd, want)
+			}
+		}
+		if strings.Contains(prompt, "or not to create a remote — assert the branch REF") {
+			t.Errorf("verify-cmd %q: a goal forbidding only a new remote is still sent to the branch-ref case", verifyCmd)
 		}
 	}
 }
