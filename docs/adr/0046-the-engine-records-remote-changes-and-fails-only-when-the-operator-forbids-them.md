@@ -210,8 +210,11 @@ interface the snapshot code takes, so tests use a fake.
 ADR 0002 (lines 58–64), 0005 and 0006 say a fifth spawner needs its own ADR;
 this is that ADR for one fixed, read-only `gh` invocation, nothing wider. The
 implementation adds the file to `allowedExecImporters` and `execSeamCallSites`
-and updates `CONTRIBUTING.md` and the `childenv` doc ("FOUR spawners",
-`childenv.go:4–21`); `prose_count_test` then derives 5. If review refuses the
+and updates `CONTRIBUTING.md`, `DESIGN.md` ("exactly four process-spawning
+objects", `DESIGN.md:1071`) and the `childenv` doc ("FOUR spawners",
+`childenv.go:4–21`) in the same change; `prose_count_test` then derives 5.
+Until that change lands, `DESIGN.md`'s four is correct: it describes code that
+exists, and this record is the decision that the count becomes five. If review refuses the
 fifth seam, the PR part is `unavailable` with reason `no gh seam` (*chosen*)
 and the git parts ship alone.
 
