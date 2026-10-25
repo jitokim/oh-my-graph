@@ -33,7 +33,7 @@ nodes:
       keeping the diff focused and matching the existing style (DESIGN.md is the
       spec; English-only):
         {{ inputs.task }}
-      os/exec belongs to the FIVE exec seams only — runner.ClaudeCLIRunner,
+      os/exec belongs to the FIVE exec seams only — runner.CLIRunner,
       verify.ShellVerifier, worktree.GitManager, browser.ExecOpener,
       remote.GHRunner — and a sixth spawner needs an ADR before it lands;
       internal/invariants enforces this.
