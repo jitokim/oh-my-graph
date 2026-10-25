@@ -171,8 +171,8 @@ func TestGitManager_CommitAttributable(t *testing.T) {
 
 // TestGitManager_RemoteSnapshotCommandsDisablePrompting pins the env of the
 // snapshot's commands: the four billing variables scrubbed exactly as for a
-// worktree command, plus GIT_TERMINAL_PROMPT=0 overriding a parent that set
-// it otherwise.
+// worktree command, plus GIT_TERMINAL_PROMPT=0 and an empty GIT_ASKPASS
+// overriding a parent that set them otherwise.
 func TestGitManager_RemoteSnapshotCommandsDisablePrompting(t *testing.T) {
 	m := NewGitManager("", "", "test-run")
 	m.environ = func() []string {
@@ -182,6 +182,7 @@ func TestGitManager_RemoteSnapshotCommandsDisablePrompting(t *testing.T) {
 			"OPENAI_API_KEY=sk-openai-secret",
 			"CODEX_API_KEY=sk-codex-secret",
 			"GIT_TERMINAL_PROMPT=1",
+			"GIT_ASKPASS=/usr/bin/ksshaskpass",
 			"HOME=/home/u",
 		}
 	}
@@ -191,6 +192,7 @@ func TestGitManager_RemoteSnapshotCommandsDisablePrompting(t *testing.T) {
 	if got := lastValue(cmd.Env, "GIT_TERMINAL_PROMPT"); got != "0" {
 		t.Errorf("GIT_TERMINAL_PROMPT = %q in the snapshot command's env, want 0 to win", got)
 	}
+	assertNoAskpass(t, cmd.Env, "the snapshot command's env")
 	if got := lastValue(m.gitCmd(context.Background(), nil, "status").Env, "GIT_TERMINAL_PROMPT"); got != "1" {
 		t.Errorf("a worktree command's env changed: GIT_TERMINAL_PROMPT = %q, want the parent's 1", got)
 	}
@@ -208,6 +210,7 @@ func TestGitManager_LsRemoteHeadsChildSeesScrubbedNoPromptEnv(t *testing.T) {
 			"OPENAI_API_KEY=sk-openai-secret",
 			"CODEX_API_KEY=sk-codex-secret",
 			"GIT_TERMINAL_PROMPT=1",
+			"GIT_ASKPASS=/usr/bin/ksshaskpass",
 		)
 	}
 	dump := filepath.Join(t.TempDir(), "env.txt")
@@ -226,6 +229,7 @@ func TestGitManager_LsRemoteHeadsChildSeesScrubbedNoPromptEnv(t *testing.T) {
 	if got := lastValue(env, "GIT_TERMINAL_PROMPT"); got != "0" {
 		t.Errorf("GIT_TERMINAL_PROMPT = %q in ls-remote's child, want 0", got)
 	}
+	assertNoAskpass(t, env, "ls-remote's child")
 }
 
 // envWithoutSSHChoice is the test process's environment minus any ssh
@@ -286,6 +290,7 @@ func TestGitManager_LsRemoteHeadsRunsSSHInBatchMode(t *testing.T) {
 	if got := lastValue(env, "GIT_TERMINAL_PROMPT"); got != "0" {
 		t.Errorf("GIT_TERMINAL_PROMPT = %q in ls-remote's child, want 0", got)
 	}
+	assertNoAskpass(t, env, "ls-remote's child")
 }
 
 // TestGitManager_LsRemoteHeadsKeepsTheUsersSSHChoice: a GIT_SSH_COMMAND or
@@ -356,7 +361,7 @@ func probeRemotesEnv(t *testing.T, m *GitManager) []string {
 }
 
 // TestGitManager_RemotesRunsSSHInBatchMode: `git remote -v` runs with the
-// same env as ls-remote — BatchMode ssh and git's prompt off when no ssh
+// same env as ls-remote — BatchMode ssh and git's prompts off when no ssh
 // command is chosen (an empty core.sshCommand counts as unset), and no
 // GIT_SSH_COMMAND over a GIT_SSH that only the injected environ carries.
 func TestGitManager_RemotesRunsSSHInBatchMode(t *testing.T) {
@@ -371,6 +376,7 @@ func TestGitManager_RemotesRunsSSHInBatchMode(t *testing.T) {
 		if got := lastValue(env, "GIT_TERMINAL_PROMPT"); got != "0" {
 			t.Errorf("GIT_TERMINAL_PROMPT = %q in git remote's env, want 0", got)
 		}
+		assertNoAskpass(t, env, "git remote's env")
 	})
 	t.Run("empty core.sshCommand", func(t *testing.T) {
 		isolateGitConfig(t, "")
@@ -487,6 +493,18 @@ func assertScrubbedEnv(t *testing.T, env []string) {
 				t.Errorf("billing variable leaked into the git child env: %s", kv)
 			}
 		}
+	}
+}
+
+// assertNoAskpass fails unless env sets GIT_ASKPASS, and sets it empty, so
+// git skips core.askPass and SSH_ASKPASS. lastValue alone cannot tell an
+// empty value from a missing key.
+func assertNoAskpass(t *testing.T, env []string, where string) {
+	t.Helper()
+	if !hasKey(env, "GIT_ASKPASS") {
+		t.Errorf("GIT_ASKPASS is not set in %s, want it set empty", where)
+	} else if got := lastValue(env, "GIT_ASKPASS"); got != "" {
+		t.Errorf("GIT_ASKPASS = %q in %s, want empty", got, where)
 	}
 }
 

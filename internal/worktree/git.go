@@ -38,10 +38,11 @@ const gitWaitDelay = time.Second
 // snapshot's reads — Remotes, LsRemoteHeads and the local CommitAttributable
 // check — go through the same m.gitEnv/gitCmd path that m.git uses, so they
 // inherit the one exec.Command, the env scrub and the timeout, and add only
-// GIT_TERMINAL_PROMPT=0 — plus, for Remotes and LsRemoteHeads, GIT_SSH_COMMAND
-// running ssh in BatchMode unless the user chose an ssh command (see
-// snapshotEnv). That widens ADR 0005's "the git worktree commands
-// behind a node's worktree:" to cover them; it adds no spawner.
+// GIT_TERMINAL_PROMPT=0 and an empty GIT_ASKPASS — plus, for Remotes and
+// LsRemoteHeads, GIT_SSH_COMMAND running ssh in BatchMode unless the user
+// chose an ssh command (see snapshotEnv). That widens ADR 0005's "the git
+// worktree commands behind a node's worktree:" to cover them; it adds no
+// spawner.
 //
 // Construct it in cmd/oh-my-graph and inject it; the Scheduler never builds
 // one, so no test picks up a real spawn by accident.
@@ -412,9 +413,12 @@ func (m *GitManager) gitCmd(ctx context.Context, extraEnv []string, args ...stri
 // noPromptEnv is appended to every remote-snapshot command (ADR 0046 §2.3).
 // `git ls-remote` reaches the network, and git asking for a password would
 // otherwise hold the snapshot until gitTimeout; with the variable set, git
-// fails at once and the part is recorded unavailable. It stops only git's
-// own prompt: ssh asks on /dev/tty by itself, which snapshotEnv covers.
-var noPromptEnv = []string{"GIT_TERMINAL_PROMPT=0"}
+// fails at once and the part is recorded unavailable. An empty GIT_ASKPASS
+// does the same for an askpass helper: git then skips core.askPass and
+// SSH_ASKPASS, so no helper — a GUI dialog, a credential popup — can prompt
+// either. It stops only git's own prompts: ssh asks on /dev/tty by itself,
+// which snapshotEnv covers.
+var noPromptEnv = []string{"GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS="}
 
 // batchSSH is the ssh command snapshotEnv adds: BatchMode makes ssh fail at
 // once on an unknown host key or a passphrase-protected key with no agent,
