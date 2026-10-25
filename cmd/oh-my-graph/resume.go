@@ -838,6 +838,8 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		remote.print(os.Stdout)
 		return ctxErr
 	}
+	// A guarded leg names the parts it starts without (ADR 0046 §5.2).
+	remote.printLaunchNotice(os.Stdout)
 	// A failed write of this leg's decisions ends the leg the same way, before
 	// any node starts, but as a failure — a plain wrapped error that
 	// mainExitCode maps to exit 1 and prints as its `oh-my-graph: ` stderr

@@ -256,8 +256,121 @@ func (l *remoteLeg) record() {
 	}
 }
 
-// print writes what this leg observed, after the ledger table.
-func (l *remoteLeg) print(w io.Writer) { printRemoteChanges(w, &l.changes) }
+// print writes what this leg observed, after the ledger table, and on a
+// guarded leg which parts its verdict could not use (printGuardSummary).
+func (l *remoteLeg) print(w io.Writer) {
+	printRemoteChanges(w, &l.changes)
+	if l.guarded {
+		printGuardSummary(w, &l.changes)
+	}
+}
+
+// prNotGuarded is the notice a guarded leg prints, at launch and again in its
+// summary, when the pull-request part cannot be guarded (ADR 0046 §5.2).
+const prNotGuarded = "PR part not guarded: "
+
+// printLaunchNotice names, on a guarded leg, each part its before snapshot
+// could not read (ADR 0046 §5.2): the leg still runs, and its verdict uses
+// only the parts observed, since an unavailable part yields no entries. An
+// unguarded leg, or a guarded one that read every part, prints nothing.
+func (l *remoteLeg) printLaunchNotice(w io.Writer) {
+	n := len(l.changes.Legs)
+	if !l.guarded || n == 0 {
+		return
+	}
+	before := l.changes.Legs[n-1].Before
+	var unavailable []string
+	var guarded []runstate.RemotePart
+	prReason := ""
+	for _, part := range []runstate.RemotePart{runstate.RemotePartRemotes, runstate.RemotePartBranches, runstate.RemotePartPullRequests} {
+		reason, observed := remotePartReason(before, part)
+		if observed {
+			guarded = append(guarded, part)
+			continue
+		}
+		if reason == "" {
+			reason = "no reason recorded"
+		}
+		unavailable = append(unavailable, string(part)+" ("+reason+")")
+		if part == runstate.RemotePartPullRequests {
+			prReason = reason
+		}
+	}
+	if len(unavailable) == 0 {
+		return
+	}
+	fmt.Fprintln(w, fence.SanitizeTerminalLine("--forbid-remote-changes: not guarded (unavailable at this leg's start): "+strings.Join(unavailable, "; ")+"; guarded: "+joinParts(guarded)))
+	if prReason != "" {
+		fmt.Fprintln(w, fence.SanitizeTerminalLine(prNotGuarded+prReason))
+	}
+	fmt.Fprintln(w)
+}
+
+// printGuardSummary repeats, beside a guarded leg's change record, which of
+// its parts were not compared and so not guarded, with why (ADR 0046 §5.2),
+// so an operator who reads only the end of the output still sees it. A part
+// compared for only some remotes (one added during the leg) was compared, and
+// its own not_compared line above says the rest.
+func printGuardSummary(w io.Writer, c *runstate.RemoteChanges) {
+	n := len(c.Legs)
+	if n == 0 || c.Legs[n-1].Changes == nil {
+		return
+	}
+	leg := c.Legs[n-1]
+	d := leg.Changes
+	var unguarded []string
+	prReason := ""
+	for _, nc := range d.NotCompared {
+		if nc.Remote != "" {
+			continue
+		}
+		reason := nc.Reason
+		// A part unavailable on both sides for the one reason the launch
+		// named is said with that reason, so the notice reads the same twice.
+		if leg.After != nil {
+			before, beforeOK := remotePartReason(leg.Before, nc.Part)
+			after, afterOK := remotePartReason(*leg.After, nc.Part)
+			if !beforeOK && !afterOK && before == after && before != "" {
+				reason = before
+			}
+		}
+		unguarded = append(unguarded, string(nc.Part)+" ("+reason+")")
+		if nc.Part == runstate.RemotePartPullRequests {
+			prReason = reason
+		}
+	}
+	if len(unguarded) == 0 {
+		return
+	}
+	fmt.Fprintln(w, fence.SanitizeTerminalLine("--forbid-remote-changes: not guarded (not compared): "+strings.Join(unguarded, "; ")+"; guarded: "+joinParts(d.Observed)))
+	if prReason != "" {
+		fmt.Fprintln(w, fence.SanitizeTerminalLine(prNotGuarded+prReason))
+	}
+}
+
+// remotePartReason is part's reason in s, and whether s observed it.
+func remotePartReason(s runstate.RemoteSnapshot, part runstate.RemotePart) (string, bool) {
+	switch part {
+	case runstate.RemotePartRemotes:
+		return s.Remotes.Reason, s.Remotes.Status == runstate.RemotePartObserved
+	case runstate.RemotePartBranches:
+		return s.Branches.Reason, s.Branches.Status == runstate.RemotePartObserved
+	default:
+		return s.PullRequests.Reason, s.PullRequests.Status == runstate.RemotePartObserved
+	}
+}
+
+// joinParts names parts in order, "none" for no part.
+func joinParts(parts []runstate.RemotePart) string {
+	if len(parts) == 0 {
+		return "none"
+	}
+	names := make([]string, len(parts))
+	for i, p := range parts {
+		names[i] = string(p)
+	}
+	return strings.Join(names, ", ")
+}
 
 // cloneRemoteChanges copies c deep enough for BeginLeg and EndLeg: they only
 // append legs and set the last leg's After and Changes, so fresh top-level

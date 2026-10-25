@@ -1311,6 +1311,8 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 		closeLeg(leg, runfeed.OutcomeFailed)
 		return ctxErr
 	}
+	// A guarded leg names the parts it starts without (ADR 0046 §5.2).
+	remote.printLaunchNotice(os.Stdout)
 	// The after snapshot ends the leg, not the scheduler: an interrupt during
 	// it ends the leg interrupted (finish), so its run_finished waits for it.
 	runErr := remote.finish(ctx, hold, scheduler.Run(ctx, g, h, led))
