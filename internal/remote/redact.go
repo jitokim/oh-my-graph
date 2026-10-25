@@ -12,11 +12,15 @@ const maxReasonBytes = 500
 
 var (
 	// httpUserinfo is the whole userinfo of an http(s) URL: there the user
-	// name alone is often a token (https://<token>@github.com/...).
-	httpUserinfo = regexp.MustCompile(`(?i)\b(https?://)[^/\s@]+@`)
+	// name alone is often a token (https://<token>@github.com/...). The run
+	// goes to the last @ of the authority, so a password holding an @ is
+	// replaced whole, and stops at /, whitespace, ? and #, so an @ in a query
+	// or fragment is never taken for userinfo.
+	httpUserinfo = regexp.MustCompile(`(?i)\b(https?://)[^/\s?#]+@`)
 	// urlPassword is the password of any other scheme's userinfo; the user
-	// name (git@ in ssh://git@host) is kept.
-	urlPassword = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.-]*://[^/\s:@]*):[^/\s@]+@`)
+	// name (git@ in ssh://git@host) is kept. The password runs to the last @
+	// of the authority and stops at /, whitespace, ? and #, as above.
+	urlPassword = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.-]*://[^/\s?#:@]*):[^/\s?#]+@`)
 )
 
 // RedactURLCredentials replaces the credentials a URL may carry, wherever
