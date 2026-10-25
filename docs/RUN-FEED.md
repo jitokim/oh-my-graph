@@ -381,14 +381,27 @@ A snapshot has three parts, each with `status` `"observed"` or
 `remote`, `branch`, `sha` from `git ls-remote --heads` per remote) and
 `pull_requests` (`open`: `number`, `head_ref_name`, `head_ref_oid` from `gh
 pr list --state open --limit 1000`, sorted by number; when unavailable also
-`detail`, gh's own words, redacted). `pull_requests`' reason is one of `gh
-not found`, `not authenticated`, `non-zero exit`, `timeout`, `canceled`,
-`unparsable output`, `truncated` (exactly 1000 open PRs, so more may exist)
+`detail`, gh's own words, redacted; and, both omitted when empty, `repo`, the
+GitHub repo gh was expected to read as `host/owner/name`, and `repo_source`,
+how it was worked out: `GH_REPO`, `gh default` or `single GitHub remote`).
+`repo` and `repo_source` are set whenever an expected repo was worked out,
+whatever gh then answered, so an unavailable part can carry them.
+`pull_requests`' reason is one of `gh not found`, `not authenticated`,
+`non-zero exit`, `timeout`, `canceled`, `unparsable output`, `truncated`
+(exactly 1000 open PRs, so more may exist), `ambiguous gh repo: more than
+one GitHub remote and no gh default (run gh repo set-default)`, `ambiguous gh
+repo: more than one remote is gh's default`, `gh repo unknown: the remotes
+could not be read`, `gh repo unknown: gh's default repo could not be read
+from git config`, `gh repo unknown: GH_REPO is not [HOST/]OWNER/REPO` (in
+these five gh was not asked), `gh read another repo: expected
+<host/owner/name>, got <host/owner/name>` (a PR's url named another repo)
 or, on an interrupted `after`, `interrupted`. The key is absent from a
 snapshot written before the part existed; a diff against one reports
-`pull_requests` as `not_compared`, reason `… not recorded`. The part is
-additive like the rest of the record: the state schema stays 3, no event
-carries it and the feed schema (3) is unchanged. An empty
+`pull_requests` as `not_compared`, reason `… not recorded`. Two parts that
+both record a `repo` and name different ones are `not_compared` too, reason
+`different repos: before <repo>, after <repo>`. The part, `repo` and
+`repo_source` included, is additive like the rest of the record: the state
+schema stays 3, no event carries it and the feed schema (3) is unchanged. An empty
 observed list is an observed "none"; an unavailable part is never treated as
 empty. `branches` is unavailable as a whole when any one remote's
 `ls-remote` failed, with every failing remote in the reason. Credentials in

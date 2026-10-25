@@ -180,7 +180,7 @@ its own injected interface:
 | `internal/verify.ShellVerifier` | a node's `success_check.verify` command | `verify.Verifier` |
 | `internal/worktree.GitManager` | the `git` commands the engine issues against the invocation repository: the `git worktree` commands behind a node's `worktree:`, and the remote snapshot's reads (ADR 0005 scope amendment, [#410](https://github.com/jitokim/oh-my-graph/issues/410)) | `worktree.Provider`, `worktree.RemoteObserver` |
 | `internal/browser.ExecOpener` | the `open`/`xdg-open` launch of the `serve` URL | `browser.Opener` |
-| `internal/remote.GHRunner` | the one fixed, read-only `gh pr list --state open --limit 1000 --json number,headRefName,headRefOid` of the remote snapshot's open-PR part, in the invocation repository ([ADR 0046](docs/adr/0046-the-engine-records-remote-changes-and-fails-only-when-the-operator-forbids-them.md), [#410](https://github.com/jitokim/oh-my-graph/issues/410)) | `remote.PRLister` |
+| `internal/remote.GHRunner` | the one fixed, read-only `gh pr list --state open --limit 1000 --json number,headRefName,headRefOid,url` of the remote snapshot's open-PR part, in the invocation repository ([ADR 0046](docs/adr/0046-the-engine-records-remote-changes-and-fails-only-when-the-operator-forbids-them.md), [#410](https://github.com/jitokim/oh-my-graph/issues/410)) | `remote.PRLister` |
 
 ```go
 type NodeRunner interface {

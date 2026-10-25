@@ -1135,17 +1135,45 @@ the invocation exits 1, an exception to ADR 0023 §2.6 pinned by
 **Pull requests.** The third part is read through `remote.PRLister`,
 whose production implementation is the fifth exec seam,
 `internal/remote.GHRunner`: one fixed, read-only `gh pr list --state open
---limit 1000 --json number,headRefName,headRefOid`, run in the invocation
+--limit 1000 --json number,headRefName,headRefOid,url`, run in the invocation
 repository (so the PRs whose base is its GitHub repo), on the scrubbed
 environment plus `GH_PROMPT_DISABLED=1`, under its own 30 s timeout
 (`ghTimeout`). `GH_TOKEN` survives the scrub, so gh reads as the operator;
 no model text reaches the argv. Each PR records only `number`,
-`head_ref_name` and `head_ref_oid`; `updatedAt`, the title and the rest are
+`head_ref_name` and `head_ref_oid`; `url` is read, redacted, to check the
+repo and never recorded, and `updatedAt`, the title and the rest are
 dropped at parse, so a comment, a label or a review never reads as a change.
 The part is `unavailable` with a short, stable reason — `gh not found`,
 `not authenticated` (gh's exit 4 or its `gh auth login` advice), `non-zero
-exit`, `timeout`, `canceled`, `unparsable output` — and gh's own words,
-redacted and cut to one line, in `detail`. A list holding exactly
+exit`, `timeout`, `canceled`, `unparsable output` (a PR with no `url`
+included) — and gh's own words, redacted and cut to one line, in `detail`.
+
+*Which repo gh reads.* With two GitHub remotes and no default, `gh pr list`
+does not fail: it lists one of them, and the snapshot would record that
+repo's PRs as this one's. So before gh is asked the snapshot works out the
+expected repo (host, owner/name and source), by the first rule that applies:
+`GH_REPO` in gh's (scrubbed) environment, source `GH_REPO`; else the GitHub
+remote `gh repo set-default` marked (`remote.<name>.gh-resolved` = `base`,
+read with `git config` through `GitManager`), source `gh default`; else the
+one distinct GitHub repo among the remotes' fetch URLs (host and owner/name
+compared case-insensitively), source `single GitHub remote`. A GitHub remote
+is one on `GH_HOST` when that is set, else on `github.com` or a `*.ghe.com`
+host; a host in `GH_REPO` wins over `GH_HOST`, and with neither the host is
+`github.com`. No GitHub remote at all leaves gh to its own resolution, as
+before. When the repo cannot be told the part is `unavailable` and gh is not
+asked: `ambiguous gh repo: more than one GitHub remote and no gh default
+(run gh repo set-default)`, `ambiguous gh repo: more than one remote is gh's
+default`, `gh repo unknown: the remotes could not be read` (the remotes
+part failed and no `GH_REPO`), `gh repo unknown: gh's default repo could not
+be read from git config`, or `gh repo unknown: GH_REPO is not
+[HOST/]OWNER/REPO`. When gh answers with at least one PR and an expected
+repo was worked out, each PR's `url` (`https://<host>/<owner>/<repo>/pull/<n>`)
+must name that repo, case-insensitively; another repo, PRs naming more than
+one, or a url naming none make the part `unavailable`, `gh read another
+repo: expected <host/owner/name>, got <host/owner/name>`. With zero PRs, or
+no expected repo, the list stands unchecked. The part records the expected
+repo as `repo` (`host/owner/name`) and `repo_source` whenever one was worked
+out, whatever gh then answered; both are empty when none was. A list holding exactly
 `prListLimit` (1000) PRs may have been cut short, so it is `unavailable`,
 `truncated`, whatever lister produced it. The PR part is read even when the
 git parts fail, and an interrupted *after* records it `interrupted` with the
@@ -1163,7 +1191,10 @@ re-pointed remote gets a `not_compared` item for its branches instead. A
 part unavailable on either side gives a `not_compared` item with the reason,
 so "no change" and "could not see" never read the same. A PR part not
 observed on either side gives `not compared: pull_requests: …` the same
-way; a snapshot written before the part existed has none, which reads
+way, and so do two PR parts that both record a `repo` and name different
+ones (case-insensitively), reason `different repos: before <repo>, after
+<repo>`; a side with no `repo` recorded compares as before. A snapshot
+written before the part existed has none, which reads
 `not recorded` (a resumed old run's between-legs diff says `unavailable
 before: not recorded`).
 
@@ -1194,7 +1225,11 @@ Remote changes (observed: remotes, branches, pull_requests):
 ```
 
 A PR part gh could not read prints, for instance, `not compared:
-pull_requests: unavailable after: not authenticated`.
+pull_requests: unavailable after: not authenticated`. When the PR part was
+compared and its *after* snapshot recorded a repo, the observed list names
+it with its source, `pull_requests of github.com/owner/name (gh default)`;
+with no repo recorded it reads `pull_requests`. The between-legs line takes
+the repo from the resumed leg's *before* snapshot.
 
 `run_commit` reads "observed during the run; points at a commit this run
 made"; `not_attributable` reads "observed, not attributable". No entry and
@@ -1206,8 +1241,8 @@ compared, the line says `none observed in the parts compared` and a
 **Storage.** `state.json` carries `run_base_sha` and `remote_changes`
 (`legs`, each with `before`, `after` and `changes`, and `between_legs`),
 additive and optional, so the schema stays 3 and no event is added
-(docs/RUN-FEED.md); the `pull_requests` part is additive within it, and a
-snapshot without one loads unchanged. Every git command runs on `worktree.GitManager`, through the
+(docs/RUN-FEED.md); the `pull_requests` part is additive within it, as are
+its `repo` and `repo_source`, and a snapshot without them loads unchanged. Every git command runs on `worktree.GitManager`, through the
 `worktree.RemoteObserver` interface, with `GIT_TERMINAL_PROMPT=0` and an
 empty `GIT_ASKPASS` added to the scrubbed environment. That stops only git's
 own prompts, an askpass helper's included — ssh asks on

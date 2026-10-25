@@ -571,6 +571,8 @@ has no open issue behind it.
   authenticated`, `non-zero exit`, `unparsable output`), never as an empty
   list, and prints `not compared: pull_requests: …`; a PR opened behind it
   goes unseen. gh never prompts (`GH_PROMPT_DISABLED=1`).
+  <br>**Several GitHub remotes need a gh default.** With more than one GitHub remote, the PR part is recorded only after `gh repo set-default` (or with `GH_REPO`); otherwise it is `unavailable` (`ambiguous gh repo: …`).
+  <br>**The repo gh read is checked only when a PR is open.** The PR part checks the repo against the PR URLs only when at least one PR is open; an empty list is not checked.
   <br>**At most 1000 open pull requests.** The list is read with `--limit
   1000`; a list holding exactly 1000 may be cut short, so it is recorded
   `unavailable` with reason `truncated` and not compared. A repository with

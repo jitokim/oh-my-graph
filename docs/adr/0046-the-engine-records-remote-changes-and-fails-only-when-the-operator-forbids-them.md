@@ -203,8 +203,9 @@ repository, `cmd.Env = childenv.Scrub(…)` plus `GH_PROMPT_DISABLED=1`
 `gitTimeout`). `childenv.Scrub` removes the four model keys
 (`internal/childenv/childenv.go:30–36`) and leaves `GH_TOKEN`, so `gh`
 authenticates as the operator. Its argv is fixed by the engine (`pr list
---state open --limit 1000 --json number,headRefName,headRefOid`); no model
-text reaches it. `GHRunner` satisfies `remote.PRLister` (*chosen*), the
+--state open --limit 1000 --json number,headRefName,headRefOid,url`; amended
+2026-10-26: `url` added to verify the repo read, still fixed and read-only);
+no model text reaches it. `GHRunner` satisfies `remote.PRLister` (*chosen*), the
 interface the snapshot code takes, so tests use a fake.
 
 ADR 0002 (lines 58–64), 0005 and 0006 say a fifth spawner needs its own ADR;
