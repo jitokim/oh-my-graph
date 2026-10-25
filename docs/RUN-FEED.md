@@ -633,8 +633,8 @@ write leaves its event on the stream and its `⚠` on the progress feed.
 | `node_passed` | `node_id`, `verdict` (`"PASS"`), `cost_usd`, `cost_unknown`, `usage`, `reported_cost_usd` *(optional)*, `session_id`, `retries`, `detail`, `provenance` *(optional)* | A node reaches a terminal PASS (including an approved gate). `provenance` says **how** — see below. |
 | `node_failed` | `node_id`, `verdict` (`"FAIL"`), `cost_usd`, `cost_unknown`, `usage`, `reported_cost_usd` *(optional)*, `session_id`, `retries`, `detail` | A node reaches a terminal FAIL (any check, the verifier, its budget, the runner, or a rejected gate). |
 | `node_retried` | `node_id`, `retries` (1-based retry ordinal), `session_id`, `round`, `cost_usd`, `cost_unknown`, `usage`, `compound_shell_rule` *(optional)* | A retry attempt begins after a failed one — or a feedback arc fires (ADR 0010): the declarer's non-final judgment failure re-arms its loop body, with `round` the 1-based round now beginning, `retries` 0, no `session_id` (the re-run's ids arrive on its own `node_started`s), and a `detail` of the form `feedback round 1/2: re-running impl → review`. That feedback form carries the completed declarer attempt's accounting because no terminal event is emitted for it. |
-| `run_finished` | `outcome` (`"passed"` \| `"failed"` \| `"paused"`), `detail`, `cost_usd`, `cost_unknown`, `usage` *(optional)* | The leg ends — every launch settled. A plan rejected before a graph exists carries the paid planner call's accounting here. A gate pause is `"paused"`, not `"failed"`. A subscription session-limit pause (ADR 0009) is also `"paused"`, distinguished by a `detail` naming the limited node(s) and the CLI's own limit message (an additive field — no schema bump; absent on every other outcome). The limited nodes carry **no** terminal node event: they are un-run, not FAILED, and re-run on `resume --retry-failed`. |
-| `gate_paused` | `node_id` | *(schema 2)* A gate node decided to pause: no new work launches, in-flight siblings drain, and the leg closes with outcome `"paused"`. `node_id` is the gate a resume must decide. |
+| `run_finished` | `outcome` (`"passed"` \| `"failed"` \| `"paused"`), `detail`, `cost_usd`, `cost_unknown`, `usage` *(optional)* | The leg ends — every launch settled. A plan rejected before a graph exists carries the paid planner call's accounting here. A gate pause is `"paused"`, not `"failed"` — except when a Ctrl-C lands during the leg's after remote snapshot, which closes even a paused leg `"failed"` (see `gate_paused`). A subscription session-limit pause (ADR 0009) is also `"paused"`, distinguished by a `detail` naming the limited node(s) and the CLI's own limit message (an additive field — no schema bump; absent on every other outcome). The limited nodes carry **no** terminal node event: they are un-run, not FAILED, and re-run on `resume --retry-failed`. |
+| `gate_paused` | `node_id` | *(schema 2)* A gate node decided to pause: no new work launches, in-flight siblings drain, and the leg closes with outcome `"paused"`. `node_id` is the gate a resume must decide. The one exception ([#410](https://github.com/jitokim/oh-my-graph/issues/410)): a Ctrl-C during the leg's after remote snapshot closes it `"failed"` instead, with `gate.paused_at` empty in `state.json`; that gate is then not one a resume decides, and it pauses again when `resume --retry-failed` reaches it. The `gate_paused` line stays in the feed, so a node event can say the gate paused under a leg that closed `"failed"`. |
 | `gate_approved` | `node_id` | *(schema 2)* A gate decision of approve was applied — a resumed leg replaying `--approve`, or any leg reaching a gate `run --auto-approve` pre-approved at launch; the gate's terminal `node_passed` follows. |
 | `gate_rejected` | `node_id` | *(schema 2)* A gate decision of reject was applied (a resumed leg replaying `--reject`); the gate's terminal `node_failed` follows and its subtree is pruned. |
 
@@ -776,7 +776,15 @@ emitted the moment the gate decides to pause — in-flight siblings drain
 `run_finished` (outcome `"paused"`). If several gates evaluate concurrently,
 each pausing gate emits its own `gate_paused`; the gate the run is actually
 resumable at is the one `state.json` records in `gate.paused_at` (the first
-to pause).
+to pause). The one exception is a Ctrl-C during the leg's after remote
+snapshot ([#410](https://github.com/jitokim/oh-my-graph/issues/410)): the leg
+then closes with `run_finished` outcome `"failed"`, not `"paused"`, and
+`gate.paused_at` is empty, so no gate is resumable by a decision — the gate
+that emitted `gate_paused` is un-run and pauses again when
+`resume --retry-failed` reaches it. Its `gate_paused` line is not withdrawn
+(the feed is append-only), so a consumer that derives a node's state from its
+last event — the dashboard card among them — still shows that gate as paused
+under a leg that closed `"failed"`; the leg's `run_finished` is the authority.
 
 ### Guarantees
 
