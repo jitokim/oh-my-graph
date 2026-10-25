@@ -121,7 +121,6 @@ func TestTakeRemoteSnapshot_ExpectedGHRepo(t *testing.T) {
 			wantReason: ReasonAmbiguousGHRepo,
 		},
 		{
-			// (g)
 			name:       "gh lists the PRs of a repository other than the expected origin",
 			remotes:    []Remote{{Name: "origin", FetchURL: originHTTPS}},
 			prs:        []remote.OpenPR{prIn("https://github.com/cli/cli/pull/3")},
