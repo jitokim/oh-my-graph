@@ -10,11 +10,8 @@
   a commit this run made"; every other PR entry reads "observed, not
   attributable". With `gh` missing or not authenticated, a timeout (30 s), or
   exactly 1000 open PRs (`truncated`), the part is recorded `unavailable` and
-  printed as `not compared: pull_requests: …`, never as an empty list. The
-  snapshot also records which GitHub repo gh was expected to read (`repo`,
-  `repo_source`) and checks it against the PRs' urls, so with several GitHub
-  remotes and no `gh repo set-default` the part is `unavailable` (`ambiguous
-  gh repo`) rather than another repo's PRs. Still
-  a report only: no verdict or exit code changes, and the state and feed
-  schemas stay 3.
+  printed as `not compared: pull_requests: …`, never as an empty list, or
+  when the repo gh read cannot be told or is not the one expected (`repo`,
+  `repo_source`). Still a report only: no verdict or exit code changes, and
+  the state and feed schemas stay 3.
   ([#410](https://github.com/jitokim/oh-my-graph/issues/410))
