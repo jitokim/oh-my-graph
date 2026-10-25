@@ -29,9 +29,9 @@ let them drift apart.
   `internal/childenv.Scrub` — used by ALL spawners (a model node, a
   `success_check.verify` command, the git commands behind a node's
   `worktree:`, the browser launch of the `serve` URL, and the `gh pr list`
-  of the remote snapshot). This is what keeps
-  the tool on subscription billing instead of silently falling back to
-  metered API billing. It is unit-tested in
+  of the remote snapshot). This keeps those
+  variables from overriding the CLI's saved login (what that login is, see
+  below). It is unit-tested in
   `internal/childenv/childenv_test.go` and at each call site
   (`internal/runner/claude_test.go`, `internal/verify/shell_test.go`,
   `internal/worktree/git_test.go`, `internal/browser/exec_test.go`,

@@ -1177,9 +1177,11 @@ no expected repo, the list stands unchecked. The part records the expected
 repo as `repo` (`host/owner/name`) and `repo_source` whenever one was worked
 out, whatever gh then answered; both are empty when none was. A list holding
 exactly `prListLimit` (1000) PRs may have been cut short, so it is
-`unavailable`, `truncated`, whatever lister produced it. The PR part is read
-even when the git parts fail, and an interrupted *after* records it
-`interrupted` with the others. Tests inject `remote.FakePRLister`; no test
+`unavailable`, `truncated`, whatever lister produced it. When the remotes
+part is unavailable, the PR part is read only if `GH_REPO` names the repo;
+otherwise it is `unavailable`, `gh repo unknown: the remotes could not be
+read`, and gh is not called. An interrupted *after* records it `interrupted`
+with the others. Tests inject `remote.FakePRLister`; no test
 runs a real gh.
 
 **Entries.** The diff of two snapshots gives `remote_added`,

@@ -204,7 +204,9 @@ repository, `cmd.Env = childenv.Scrub(…)` plus `GH_PROMPT_DISABLED=1`
 (`internal/childenv/childenv.go:30–36`) and leaves `GH_TOKEN`, so `gh`
 authenticates as the operator. Its argv is fixed by the engine (`pr list
 --state open --limit 1000 --json number,headRefName,headRefOid,url`; amended
-2026-10-26: `url` added to verify the repo read, still fixed and read-only);
+2026-10-26: `url` added to verify the repo read, so the fields are exactly
+`number,headRefName,headRefOid,url`, still fixed and read-only; the exec seams
+are now five, `remote.GHRunner` the fifth);
 no model text reaches it. `GHRunner` satisfies `remote.PRLister` (*chosen*), the
 interface the snapshot code takes, so tests use a fake.
 
