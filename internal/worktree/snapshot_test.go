@@ -339,9 +339,10 @@ func TestTakeRemoteSnapshot_PullRequestsStandApartFromGit(t *testing.T) {
 	}
 }
 
-// prListLimit mirrors internal/remote's unexported --limit (ADR 0046 §2.1).
-// Were that limit raised, a list this long would read as observed and the
-// truncation test below would fail, so the two cannot drift silently.
+// prListLimit copies internal/remote's unexported --limit (ADR 0046 §2.1),
+// which stays unexported, so this is the literal 1000.
+// internal/remote's TestPrListLimitIsTheValueOtherPackagesCopy pins that value,
+// so a change to it in either direction fails there before this copy goes stale.
 const prListLimit = 1000
 
 // ADR 0046 §8.13: a lister answering exactly remote's prListLimit PRs — here the fake,

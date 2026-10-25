@@ -214,6 +214,16 @@ func TestGHRunner_UnparsableOutput(t *testing.T) {
 	}
 }
 
+// prListLimit stays unexported (ADR 0046 §2.1), so the tests in
+// cmd/oh-my-graph and internal/worktree that build a list of the whole limit
+// write the literal 1000. This pins the value they copy: changing prListLimit in
+// either direction fails here, before a copy can go stale.
+func TestPrListLimitIsTheValueOtherPackagesCopy(t *testing.T) {
+	if prListLimit != 1000 {
+		t.Errorf("prListLimit = %d; update the literal 1000 in cmd/oh-my-graph/remotechanges_test.go and internal/worktree/snapshot_test.go, then this test", prListLimit)
+	}
+}
+
 func TestGHRunner_ExactlyTheLimitIsTruncated(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "prs.json")
 	if err := os.WriteFile(file, []byte(prJSON(t, prListLimit)), 0o600); err != nil {
