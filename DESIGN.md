@@ -1146,7 +1146,7 @@ The part is `unavailable` with a short, stable reason — `gh not found`,
 `not authenticated` (gh's exit 4 or its `gh auth login` advice), `non-zero
 exit`, `timeout`, `canceled`, `unparsable output` — and gh's own words,
 redacted and cut to one line, in `detail`. A list holding exactly
-`PRListLimit` (1000) PRs may have been cut short, so it is `unavailable`,
+`prListLimit` (1000) PRs may have been cut short, so it is `unavailable`,
 `truncated`, whatever lister produced it. The PR part is read even when the
 git parts fail, and an interrupted *after* records it `interrupted` with the
 others. Tests inject `remote.FakePRLister`; no test runs a real gh.

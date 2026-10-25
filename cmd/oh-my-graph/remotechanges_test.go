@@ -1207,11 +1207,16 @@ func TestRunGraph_PullRequestsChangedDuringTheLegArePrintedWithTheirAttribution(
 	}
 }
 
+// prListLimit mirrors internal/remote's unexported --limit (ADR 0046 §2.1).
+// Were that limit raised, a list this long would read as observed and the
+// truncation test below would fail, so the two cannot drift silently.
+const prListLimit = 1000
+
 // A PR part that cannot be read on either side prints a not_compared line
 // naming why, never "none observed" for PRs, and changes neither the error
 // nor the exit code of the same run with a readable list.
 func TestRunGraph_AnUnreadablePRListIsNotComparedAndNeverChangesTheOutcome(t *testing.T) {
-	limit := make([]remote.OpenPR, remote.PRListLimit)
+	limit := make([]remote.OpenPR, prListLimit)
 	for i := range limit {
 		limit[i] = remote.OpenPR{Number: i + 1, HeadRefName: "b", HeadRefOid: remoteMainSHA}
 	}

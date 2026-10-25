@@ -33,19 +33,19 @@ const ghTimeout = 30 * time.Second
 // killed — see ghCmd.
 const ghWaitDelay = time.Second
 
-// PRListLimit is the --limit the PR list is read with (ADR 0046 §2.1). `gh pr
+// prListLimit is the --limit the PR list is read with (ADR 0046 §2.1). `gh pr
 // list` returns 30 PRs unless told otherwise, so two snapshots of a busy
 // repository could list different PRs that never changed. A result holding
 // exactly this many may have been cut short, and is ReasonTruncated, never
 // compared.
-const PRListLimit = 1000
+const prListLimit = 1000
 
 // ghPRListArgs is the whole argv: fixed by the engine, built from nothing a
 // node or a model wrote.
 var ghPRListArgs = []string{
 	"pr", "list",
 	"--state", "open",
-	"--limit", strconv.Itoa(PRListLimit),
+	"--limit", strconv.Itoa(prListLimit),
 	"--json", "number,headRefName,headRefOid",
 }
 
@@ -69,7 +69,7 @@ const (
 	// ReasonUnparsable: gh exited 0 but its output was not the JSON list the
 	// argv asked for.
 	ReasonUnparsable = "unparsable output"
-	// ReasonTruncated: the list held exactly PRListLimit PRs, so more may
+	// ReasonTruncated: the list held exactly prListLimit PRs, so more may
 	// exist.
 	ReasonTruncated = "truncated"
 )
@@ -208,13 +208,13 @@ func parsePRList(out []byte) PRList {
 	return CheckTruncation(ObservedPRs(prs))
 }
 
-// CheckTruncation is l, unless l is an observed list holding PRListLimit PRs
+// CheckTruncation is l, unless l is an observed list holding prListLimit PRs
 // or more: such a list may have been cut short, so it is unavailable,
 // ReasonTruncated (ADR 0046 §2.1). The snapshot applies it to whatever
 // PRLister it was given, so the rule holds for every implementation, not
 // only for GHRunner's parse.
 func CheckTruncation(l PRList) PRList {
-	if l.Observed() && len(l.PRs) >= PRListLimit {
+	if l.Observed() && len(l.PRs) >= prListLimit {
 		return UnavailablePRs(ReasonTruncated, "gh returned "+strconv.Itoa(len(l.PRs))+" open pull requests, the --limit")
 	}
 	return l

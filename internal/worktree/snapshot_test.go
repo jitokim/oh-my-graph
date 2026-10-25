@@ -339,18 +339,23 @@ func TestTakeRemoteSnapshot_PullRequestsStandApartFromGit(t *testing.T) {
 	}
 }
 
-// ADR 0046 §8.13: a lister answering exactly PRListLimit PRs — here the fake,
+// prListLimit mirrors internal/remote's unexported --limit (ADR 0046 §2.1).
+// Were that limit raised, a list this long would read as observed and the
+// truncation test below would fail, so the two cannot drift silently.
+const prListLimit = 1000
+
+// ADR 0046 §8.13: a lister answering exactly remote's prListLimit PRs — here the fake,
 // which applies no limit of its own — records the part unavailable,
 // "truncated", and the diff does not compare it; one fewer is observed.
 func TestTakeRemoteSnapshot_AListOfTheWholeLimitIsTruncated(t *testing.T) {
-	full := make([]remote.OpenPR, remote.PRListLimit)
+	full := make([]remote.OpenPR, prListLimit)
 	for i := range full {
 		full[i] = remote.OpenPR{Number: i + 1, HeadRefName: "b", HeadRefOid: strings.Repeat("c", 40)}
 	}
 	prs := remote.NewFakePRLister()
-	prs.Set(remote.ObservedPRs(full[:remote.PRListLimit-1]))
+	prs.Set(remote.ObservedPRs(full[:prListLimit-1]))
 	before := TakeRemoteSnapshot(context.Background(), NewFakeRemoteObserver(), prs)
-	if before.PullRequests.Status != runstate.RemotePartObserved || len(before.PullRequests.Open) != remote.PRListLimit-1 {
+	if before.PullRequests.Status != runstate.RemotePartObserved || len(before.PullRequests.Open) != prListLimit-1 {
 		t.Fatalf("one under the limit: status %q with %d PRs, want observed", before.PullRequests.Status, len(before.PullRequests.Open))
 	}
 
