@@ -180,7 +180,13 @@ the code.
 `git ls-remote` reaches the network under the 30s `gitTimeout` (`git.go:21`),
 and nothing sets `GIT_TERMINAL_PROMPT`, so a credential helper could block
 until it (inferred, not measured); the snapshot methods add
-`GIT_TERMINAL_PROMPT=0` (*chosen*). They sit on `worktree.RemoteObserver`
+`GIT_TERMINAL_PROMPT=0` (*chosen*). That stops git's own prompts but not
+ssh's, which reads `/dev/tty` directly (an unknown host key, a passphrase key
+with no agent). So when none of `GIT_SSH_COMMAND`, `GIT_SSH` or
+`core.sshCommand` is set, the snapshot calls also get
+`GIT_SSH_COMMAND=ssh -o BatchMode=yes` (*chosen*, landed in #431); a user's
+own ssh command is left alone. A prompt ssh would have shown becomes an
+immediate failure, recorded as `unavailable`. They sit on `worktree.RemoteObserver`
 (*chosen*), beside the Acquire-only `worktree.Provider` (`worktree.go:34`).
 
 **gh is a fifth spawner, and this ADR names it.** No seam runs `gh` today.
