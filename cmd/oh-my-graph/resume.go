@@ -657,6 +657,10 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		Graph:               snap.Graph,
 		Inputs:              snap.Inputs,
 		ContinueOnFail:      snap.ContinueOnFail,
+		// The launch's --forbid-remote-changes, from the snapshot only:
+		// resume registers no flag for it, so a guarded run stays guarded on
+		// every leg (ADR 0046 §4), and the stamp stays SchemaWithRemoteGuard.
+		ForbidRemoteChanges: snap.ForbidRemoteChanges,
 		// The launch-time pre-approval list (runstate.Snapshot.AutoApprove)
 		// rides along for the record's sake and for the next leg's controller,
 		// which seeds itself from it exactly as this leg's does below.

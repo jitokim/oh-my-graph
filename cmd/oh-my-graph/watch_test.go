@@ -242,8 +242,8 @@ func TestWatchRun_UnreadableSnapshotIsNamedInTheSharedSentence(t *testing.T) {
 	for _, want := range []string{
 		`run "20260821-001010"`,
 		runstatus.SkipIncompatible.String(),
-		fmt.Sprintf("has schema version %d, but this build understands versions %d and %d",
-			runstate.Schema-1, runstate.Schema, runstate.SchemaWithConventions),
+		fmt.Sprintf("has schema version %d, but this build understands versions %d, %d and %d",
+			runstate.Schema-1, runstate.Schema, runstate.SchemaWithConventions, runstate.SchemaWithRemoteGuard),
 	} {
 		if !strings.Contains(notice, want) {
 			t.Errorf("the notice is missing %q: %q", want, notice)

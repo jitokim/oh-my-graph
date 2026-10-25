@@ -11,8 +11,8 @@
 // dispatch switch and every subcommand's FlagSet, so neither can drift):
 //
 //	oh-my-graph init [dir]
-//	oh-my-graph run <graph.yaml> [--dry-run] [--auto-approve <gate-id> ...] [--input k=v ...] [--input-file <path> ...] [--concurrency N] [--continue-on-fail] [--no-web]
-//	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--no-baseline] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--interview] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--input-file <path> ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation] [--no-reuse]
+//	oh-my-graph run <graph.yaml> [--dry-run] [--auto-approve <gate-id> ...] [--input k=v ...] [--input-file <path> ...] [--concurrency N] [--continue-on-fail] [--forbid-remote-changes] [--no-web]
+//	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--no-baseline] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--interview] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--input-file <path> ...] [--concurrency N] [--continue-on-fail] [--forbid-remote-changes] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation] [--no-reuse]
 //	oh-my-graph lint <graph.yaml>
 //	oh-my-graph design "<goal>" --out <file>
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
@@ -209,8 +209,8 @@ func exitCodeForError(err error) int {
 // registered flag hides a feature. The continuation indent aligns each line
 // under the "usage: " prefix.
 const usageLines = `oh-my-graph init [dir]
-       oh-my-graph run <graph.yaml> [--dry-run] [--auto-approve <gate-id> ...] [--input k=v ...] [--input-file <path> ...] [--concurrency N] [--continue-on-fail] [--no-web]
-       oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--no-baseline] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--interview] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--input-file <path> ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation] [--no-reuse]
+       oh-my-graph run <graph.yaml> [--dry-run] [--auto-approve <gate-id> ...] [--input k=v ...] [--input-file <path> ...] [--concurrency N] [--continue-on-fail] [--forbid-remote-changes] [--no-web]
+       oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--no-baseline] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--interview] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--input-file <path> ...] [--concurrency N] [--continue-on-fail] [--forbid-remote-changes] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation] [--no-reuse]
        oh-my-graph lint <graph.yaml>
        oh-my-graph design "<goal>" --out <file>
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
@@ -1377,7 +1377,10 @@ func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Gr
 		Graph:           graphJSON,
 		Inputs:          map[string]string(flags.inputs),
 		ContinueOnFail:  flags.continueOnFail,
-		AutoApprove:     []string(flags.autoApprove),
+		// Stamps SchemaWithRemoteGuard when set, so an older binary refuses
+		// to resume the run rather than drop the guard (ADR 0046 §5.3).
+		ForbidRemoteChanges: flags.forbidRemoteChanges,
+		AutoApprove:         []string(flags.autoApprove),
 		// Recorded, not defaulted: a later `resume` must be able to put this run
 		// back under the mode it was launched in even if the binary's default has
 		// changed underneath it (see runstate.Snapshot.DefaultPermissionMode).
