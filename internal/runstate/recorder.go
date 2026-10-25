@@ -1,6 +1,7 @@
 package runstate
 
 import (
+	"maps"
 	"slices"
 	"sync"
 )
@@ -162,6 +163,21 @@ func (r *SnapshotRecorder) ClearPause() error {
 	}
 	r.snap.Gate.PausedAt = ""
 	r.snap.Gate.PausedGateDescription = ""
+	r.snap.LimitPause = nil
+	return Write(r.path, r.snap)
+}
+
+// RecordLegGate replaces the earlier leg's gate state and limit pause with the
+// ones a resumed leg starts from — decisions, no paused gate, no limit pause —
+// and persists the snapshot in one write. The CLI seeds a resumed leg's
+// recorder with the snapshot's pause as loaded and calls this once its before
+// remote snapshot has completed uninterrupted (#410): a Ctrl-C during that
+// snapshot then leaves the run paused exactly where it was, resumable by the
+// same command. decisions is copied, so the caller's map is never mutated.
+func (r *SnapshotRecorder) RecordLegGate(decisions map[string]GateDecision) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.snap.Gate = GateState{Decisions: maps.Clone(decisions)}
 	r.snap.LimitPause = nil
 	return Write(r.path, r.snap)
 }

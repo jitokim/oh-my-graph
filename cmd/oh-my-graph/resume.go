@@ -707,12 +707,15 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		RunBaseSHA:    snap.RunBaseSHA,
 		RemoteChanges: snap.RemoteChanges,
 		Nodes:         records,
-		// PausedAt starts empty: the run is actively continuing, not paused,
-		// until (if at all) this leg pauses again at a later gate.
-		Gate: runstate.GateState{Decisions: decisions},
-		// LimitPause is deliberately NOT carried, for the same reason: the
-		// first write of this leg clears an earlier leg's limit pause, and a
-		// limit this leg hits records its own (ADR 0031 §8.1).
+		// The pause as loaded, until the before remote snapshot has completed
+		// uninterrupted: only then does RecordLegGate write this leg's
+		// decisions with PausedAt empty and no limit pause — the run actively
+		// continuing until (if at all) this leg pauses again, a limit it hits
+		// recording its own (ADR 0031 §8.1). A Ctrl-C during that snapshot
+		// so leaves the run paused where it was, resumable by the same
+		// command (#410).
+		Gate:       snap.Gate,
+		LimitPause: snap.LimitPause,
 	})
 
 	// Reopened in append mode, so the resumed leg continues the same
@@ -822,11 +825,15 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// never attributed.
 	remote := beginRemoteLeg(ctx, runID, recorder, snap.RunBaseSHA, snap.RemoteChanges)
 	// An interrupt during the before snapshot ends the leg before any node
-	// starts, its record printed, as in executeGraph.
+	// starts, its record printed, as in executeGraph, and before this leg's
+	// gate decisions are written, so the run is still paused as it was.
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		remote.end(ctx)
 		remote.print(os.Stdout)
 		return ctxErr
+	}
+	if err := recorder.RecordLegGate(decisions); err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: could not record this leg's gate decisions: %v\n", err)
 	}
 	// The after snapshot ends the leg, not the scheduler: an interrupt during
 	// it ends the leg interrupted (finish), so its run_finished waits for it.

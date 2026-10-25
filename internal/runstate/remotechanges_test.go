@@ -426,3 +426,51 @@ func TestSnapshotRecorder_ClearPause_410(t *testing.T) {
 		t.Errorf("remote record not kept: %+v", snap.RemoteChanges)
 	}
 }
+
+// TestSnapshotRecorder_RecordLegGate_410: a resumed leg seeded with the
+// loaded pause writes its own gate state once its before snapshot completes —
+// the decisions given, no paused gate, no limit pause — keeping the nodes and
+// the remote record, and never sharing the caller's map.
+func TestSnapshotRecorder_RecordLegGate_410(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	base := baseSnapshot("run-1")
+	base.Nodes = map[string]NodeRecord{"a": {Verdict: VerdictPass}}
+	base.Gate = GateState{PausedAt: "second", PausedGateDescription: "check it", Decisions: map[string]GateDecision{"first": GateApprove, "second": GatePause}}
+	base.LimitPause = &LimitPause{NodeIDs: []string{"b"}}
+	rec := NewSnapshotRecorder(path, base)
+
+	var rc RemoteChanges
+	rc.BeginLeg(observed([]RemoteConfig{origin}))
+	if err := rec.RecordRemoteChanges(rc); err != nil {
+		t.Fatal(err)
+	}
+	if snap, err := Load(path); err != nil {
+		t.Fatal(err)
+	} else if snap.Gate.PausedAt != "second" || snap.LimitPause == nil {
+		t.Errorf("before RecordLegGate: gate %+v, limit pause %+v, want the loaded pause kept", snap.Gate, snap.LimitPause)
+	}
+
+	decisions := map[string]GateDecision{"first": GateApprove, "second": GateApprove}
+	if err := rec.RecordLegGate(decisions); err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.RecordGateDecision("third", GateReject); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Gate.PausedAt != "" || snap.Gate.PausedGateDescription != "" || snap.LimitPause != nil {
+		t.Errorf("pause not replaced: gate %+v, limit pause %+v", snap.Gate, snap.LimitPause)
+	}
+	if want := map[string]GateDecision{"first": GateApprove, "second": GateApprove, "third": GateReject}; !reflect.DeepEqual(snap.Gate.Decisions, want) {
+		t.Errorf("decisions = %v, want %v", snap.Gate.Decisions, want)
+	}
+	if _, shared := decisions["third"]; shared {
+		t.Error("the recorder shares the caller's decisions map")
+	}
+	if snap.Nodes["a"].Verdict != VerdictPass || snap.RemoteChanges == nil || len(snap.RemoteChanges.Legs) != 1 {
+		t.Errorf("nodes %+v / remote record %+v not kept", snap.Nodes, snap.RemoteChanges)
+	}
+}

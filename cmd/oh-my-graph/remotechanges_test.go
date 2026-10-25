@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -596,6 +597,86 @@ func TestResume_AnInterruptDuringTheRemoteSnapshotStartsNoNode(t *testing.T) {
 			d := lastLegChanges(t, remoteRunSnapshot(t, "run-1"))
 			if len(d.Entries) != 0 || len(d.Observed) != 0 || len(d.NotCompared) != 2 {
 				t.Errorf("leg 2's changes = %+v, want both parts not compared, never none observed", d)
+			}
+		})
+	}
+}
+
+// Review of #410: a resume --approve interrupted during its before snapshot,
+// or as it returns, wrote the approval and cleared the pause first, so the
+// run read not paused and the same command was refused. The run must stay
+// paused at the gate — in state.json and as runs list and show derive it —
+// and the same resume --approve must then pass the gate.
+func TestResume_AnInterruptDuringTheRemoteSnapshotLeavesTheRunPausedAtTheGate(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		during bool
+	}{
+		{"cancelled while the before snapshot runs", true},
+		{"cancelled as the before snapshot returns", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateRunHome(t)
+			useRemoteObserver(t, originObserver(), remoteBaseSHA)
+			fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+				"a":    {Result: "PASS", ExitCode: 0},
+				"ship": {Result: "PASS", ExitCode: 0},
+			})
+			g := mustParse(t, `{"name":"gate-flow","nodes":[
+				{"id":"a","prompt":"a"},
+				{"id":"approve","type":"gate","depends_on":["a"]},
+				{"id":"ship","prompt":"ship","depends_on":["approve"]}]}`)
+			var err error
+			captureStdout(t, func() {
+				err = executeGraph(context.Background(), "run-1", g, fake, commonRunFlags{inputs: inputFlag{}}, nil, 0, "gate-flow.yaml", []byte("name: gate-flow\n"), false, nil, nil, nil)
+			})
+			var paused *schedule.PausedError
+			if !errors.As(err, &paused) {
+				t.Fatalf("expected the first leg to pause, got %v", err)
+			}
+			pausedGate := remoteRunSnapshot(t, "run-1").Gate
+
+			useRemoteObserver(t, &interruptingObserver{FakeRemoteObserver: originObserver(), interrupt: sigint(t), during: tc.during}, remoteBaseSHA)
+			captureStdout(t, func() {
+				err = executeResume(parseResumeFlags(t, []string{"run-1", "--approve", "approve"}), fake, nil)
+			})
+			if code := exitCodeForError(err); !errors.Is(err, context.Canceled) || code != 1 {
+				t.Fatalf("err = %v (exit %d), want context.Canceled, exit 1", err, code)
+			}
+			if gate := remoteRunSnapshot(t, "run-1").Gate; gate.PausedAt != "approve" || !reflect.DeepEqual(gate, pausedGate) {
+				t.Errorf("gate = %+v after the interrupted resume, want the pause as it was: %+v", gate, pausedGate)
+			}
+			status, err := runstatus.Of(runDirFor("run-1"))
+			if err != nil {
+				t.Fatalf("runstatus.Of: %v", err)
+			}
+			if status != runstatus.Paused {
+				t.Errorf("status = %v after the interrupted resume, want %v", status, runstatus.Paused)
+			}
+			var list, warn strings.Builder
+			if err := listRuns(&list, &warn, runsRoot(), true); err != nil {
+				t.Fatalf("listRuns: %v", err)
+			}
+			if row := lineContaining(t, list.String(), "run-1"); !strings.Contains(row, "PAUSED") {
+				t.Errorf("runs list row = %q, want PAUSED", row)
+			}
+
+			useRemoteObserver(t, originObserver(), remoteBaseSHA)
+			captureStdout(t, func() {
+				err = executeResume(parseResumeFlags(t, []string{"run-1", "--approve", "approve"}), fake, nil)
+			})
+			if err != nil {
+				t.Fatalf("the same resume --approve after the interrupt: %v", err)
+			}
+			if !slices.Contains(fake.Calls(), "ship") {
+				t.Errorf("calls = %v, want ship run past the approved gate", fake.Calls())
+			}
+			snap := remoteRunSnapshot(t, "run-1")
+			if snap.Gate.PausedAt != "" || snap.Gate.Decisions["approve"] != runstate.GateApprove {
+				t.Errorf("gate = %+v, want approve approved and no pause", snap.Gate)
+			}
+			if snap.Nodes["ship"].Verdict != runstate.VerdictPass {
+				t.Errorf("ship = %+v, want PASS", snap.Nodes["ship"])
 			}
 		})
 	}
