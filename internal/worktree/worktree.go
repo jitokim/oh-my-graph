@@ -117,4 +117,9 @@ type RemoteObserver interface {
 	// commit in the invocation repository reachable from one of this run's
 	// own branches and not from baseSHA, the run's base commit.
 	CommitAttributable(ctx context.Context, sha, baseSHA string) bool
+	// GHDefaultRemotes names, sorted, the remotes `gh repo set-default`
+	// marked as gh's default: remote.<name>.gh-resolved set to "base" in
+	// the invocation repository's config. None is an empty list, not an
+	// error.
+	GHDefaultRemotes(ctx context.Context) ([]string, error)
 }

@@ -320,13 +320,15 @@ func TestTakeRemoteSnapshot_PullRequestsUnavailable(t *testing.T) {
 	}
 }
 
-// The PR part is its own: a repository git cannot read is still asked
-// about its pull requests, and an unavailable PR part leaves the git parts
+// A repository whose remotes git cannot read is not asked about its pull
+// requests unless GH_REPO names the repository (#410: which repository gh
+// would read is unknown), and an unavailable PR part leaves the git parts
 // observed.
 func TestTakeRemoteSnapshot_PullRequestsStandApartFromGit(t *testing.T) {
 	obs := NewFakeRemoteObserver()
 	obs.SetRemotes(nil, errors.New("fatal: not a git repository"))
 	prs := remote.NewFakePRLister()
+	prs.SetRepoEnv(remote.RepoEnv{Repo: "o/r"})
 	snap := TakeRemoteSnapshot(context.Background(), obs, prs)
 	if snap.Remotes.Status != runstate.RemotePartUnavailable || snap.PullRequests.Status != runstate.RemotePartObserved || prs.Calls() != 1 {
 		t.Errorf("snapshot = %+v (lister calls %d), want git unavailable and PRs observed", snap, prs.Calls())

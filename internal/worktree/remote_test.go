@@ -576,3 +576,22 @@ func lastValue(env []string, key string) string {
 	}
 	return val
 }
+
+// gh's default is read from the repository's own config, as `gh repo
+// set-default` leaves it: remote.<name>.gh-resolved = base.
+func TestGitManager_GHDefaultRemotesReadsGHResolved(t *testing.T) {
+	m, repo := newTestManager(t)
+	gitIn(t, repo, "remote", "add", "origin", "https://github.com/me/cli.git")
+	gitIn(t, repo, "remote", "add", "upstream", "https://github.com/cli/cli.git")
+
+	got, err := m.GHDefaultRemotes(context.Background())
+	if err != nil || len(got) != 0 {
+		t.Fatalf("GHDefaultRemotes with none set = %v, %v; want an empty list and no error", got, err)
+	}
+
+	gitIn(t, repo, "config", "remote.origin.gh-resolved", "base")
+	got, err = m.GHDefaultRemotes(context.Background())
+	if err != nil || !reflect.DeepEqual(got, []string{"origin"}) {
+		t.Fatalf("GHDefaultRemotes = %v, %v; want [origin]", got, err)
+	}
+}

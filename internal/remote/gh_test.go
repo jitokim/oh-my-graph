@@ -296,3 +296,30 @@ func TestCheckTruncation(t *testing.T) {
 		t.Errorf("an unavailable list became %q", got.Reason)
 	}
 }
+
+// RepoEnv is read from the env the gh child gets: GH_REPO and GH_HOST survive
+// the scrub, and a key set twice takes its last value, as os/exec does.
+func TestGHRunner_RepoEnvIsWhatTheChildSees(t *testing.T) {
+	r := NewGHRunner(t.TempDir())
+	r.environ = func() []string {
+		return []string{"GH_REPO=a/b", "ANTHROPIC_API_KEY=sk-secret", "GH_HOST=ghe.example.com", "GH_REPO=cli/cli"}
+	}
+	if got := r.RepoEnv(); got != (RepoEnv{Repo: "cli/cli", Host: "ghe.example.com"}) {
+		t.Errorf("RepoEnv = %+v, want GH_REPO cli/cli and GH_HOST ghe.example.com", got)
+	}
+	r.environ = func() []string { return []string{"PATH=/bin"} }
+	if got := r.RepoEnv(); got != (RepoEnv{}) {
+		t.Errorf("RepoEnv = %+v, want both unset", got)
+	}
+}
+
+func TestFakePRLister_RepoEnv(t *testing.T) {
+	f := NewFakePRLister()
+	if f.RepoEnv() != (RepoEnv{}) {
+		t.Errorf("a new fake reports %+v, want nothing set", f.RepoEnv())
+	}
+	f.SetRepoEnv(RepoEnv{Repo: "cli/cli"})
+	if f.RepoEnv().Repo != "cli/cli" {
+		t.Errorf("RepoEnv = %+v, want the scripted GH_REPO", f.RepoEnv())
+	}
+}

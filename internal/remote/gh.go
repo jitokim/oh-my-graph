@@ -123,6 +123,35 @@ func UnavailablePRs(reason, detail string) PRList {
 // caller may treat one as a reason to stop the run.
 type PRLister interface {
 	ListOpenPRs(ctx context.Context) PRList
+	// RepoEnv is the GH_REPO and GH_HOST the gh child would run with, so
+	// the snapshot can work out which repository gh will read before it
+	// asks (#410).
+	RepoEnv() RepoEnv
+}
+
+// RepoEnv is the part of gh's environment that picks the repository `gh pr
+// list` reads: GH_REPO ([HOST/]OWNER/REPO), which overrides the repository
+// gh would resolve from the git remotes, and GH_HOST, the host gh talks to.
+// Either is "" when unset.
+type RepoEnv struct {
+	Repo string
+	Host string
+}
+
+// RepoEnvFrom reads GH_REPO and GH_HOST out of env, a KEY=VALUE list. A key
+// set more than once takes its last value, as os/exec passes it on.
+func RepoEnvFrom(env []string) RepoEnv {
+	var e RepoEnv
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		switch k {
+		case "GH_REPO":
+			e.Repo = strings.TrimSpace(v)
+		case "GH_HOST":
+			e.Host = strings.TrimSpace(v)
+		}
+	}
+	return e
 }
 
 // GHRunner is the production PRLister and the fifth exec seam: the only
@@ -152,6 +181,12 @@ func NewGHRunner(repoDir string) *GHRunner {
 }
 
 var _ PRLister = (*GHRunner)(nil)
+
+// RepoEnv is GH_REPO and GH_HOST as ghCmd passes them on: read from the
+// scrubbed environment, which leaves both, so it is the env gh itself sees.
+func (r *GHRunner) RepoEnv() RepoEnv {
+	return RepoEnvFrom(childenv.Scrub(r.environ()))
+}
 
 // ListOpenPRs runs the fixed `gh pr list` under the timeout and classifies
 // the outcome. gh's JSON is on stdout; its diagnosis on stderr is kept, as

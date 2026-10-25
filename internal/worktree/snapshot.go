@@ -17,19 +17,40 @@ import (
 // reason, and a run carries on exactly as it would have. The branches part
 // is unavailable when the remotes part is, and when any one remote's refs
 // could not be read, since a list missing one remote would compare as that
-// remote's branches all gone. The pull-request part stands on its own: gh
-// reads the GitHub repository, not a remote, and is asked even when git
-// could not be.
+// remote's branches all gone.
+//
+// gh reads a GitHub repository, not a remote, and with more than one GitHub
+// remote it may read the wrong one without failing. So before gh is asked,
+// expectGHRepo works out which repository it will read; when that cannot be
+// told — the remotes could not be read, or two GitHub repositories with no
+// gh default — the pull-request part is unavailable and gh is not asked.
 //
 // URLs, and the reasons that may quote them, have any credential in them
 // replaced before they are recorded.
 func TakeRemoteSnapshot(ctx context.Context, obs RemoteObserver, prs remote.PRLister) runstate.RemoteSnapshot {
-	snap := takeGitParts(ctx, obs)
-	snap.PullRequests = takePullRequests(ctx, prs)
+	// The expected repository is recorded on the snapshot by a later #410
+	// change; for now it only decides whether gh is asked.
+	snap, _ := takeRemoteSnapshot(ctx, obs, prs)
 	return snap
 }
 
-func takeGitParts(ctx context.Context, obs RemoteObserver) runstate.RemoteSnapshot {
+// takeRemoteSnapshot is TakeRemoteSnapshot, also returning the repository gh
+// was expected to read (zero when gh was not asked).
+func takeRemoteSnapshot(ctx context.Context, obs RemoteObserver, prs remote.PRLister) (runstate.RemoteSnapshot, ExpectedGHRepo) {
+	snap, remotes, remotesErr := takeGitParts(ctx, obs)
+	expected, unknown := expectGHRepo(ctx, obs, prs.RepoEnv(), remotes, remotesErr)
+	if unknown != nil {
+		snap.PullRequests = runstate.PullRequestsSnapshot{Status: runstate.RemotePartUnavailable,
+			Reason: unknown.Reason, Detail: remote.SummarizeReason(unknown.Detail)}
+		return snap, ExpectedGHRepo{}
+	}
+	snap.PullRequests = takePullRequests(ctx, prs)
+	return snap, expected
+}
+
+// takeGitParts reads the remotes and branches parts, and hands back the
+// remotes, or the error that made that part unavailable, for expectGHRepo.
+func takeGitParts(ctx context.Context, obs RemoteObserver) (runstate.RemoteSnapshot, []Remote, error) {
 	var snap runstate.RemoteSnapshot
 
 	remotes, err := obs.Remotes(ctx)
@@ -38,7 +59,7 @@ func takeGitParts(ctx context.Context, obs RemoteObserver) runstate.RemoteSnapsh
 		snap.Remotes = runstate.RemotesSnapshot{Status: runstate.RemotePartUnavailable, Reason: reason}
 		snap.Branches = runstate.BranchesSnapshot{Status: runstate.RemotePartUnavailable,
 			Reason: "the remotes part is unavailable: " + reason}
-		return snap
+		return snap, nil, err
 	}
 	snap.Remotes.Status = runstate.RemotePartObserved
 	for _, r := range remotes {
@@ -62,10 +83,10 @@ func takeGitParts(ctx context.Context, obs RemoteObserver) runstate.RemoteSnapsh
 	if len(failures) > 0 {
 		snap.Branches = runstate.BranchesSnapshot{Status: runstate.RemotePartUnavailable,
 			Reason: remote.SummarizeReason(strings.Join(failures, "; "))}
-		return snap
+		return snap, remotes, nil
 	}
 	snap.Branches = runstate.BranchesSnapshot{Status: runstate.RemotePartObserved, Refs: refs}
-	return snap
+	return snap, remotes, nil
 }
 
 // takePullRequests records what prs answered. The limit rule is applied

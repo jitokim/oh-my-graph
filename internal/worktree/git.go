@@ -35,8 +35,8 @@ const gitWaitDelay = time.Second
 //
 // Its scope is the git commands the engine itself issues against the
 // invocation repository: worktrees, and the remote snapshot (#410). The
-// snapshot's reads — Remotes, LsRemoteHeads and the local CommitAttributable
-// check — go through the same m.gitEnv/gitCmd path that m.git uses, so they
+// snapshot's reads — Remotes, LsRemoteHeads, the local CommitAttributable
+// check and the GHDefaultRemotes config read — go through the same m.gitEnv/gitCmd path that m.git uses, so they
 // inherit the one exec.Command, the env scrub and the timeout, and add only
 // GIT_TERMINAL_PROMPT=0 and an empty GIT_ASKPASS — plus, for Remotes and
 // LsRemoteHeads, GIT_SSH_COMMAND running ssh in BatchMode unless the user
@@ -599,4 +599,53 @@ func (m *GitManager) isAncestor(ctx context.Context, a, b string) (bool, error) 
 		return false, nil
 	}
 	return false, err
+}
+
+// ghResolvedKey is the config variable `gh repo set-default` writes on the
+// remote it chose, and ghResolvedBase the value that marks it gh's default.
+const (
+	ghResolvedKey  = "gh-resolved"
+	ghResolvedBase = "base"
+)
+
+// GHDefaultRemotes reads remote.<name>.gh-resolved from the invocation
+// repository's config, a local read with prompting off like
+// CommitAttributable's, and names the remotes whose value is "base". `git
+// config --get-regexp` exits 1 when no key matches, which is no default, not a
+// failure; any other failure is returned.
+func (m *GitManager) GHDefaultRemotes(ctx context.Context) ([]string, error) {
+	out, err := m.gitEnv(ctx, noPromptEnv, "config", "--get-regexp", `^remote\..*\.`+ghResolvedKey+`$`)
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+	return parseGHResolved(out), nil
+}
+
+// parseGHResolved reads `git config --get-regexp` lines, "<key> <value>".
+// git prints the section and variable lowercased and the remote name as
+// written, which may itself hold dots. A line of any other shape — combined
+// output may carry a warning — is skipped.
+func parseGHResolved(out string) []string {
+	names := make([]string, 0)
+	for _, line := range strings.Split(out, "\n") {
+		key, value, ok := strings.Cut(strings.TrimRight(line, "\r"), " ")
+		if !ok || value != ghResolvedBase {
+			continue
+		}
+		name, ok := strings.CutPrefix(key, "remote.")
+		if !ok {
+			continue
+		}
+		name, ok = strings.CutSuffix(name, "."+ghResolvedKey)
+		if !ok || name == "" {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
