@@ -1,4 +1,4 @@
-package runfeed
+package runstate
 
 import (
 	"go/ast"
@@ -7,16 +7,20 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+
+	"github.com/jitokim/oh-my-graph/internal/runfeed"
 )
 
 // TestNoRemoteChangeEvent (ADR 0046 §8.14): the remote change record lives in
 // state.json only. The feed schema is still 3 and the closed type set is the
-// one schema 3 defines — a new type would need a bump (see Schema).
+// one schema 3 defines — a new type would need a bump (see runfeed.Schema).
+// The type set is read from runfeed's source, so a constant added there fails
+// here without this list having to know about it.
 func TestNoRemoteChangeEvent(t *testing.T) {
-	if Schema != 3 {
-		t.Errorf("feed Schema = %d, want 3", Schema)
+	if runfeed.Schema != 3 {
+		t.Errorf("feed Schema = %d, want 3", runfeed.Schema)
 	}
-	file, err := parser.ParseFile(token.NewFileSet(), "runfeed.go", nil, 0)
+	file, err := parser.ParseFile(token.NewFileSet(), "../runfeed/runfeed.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

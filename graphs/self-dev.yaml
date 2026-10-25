@@ -33,9 +33,10 @@ nodes:
       keeping the diff focused and matching the existing style (DESIGN.md is the
       spec; English-only):
         {{ inputs.task }}
-      os/exec belongs to the FIVE exec seams only — runner.CLIRunner,
+      os/exec belongs to the FIVE exec seams only — runner.ClaudeCLIRunner,
       verify.ShellVerifier, worktree.GitManager, browser.ExecOpener,
-      remote.GHRunner — and a sixth spawner needs an ADR before it lands; internal/invariants enforces this.
+      remote.GHRunner — and a sixth spawner needs an ADR before it lands;
+      internal/invariants enforces this.
       Add or update tests. Choose a commit granularity that fits the work —
       one commit per refactoring unit for refactors, per file for sweeps, per
       feature slice for new code — and state your choice in the first commit

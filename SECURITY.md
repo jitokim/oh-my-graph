@@ -25,8 +25,7 @@ where the line is.
   subprocess, a `success_check.verify` command, the git commands behind a
   node's `worktree:` (a repo's own hooks may invoke claude), and the
   `open`/`xdg-open` launch of the `serve` URL (the URL handler it dispatches
-  to is arbitrary user-configured code), and the `gh pr list` of the remote
-  snapshot (which keeps `GH_TOKEN`, so gh authenticates as you) — starts from your environment with
+  to is arbitrary user-configured code) — starts from your environment with
   `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, and
   `CODEX_API_KEY` **deleted**. Those variables can switch the selected CLI from
   its saved login to API-key authentication. Deletion matches the whole
@@ -37,8 +36,7 @@ where the line is.
   merely *begin* with one of the names (`ANTHROPIC_API_KEY_BACKUP`) are left
   alone. The scrub is asserted by a unit test at every call site
   (`internal/runner/claude_test.go`, `internal/verify/shell_test.go`,
-  `internal/worktree/git_test.go`, `internal/browser/exec_test.go`,
-  `internal/remote/gh_test.go`) that sets
+  `internal/worktree/git_test.go`, `internal/browser/exec_test.go`) that sets
   all four variables in the parent process and proves none survives into the
   built child command.
 - **Never `--bare`.** On Claude that flag disables OAuth; oh-my-graph never
