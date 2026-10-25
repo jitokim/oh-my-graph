@@ -227,7 +227,9 @@ type RemoteBetweenLegs struct {
 // RemoteChanges is the remote change record (ADR 0046 §2.2), stored as
 // Snapshot.RemoteChanges: each leg's two snapshots and its entries, and the
 // between-legs entries. It is a record of what the engine observed, for a
-// report: nothing in this build reads it to decide anything.
+// report; the one decision read off it is the CLI's, on a guarded run
+// (--forbid-remote-changes): a forbidden entry in a leg's own diff fails
+// that leg (ADR 0046 §5.1).
 type RemoteChanges struct {
 	Legs        []RemoteLeg         `json:"legs"`
 	BetweenLegs []RemoteBetweenLegs `json:"between_legs,omitempty"`

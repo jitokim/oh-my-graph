@@ -800,8 +800,11 @@ func TestExitCode_AgreesWithTheStatusForASingleRunInvocation(t *testing.T) {
 		// interruptAfter lands a Ctrl-C on the leg's after remote snapshot
 		// (#410): the leg ends interrupted, not paused.
 		interruptAfter bool
-		wantExit       int
-		wantStatus     runstatus.Status
+		// forbidden runs the leg under --forbid-remote-changes with a remote
+		// added during it, a forbidden entry (ADR 0046 §5.1).
+		forbidden  bool
+		wantExit   int
+		wantStatus runstatus.Status
 	}{
 		{
 			name:       "every node passed",
@@ -835,6 +838,16 @@ func TestExitCode_AgreesWithTheStatusForASingleRunInvocation(t *testing.T) {
 			wantStatus:     runstatus.Fail,
 		},
 		{
+			// ADR 0046 §5.1 amends §2.6: exit 1 or 6 <-> FAIL. Every node
+			// passed, and the run still reads FAIL.
+			name:       "every node passed and a guarded leg observed a forbidden remote change",
+			graph:      `{"name":"g","nodes":[{"id":"a","prompt":"a"}]}`,
+			outcomes:   map[string]runner.NodeOutcome{"a": {SessionID: "s", Result: "PASS", ExitCode: 0}},
+			forbidden:  true,
+			wantExit:   6,
+			wantStatus: runstatus.Fail,
+		},
+		{
 			name:           "a gate paused it and an interrupt landed on the after snapshot",
 			graph:          `{"name":"g","nodes":[{"id":"a","prompt":"a"},{"id":"approve","type":"gate","depends_on":["a"]}]}`,
 			outcomes:       map[string]runner.NodeOutcome{"a": {SessionID: "s", Result: "PASS", ExitCode: 0}},
@@ -853,11 +866,14 @@ func TestExitCode_AgreesWithTheStatusForASingleRunInvocation(t *testing.T) {
 			if tc.interruptAfter {
 				useRemoteObserver(t, &afterSnapshotInterrupter{FakeRemoteObserver: originObserver(), interrupt: cancel}, remoteBaseSHA)
 			}
+			if tc.forbidden {
+				useRemoteObserver(t, &addingRemoteObserver{FakeRemoteObserver: originObserver()}, remoteBaseSHA)
+			}
 
 			var runErr error
 			captureStdout(t, func() {
 				runErr = executeGraph(ctx, runID, g, fake,
-					commonRunFlags{inputs: inputFlag{}}, nil, 0, "g.yaml", []byte(tc.graph), false, nil, nil, nil)
+					commonRunFlags{inputs: inputFlag{}, forbidRemoteChanges: tc.forbidden}, nil, 0, "g.yaml", []byte(tc.graph), false, nil, nil, nil)
 			})
 			if got := exitCodeForError(runErr); got != tc.wantExit {
 				t.Errorf("exit code = %d, want %d (error %v)", got, tc.wantExit, runErr)

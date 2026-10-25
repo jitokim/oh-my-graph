@@ -828,7 +828,7 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// A resumed leg takes its own before snapshot (ADR 0046 §3.1): what
 	// changed while the run was stopped is recorded between the legs and
 	// never attributed.
-	remote := beginRemoteLeg(ctx, runID, recorder, snap.RunBaseSHA, snap.RemoteChanges)
+	remote := beginRemoteLeg(ctx, runID, recorder, snap.RunBaseSHA, snap.RemoteChanges, snap.ForbidRemoteChanges)
 	// An interrupt during the before snapshot ends the leg before any node
 	// starts, its record printed, as in executeGraph, and before this leg's
 	// gate decisions and carried records are written, so the run is still

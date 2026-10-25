@@ -123,7 +123,7 @@ func mainExitCode(args []string) int {
 		return exitCodeForError(err)
 	}
 	code := exitCodeForError(err)
-	if code == 1 {
+	if code == 1 || code == 6 {
 		fmt.Fprintf(os.Stderr, "oh-my-graph: %v\n", err)
 	}
 	return code
@@ -150,6 +150,16 @@ func exitCodeForError(err error) int {
 	var usage *usageRequest
 	if errors.As(err, &usage) {
 		return 0
+	}
+	// A guarded run whose leg observed a forbidden remote change (ADR 0046
+	// §5.1). Checked before the pauses: it ends a leg whatever the scheduler
+	// returned, a pause it withdrew included. Its own code so a script can
+	// tell it from a node failure; unlike 3 and 5 it has a run directory, and
+	// that run reads FAIL — ADR 0023 §2.6's agreement as amended, exit 1 or 6
+	// ↔ FAIL.
+	var forbidden *RemoteChangeForbiddenError
+	if errors.As(err, &forbidden) {
+		return 6
 	}
 	var paused *schedule.PausedError
 	if errors.As(err, &paused) {
@@ -1285,9 +1295,10 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	})
 
 	fmt.Fprintf(os.Stdout, "Running graph %q (run %s)\n\n", g.Name, runID)
-	// The leg's remote record brackets the scheduler (ADR 0046 §2.1): a
-	// report only, so a remote it cannot read never stops the leg.
-	remote := beginRemoteLeg(ctx, runID, recorder, baseSHA, nil)
+	// The leg's remote record brackets the scheduler (ADR 0046 §2.1). A remote
+	// it cannot read never stops the leg; only a guarded run's forbidden entry
+	// changes its exit (§5.1).
+	remote := beginRemoteLeg(ctx, runID, recorder, baseSHA, nil, flags.forbidRemoteChanges)
 	// An interrupt during the before snapshot ends the leg here, as one before
 	// any node started: the scheduler is never entered, the after snapshot is
 	// recorded interrupted and the record printed as on the normal path, so

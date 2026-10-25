@@ -211,13 +211,16 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 
 // isRunFailure reports whether err is the scheduler saying "this run
 // completed, and it failed" — *schedule.HaltError or *schedule.RunFailedError
-// — as opposed to a pause or an infrastructure error. A failed cycle still
-// iterates: its failure detail is precisely what the next plan needs to route
-// around (ADR 0011 §2).
+// — or a guarded leg's forbidden remote change (*RemoteChangeForbiddenError,
+// which ADR 0046 §3.1 feeds the assessor as a failed run), as opposed to a
+// pause or an infrastructure error. A failed cycle still iterates: its
+// failure detail is precisely what the next plan needs to route around (ADR
+// 0011 §2).
 func isRunFailure(err error) bool {
 	var halt *schedule.HaltError
 	var failed *schedule.RunFailedError
-	return errors.As(err, &halt) || errors.As(err, &failed)
+	var forbidden *RemoteChangeForbiddenError
+	return errors.As(err, &halt) || errors.As(err, &failed) || errors.As(err, &forbidden)
 }
 
 // cycleEvidence assembles the assessor's engine-produced material by
