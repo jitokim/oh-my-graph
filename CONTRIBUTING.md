@@ -221,10 +221,11 @@ spawner needs an ADR first, the way the second, third, fourth and fifth got
 [ADR 0002](docs/adr/0002-verification-is-a-second-exec-seam.md),
 [ADR 0005](docs/adr/0005-worktree-provisioning-is-a-third-exec-seam.md),
 [ADR 0006](docs/adr/0006-browser-open-is-a-fourth-exec-seam.md) and
-[ADR 0046](docs/adr/0046-the-engine-records-remote-changes-and-fails-only-when-the-operator-forbids-them.md). (The invariant
-is about *objects that spawn*, not `os/exec` imports per se: the runner and
-verify seam packages also carry build-tagged process-group helpers that import
-`os/exec` solely to kill a cancelled child's tree — they never start one.)
+[ADR 0046](docs/adr/0046-the-engine-records-remote-changes-and-fails-only-when-the-operator-forbids-them.md).
+(The invariant is about *objects that spawn*, not `os/exec` imports per se:
+the runner and verify seam packages also carry build-tagged process-group
+helpers that import `os/exec` solely to kill a cancelled child's tree — they
+never start one.)
 
 ## Invariants a contribution must preserve
 
@@ -258,8 +259,8 @@ without an explicit, discussed design change should not be merged:
   must apply it. It is asserted in `internal/childenv/childenv_test.go` (the
   policy) and at each call site (`internal/runner/claude_test.go`,
   `internal/verify/shell_test.go`, `internal/worktree/git_test.go`,
-  `internal/browser/exec_test.go`, `internal/remote/gh_test.go`) — if you touch env construction, make sure
-  those tests still prove the scrub.
+  `internal/browser/exec_test.go`, `internal/remote/gh_test.go`) — if you
+  touch env construction, make sure those tests still prove the scrub.
 - **Artifact handoff is the default.** `handoff: session` is opt-in and valid
   only with exactly one session-parent, and a parent may have at most one
   `handoff: session` child (two would share one session); don't make session

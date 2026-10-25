@@ -401,11 +401,11 @@ snapshot written before the part existed; a diff against one reports
 both record a `repo` and name different ones are `not_compared` too, reason
 `different repos: before <repo>, after <repo>`. The part, `repo` and
 `repo_source` included, is additive like the rest of the record: the state
-schema stays 3, no event carries it and the feed schema (3) is unchanged. An empty
-observed list is an observed "none"; an unavailable part is never treated as
-empty. `branches` is unavailable as a whole when any one remote's
-`ls-remote` failed, with every failing remote in the reason. Credentials in
-a URL, and in a reason that quotes one, are replaced with `***`.
+schema stays 3, no event carries it and the feed schema (3) is unchanged. An
+empty observed list is an observed "none"; an unavailable part is never
+treated as empty. `branches` is unavailable as a whole when any one remote's
+`ls-remote` failed, with every failing remote in the reason. Credentials in a
+URL, and in a reason that quotes one, are replaced with `***`.
 
 A `changes` object always spells out three arrays: `observed` (the parts
 compared, i.e. observed on both sides), `entries` and `not_compared` (`part`,

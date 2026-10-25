@@ -1173,11 +1173,12 @@ one, or a url naming none make the part `unavailable`, `gh read another
 repo: expected <host/owner/name>, got <host/owner/name>`. With zero PRs, or
 no expected repo, the list stands unchecked. The part records the expected
 repo as `repo` (`host/owner/name`) and `repo_source` whenever one was worked
-out, whatever gh then answered; both are empty when none was. A list holding exactly
-`prListLimit` (1000) PRs may have been cut short, so it is `unavailable`,
-`truncated`, whatever lister produced it. The PR part is read even when the
-git parts fail, and an interrupted *after* records it `interrupted` with the
-others. Tests inject `remote.FakePRLister`; no test runs a real gh.
+out, whatever gh then answered; both are empty when none was. A list holding
+exactly `prListLimit` (1000) PRs may have been cut short, so it is
+`unavailable`, `truncated`, whatever lister produced it. The PR part is read
+even when the git parts fail, and an interrupted *after* records it
+`interrupted` with the others. Tests inject `remote.FakePRLister`; no test
+runs a real gh.
 
 **Entries.** The diff of two snapshots gives `remote_added`,
 `remote_removed`, `remote_url_changed`, `branch_created`, `branch_moved`
@@ -1205,11 +1206,10 @@ or `pr_updated` entry when its new head sha does, all through
 repository, it is not an ancestor of `run_base_sha` (the invocation
 repository's `HEAD` when the run's first leg started, carried by `resume`),
 and it is an ancestor of one of the run's own `refs/heads/omg/<run-id>/`
-branches. Every other entry — the no-sha kinds (`pr_no_longer_open` included), a
-sha that fails the check,
-every between-legs entry, and every entry of a run with no `run_base_sha` —
-is `not_attributable`. The check proves where a commit came from, never who
-moved the ref.
+branches. Every other entry — the no-sha kinds (`pr_no_longer_open` included),
+a sha that fails the check, every between-legs entry, and every entry of a run
+with no `run_base_sha` — is `not_attributable`. The check proves where a
+commit came from, never who moved the ref.
 
 **Printing.** After the ledger table, `run`, `auto` and `resume` print the
 leg's record (a resumed leg first prints its between-legs set):
@@ -1233,8 +1233,8 @@ the repo from the resumed leg's *before* snapshot.
 
 `run_commit` reads "observed during the run; points at a commit this run
 made"; `not_attributable` reads "observed, not attributable". No entry and
-nothing uncompared prints one line, `Remote changes: none observed
-(observed: remotes, branches, pull_requests)`. With nothing changed but a part not
+nothing uncompared prints one line, `Remote changes: none observed (observed:
+remotes, branches, pull_requests)`. With nothing changed but a part not
 compared, the line says `none observed in the parts compared` and a
 `not compared:` line follows for each such part.
 
@@ -1242,19 +1242,20 @@ compared, the line says `none observed in the parts compared` and a
 (`legs`, each with `before`, `after` and `changes`, and `between_legs`),
 additive and optional, so the schema stays 3 and no event is added
 (docs/RUN-FEED.md); the `pull_requests` part is additive within it, as are
-its `repo` and `repo_source`, and a snapshot without them loads unchanged. Every git command runs on `worktree.GitManager`, through the
-`worktree.RemoteObserver` interface, with `GIT_TERMINAL_PROMPT=0` and an
-empty `GIT_ASKPASS` added to the scrubbed environment. That stops only git's
-own prompts, an askpass helper's included — ssh asks on
-`/dev/tty` itself for an unknown host key or a locked key — so `git remote
--v` and `ls-remote` also get `GIT_SSH_COMMAND=ssh -o BatchMode=yes` unless
-the user chose an ssh command (`GIT_SSH_COMMAND` or `GIT_SSH` in the
-environment, or `core.sshCommand` in the repository), which is left
-untouched; an ssh prompt then fails at once into an unavailable part. This
-widens the third seam's scope from the `git worktree` commands to the git
-commands the engine issues against the invocation repository; the git parts
-add no spawner, and gh is the one ADR 0046 adds. Tests inject `worktree.FakeRemoteObserver`. What the record cannot
-see is listed in docs/LIMITATIONS.md.
+its `repo` and `repo_source`, and a snapshot without them loads unchanged.
+Every git command runs on `worktree.GitManager`, through the
+`worktree.RemoteObserver` interface, with `GIT_TERMINAL_PROMPT=0` and an empty
+`GIT_ASKPASS` added to the scrubbed environment. That stops only git's own
+prompts, an askpass helper's included — ssh asks on `/dev/tty` itself for an
+unknown host key or a locked key — so `git remote -v` and `ls-remote` also get
+`GIT_SSH_COMMAND=ssh -o BatchMode=yes` unless the user chose an ssh command
+(`GIT_SSH_COMMAND` or `GIT_SSH` in the environment, or `core.sshCommand` in
+the repository), which is left untouched; an ssh prompt then fails at once
+into an unavailable part. This widens the third seam's scope from the `git
+worktree` commands to the git commands the engine issues against the
+invocation repository; the git parts add no spawner, and gh is the one
+ADR 0046 adds. Tests inject `worktree.FakeRemoteObserver`. What the record
+cannot see is listed in docs/LIMITATIONS.md.
 
 ## Execution engine
 Scheduler = Kahn on `depends_on`, but maintains a **ready set** run concurrently:
@@ -2220,10 +2221,10 @@ type Verifier interface {
 purpose.** The invariant's restated form: *exactly five objects may spawn a
 process — `runner.CLIRunner`, `verify.ShellVerifier`,
 `worktree.GitManager` (see "Worktree isolation"), `browser.ExecOpener`
-(ADR 0006) and `remote.GHRunner` (ADR 0046) — each behind its own injected interface, and no other package
-imports `os/exec`.* Both purposes survive: the subscription-auth scrub still
-has exactly one home per spawner, and the engine is still fully testable with
-zero spawns. See ADR 0002, ADR 0005 and ADR 0006.
+(ADR 0006) and `remote.GHRunner` (ADR 0046) — each behind its own injected
+interface, and no other package imports `os/exec`.* Both purposes survive: the
+subscription-auth scrub still has exactly one home per spawner, and the engine
+is still fully testable with zero spawns. See ADR 0002, ADR 0005 and ADR 0006.
 
 **The env scrub applies to verification commands too.** `verify: { command:
 "claude -p ..." }` is legal and would otherwise run on metered API billing if
