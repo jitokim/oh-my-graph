@@ -36,13 +36,13 @@ const gitWaitDelay = time.Second
 // Its scope is the git commands the engine itself issues against the
 // invocation repository: worktrees, and the remote snapshot (#410). The
 // snapshot's reads — Remotes, LsRemoteHeads, the local CommitAttributable
-// check and the GHDefaultRemotes config read — go through the same m.gitEnv/gitCmd path that m.git uses, so they
-// inherit the one exec.Command, the env scrub and the timeout, and add only
-// GIT_TERMINAL_PROMPT=0 and an empty GIT_ASKPASS — plus, for Remotes and
-// LsRemoteHeads, GIT_SSH_COMMAND running ssh in BatchMode unless the user
-// chose an ssh command (see snapshotEnv). That widens ADR 0005's "the git
-// worktree commands behind a node's worktree:" to cover them; it adds no
-// spawner.
+// check and the GHDefaultRemotes config read — go through the same
+// m.gitEnv/gitCmd path that m.git uses, so they inherit the one exec.Command,
+// the env scrub and the timeout, and add only GIT_TERMINAL_PROMPT=0 and an
+// empty GIT_ASKPASS — plus, for Remotes and LsRemoteHeads, GIT_SSH_COMMAND
+// running ssh in BatchMode unless the user chose an ssh command (see
+// snapshotEnv). That widens ADR 0005's "the git worktree commands behind a
+// node's worktree:" to cover them; it adds no spawner.
 //
 // Construct it in cmd/oh-my-graph and inject it; the Scheduler never builds
 // one, so no test picks up a real spawn by accident.
@@ -243,12 +243,13 @@ func (m *GitManager) branchExists(ctx context.Context, branch string) bool {
 // measures scope from the same commit (#414).
 //
 // It lives here rather than in the CLI because reading HEAD means spawning
-// git, and the exec-seam invariant allows exactly five spawners (docs/adr/0005,
-// 0006 and 0046); running it through m.git keeps the env scrub and the per-command
-// timeout. It addresses dir with -C and never touches repoDir, baseDir or the
-// branch prefix, so a NewGitManager("", "", "") serves it. The output is
-// combined stdout+stderr, so anything that is not a single full hex object
-// name — a git warning riding along — is discarded rather than returned.
+// git, and the exec-seam invariant allows exactly five spawners
+// (docs/adr/0005, 0006 and 0046); running it through m.git keeps the env scrub
+// and the per-command timeout. It addresses dir with -C and never touches
+// repoDir, baseDir or the branch prefix, so a NewGitManager("", "", "") serves
+// it. The output is combined stdout+stderr, so anything that is not a single
+// full hex object name — a git warning riding along — is discarded rather than
+// returned.
 func (m *GitManager) HeadCommit(ctx context.Context, dir string) string {
 	out, err := m.git(ctx, "-C", dir, "rev-parse", "--verify", "HEAD")
 	if err != nil || !isFullSHA(out) {

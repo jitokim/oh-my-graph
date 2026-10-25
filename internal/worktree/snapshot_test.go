@@ -342,13 +342,13 @@ func TestTakeRemoteSnapshot_PullRequestsStandApartFromGit(t *testing.T) {
 }
 
 // prListLimit copies internal/remote's unexported --limit (ADR 0046 §2.1),
-// which stays unexported, so this is the literal 1000.
-// internal/remote's TestPrListLimitIsTheValueOtherPackagesCopy pins that value,
-// so a change to it in either direction fails there before this copy goes stale.
+// which stays unexported, so this is the literal 1000. internal/remote's
+// TestPrListLimitIsTheValueOtherPackagesCopy pins that value, so a change to
+// it in either direction fails there before this copy goes stale.
 const prListLimit = 1000
 
-// ADR 0046 §8.13: a lister answering exactly remote's prListLimit PRs — here the fake,
-// which applies no limit of its own — records the part unavailable,
+// ADR 0046 §8.13: a lister answering exactly remote's prListLimit PRs — here
+// the fake, which applies no limit of its own — records the part unavailable,
 // "truncated", and the diff does not compare it; one fewer is observed.
 func TestTakeRemoteSnapshot_AListOfTheWholeLimitIsTruncated(t *testing.T) {
 	full := make([]remote.OpenPR, prListLimit)
