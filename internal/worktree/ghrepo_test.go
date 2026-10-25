@@ -191,6 +191,9 @@ func TestTakeRemoteSnapshot_ExpectedGHRepo(t *testing.T) {
 				if expected != (ExpectedGHRepo{}) {
 					t.Errorf("expected repo = %+v, want none when gh is not asked", expected)
 				}
+				if got.Repo != "" || got.RepoSource != "" {
+					t.Errorf("recorded repo %q (%q), want none when gh is not asked", got.Repo, got.RepoSource)
+				}
 				return
 			}
 			if prs.Calls() != 1 {
@@ -201,6 +204,13 @@ func TestTakeRemoteSnapshot_ExpectedGHRepo(t *testing.T) {
 			}
 			if expected != tc.wantExpected {
 				t.Errorf("expected repo = %+v, want %+v", expected, tc.wantExpected)
+			}
+			wantRepo, wantSource := "", ""
+			if tc.wantExpected.Repo != "" {
+				wantRepo, wantSource = tc.wantExpected.Host+"/"+tc.wantExpected.Repo, tc.wantExpected.Source
+			}
+			if got.Repo != wantRepo || got.RepoSource != wantSource {
+				t.Errorf("recorded repo %q (%q), want %q (%q)", got.Repo, got.RepoSource, wantRepo, wantSource)
 			}
 			if strings.Contains(expected.Host+expected.Repo, "secret") {
 				t.Errorf("expected repo %+v keeps a credential", expected)

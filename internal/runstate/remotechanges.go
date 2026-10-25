@@ -3,6 +3,7 @@ package runstate
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // RemotePart names one part of a RemoteSnapshot (ADR 0046 §2.1).
@@ -110,6 +111,13 @@ type PullRequestsSnapshot struct {
 	// Open is every open pull request, sorted by number. Empty both when
 	// observed with none and when unavailable; only Status tells them apart.
 	Open []OpenPullRequest `json:"open,omitempty"`
+	// Repo is the GitHub repository gh was expected to read, as
+	// host/owner/name, and RepoSource what it was worked out from: GH_REPO,
+	// gh's default or the single GitHub remote (#410). Both are additive and
+	// empty when no repository was worked out — none applied, gh was not
+	// asked, or the snapshot was written before they existed.
+	Repo       string `json:"repo,omitempty"`
+	RepoSource string `json:"repo_source,omitempty"`
 }
 
 // OpenPullRequest is one open pull request: only what a change is keyed on.
@@ -275,7 +283,8 @@ func (c *RemoteChanges) EndLeg(after RemoteSnapshot, isRunCommit func(sha string
 // on one side to compare against, and a changed fetch URL means the refs
 // come from another repository; each such remote gets its own not_compared
 // item, beside the remote entry that already reports it. Pull requests are
-// compared on their own: gh reads the GitHub repository, not a remote.
+// compared on their own: gh reads the GitHub repository, not a remote, and
+// two lists that name different repositories are not compared either.
 //
 // isRunCommit decides the attribution of a branch_created, branch_moved,
 // pr_opened or pr_updated entry from its new sha; nil — the between-legs
@@ -316,7 +325,11 @@ func DiffRemoteSnapshots(before, after RemoteSnapshot, isRunCommit func(sha stri
 		d.NotCompared = append(d.NotCompared, skipped...)
 	}
 
-	if reason, ok := comparable(before.PullRequests.Status, before.PullRequests.Reason, after.PullRequests.Status, after.PullRequests.Reason); ok {
+	reason, ok = comparable(before.PullRequests.Status, before.PullRequests.Reason, after.PullRequests.Status, after.PullRequests.Reason)
+	if ok {
+		reason, ok = sameRepo(before.PullRequests, after.PullRequests)
+	}
+	if ok {
 		d.Observed = append(d.Observed, RemotePartPullRequests)
 		d.Entries = append(d.Entries, diffPullRequests(before.PullRequests.Open, after.PullRequests.Open, attribute)...)
 	} else {
@@ -339,6 +352,17 @@ func comparable(beforeStatus RemotePartStatus, beforeReason string, afterStatus 
 	default:
 		return fmt.Sprintf("unavailable after: %s", unavailableReason(afterStatus, afterReason)), false
 	}
+}
+
+// sameRepo reports whether two pull-request parts list the same GitHub
+// repository, and when they do not, the reason naming both. GitHub compares
+// host and owner/name case-insensitively. A side that recorded no repository
+// names none to differ from, and is compared as it always was.
+func sameRepo(before, after PullRequestsSnapshot) (string, bool) {
+	if before.Repo == "" || after.Repo == "" || strings.EqualFold(before.Repo, after.Repo) {
+		return "", true
+	}
+	return fmt.Sprintf("different repos: before %s, after %s", before.Repo, after.Repo), false
 }
 
 // unavailableReason never lets a missing reason print as nothing. No status

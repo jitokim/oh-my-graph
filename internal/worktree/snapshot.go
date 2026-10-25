@@ -27,11 +27,12 @@ import (
 // gh does answer, the repository its PRs' URLs name must be the expected one,
 // or the part is unavailable too.
 //
+// The expected repository, when one was worked out, is recorded on the
+// pull-request part as Repo and RepoSource, whatever gh then answered.
+//
 // URLs, and the reasons that may quote them, have any credential in them
 // replaced before they are recorded.
 func TakeRemoteSnapshot(ctx context.Context, obs RemoteObserver, prs remote.PRLister) runstate.RemoteSnapshot {
-	// The expected repository is recorded on the snapshot by a later #410
-	// change; for now it only decides whether gh is asked.
 	snap, _ := takeRemoteSnapshot(ctx, obs, prs)
 	return snap
 }
@@ -47,6 +48,10 @@ func takeRemoteSnapshot(ctx context.Context, obs RemoteObserver, prs remote.PRLi
 		return snap, ExpectedGHRepo{}
 	}
 	snap.PullRequests = takePullRequests(ctx, prs, expected)
+	if expected.Repo != "" {
+		snap.PullRequests.Repo = expected.Host + "/" + expected.Repo
+		snap.PullRequests.RepoSource = expected.Source
+	}
 	return snap, expected
 }
 

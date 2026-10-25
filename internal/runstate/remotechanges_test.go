@@ -1,6 +1,7 @@
 package runstate
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -873,4 +874,122 @@ func mustReadFile(t *testing.T, path string) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+// withRepo is snap with its PR part naming repo, worked out from source.
+func withRepo(snap RemoteSnapshot, repo, source string) RemoteSnapshot {
+	snap.PullRequests.Repo, snap.PullRequests.RepoSource = repo, source
+	return snap
+}
+
+// TestWrite_PullRequestsRepoRoundTrip_410: the repo gh was expected to read
+// and its source survive Write and Load under their own keys, and do not
+// move the schema stamp.
+func TestWrite_PullRequestsRepoRoundTrip_410(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	snap := sampleSnapshot()
+	rc := &RemoteChanges{}
+	rc.BeginLeg(withRepo(withPRs(observed([]RemoteConfig{origin}), pr(1, "a", shaBase)), "github.com/me/cli", "gh default"))
+	rc.EndLeg(withRepo(withPRs(observed([]RemoteConfig{origin}), pr(1, "a", shaRun)), "github.com/me/cli", "gh default"), runCommitIs(shaRun))
+	snap.RemoteChanges = rc
+	if err := Write(path, snap); err != nil {
+		t.Fatal(err)
+	}
+	if got := rawSchema(t, path); got != Schema || Schema != 3 {
+		t.Errorf("stamped schema %d (Schema = %d), want 3 — the repo fields are additive", got, Schema)
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, mustReadFile(t, path)); err != nil {
+		t.Fatal(err)
+	}
+	if data := compact.String(); !strings.Contains(data, `"repo":"github.com/me/cli","repo_source":"gh default"`) {
+		t.Errorf("state.json lacks the repo keys:\n%s", data)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(loaded.RemoteChanges, snap.RemoteChanges) {
+		got, _ := json.Marshal(loaded.RemoteChanges)
+		want, _ := json.Marshal(snap.RemoteChanges)
+		t.Errorf("remote_changes did not round-trip:\n got %s\nwant %s", got, want)
+	}
+	if d := loaded.RemoteChanges.Legs[0].Changes; len(d.Entries) != 1 || d.Entries[0].Kind != PRUpdated {
+		t.Errorf("changes = %+v, want the one pr_updated of a repo both sides name", d)
+	}
+}
+
+// TestRemoteSnapshot_PullRequestsRepoOmittedWhenEmpty: a PR part with no
+// repo worked out has neither key, and a part written before the keys
+// existed loads with both empty.
+func TestRemoteSnapshot_PullRequestsRepoOmittedWhenEmpty(t *testing.T) {
+	for _, part := range []PullRequestsSnapshot{
+		{Status: RemotePartObserved},
+		{Status: RemotePartUnavailable, Reason: "ambiguous gh repo"},
+	} {
+		data, err := json.Marshal(part)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), `"repo`) {
+			t.Errorf("a PR part with no repo encodes as %s, want no repo keys", data)
+		}
+	}
+	var old PullRequestsSnapshot
+	if err := json.Unmarshal([]byte(`{"status":"observed","open":[{"number":1,"head_ref_name":"a","head_ref_oid":"`+shaBase+`"}]}`), &old); err != nil {
+		t.Fatalf("a PR part without the repo keys no longer loads: %v", err)
+	}
+	if old.Repo != "" || old.RepoSource != "" || len(old.Open) != 1 {
+		t.Errorf("old PR part loaded as %+v", old)
+	}
+}
+
+// TestDiffRemoteSnapshots_PRsOfDifferentReposAreNotCompared: two lists naming
+// different repositories are not compared, with both named; the same repo
+// spelt in another case, or a side that recorded none, compares as before.
+func TestDiffRemoteSnapshots_PRsOfDifferentReposAreNotCompared(t *testing.T) {
+	base := withPRs(observed([]RemoteConfig{origin}), pr(1, "a", shaBase))
+	moved := withPRs(observed([]RemoteConfig{origin}), pr(2, "b", shaRun))
+
+	got := DiffRemoteSnapshots(withRepo(base, "github.com/me/cli", "single GitHub remote"),
+		withRepo(moved, "github.com/cli/cli", "gh default"), runCommitIs(shaRun))
+	if len(got.Entries) != 0 {
+		t.Errorf("entries = %+v, want none: another repo's PRs are not this one's changes", got.Entries)
+	}
+	if want := []RemotePart{RemotePartRemotes, RemotePartBranches}; !reflect.DeepEqual(got.Observed, want) {
+		t.Errorf("observed = %v, want %v", got.Observed, want)
+	}
+	want := []RemoteNotCompared{{Part: RemotePartPullRequests, Reason: "different repos: before github.com/me/cli, after github.com/cli/cli"}}
+	if !reflect.DeepEqual(got.NotCompared, want) {
+		t.Errorf("not_compared = %+v, want %+v", got.NotCompared, want)
+	}
+
+	for name, after := range map[string]RemoteSnapshot{
+		"same repo, other case": withRepo(moved, "github.com/Me/CLI", "GH_REPO"),
+		"no repo recorded":      moved,
+	} {
+		got := DiffRemoteSnapshots(withRepo(base, "github.com/me/cli", "gh default"), after, runCommitIs(shaRun))
+		if len(got.NotCompared) != 0 || len(got.Entries) != 2 {
+			t.Errorf("%s: diff = %+v, want the PR part compared", name, got)
+		}
+	}
+}
+
+// TestDiffRemoteSnapshots_AnAmbiguousRepoIsNotComparedNeverEmpty: a PR part
+// left unavailable because gh's repo could not be told flows through the
+// diff as not_compared, never as an empty list against the other side.
+func TestDiffRemoteSnapshots_AnAmbiguousRepoIsNotComparedNeverEmpty(t *testing.T) {
+	const ambiguous = "ambiguous gh repo: more than one GitHub remote and no gh default (run gh repo set-default)"
+	before := observed([]RemoteConfig{origin})
+	before.PullRequests = PullRequestsSnapshot{Status: RemotePartUnavailable, Reason: ambiguous}
+	after := withRepo(withPRs(observed([]RemoteConfig{origin}), pr(5, "x", shaRun)), "github.com/me/cli", "gh default")
+
+	got := DiffRemoteSnapshots(before, after, runCommitIs(shaRun))
+	if len(got.Entries) != 0 {
+		t.Errorf("entries = %+v, want no pr_opened from an unknown before", got.Entries)
+	}
+	want := []RemoteNotCompared{{Part: RemotePartPullRequests, Reason: "unavailable before: " + ambiguous}}
+	if !reflect.DeepEqual(got.NotCompared, want) {
+		t.Errorf("not_compared = %+v, want %+v", got.NotCompared, want)
+	}
 }
