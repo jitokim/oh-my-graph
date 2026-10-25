@@ -127,6 +127,64 @@ func TestParseLsRemoteHeadsSkipsWhatIsNotAHead(t *testing.T) {
 	}
 }
 
+func TestParseRemotes(t *testing.T) {
+	cases := []struct {
+		name    string
+		out     string
+		want    []Remote
+		wantErr string
+	}{
+		{
+			name:    "a push line with no fetch line",
+			out:     "origin\thttps://example.invalid/r.git (push)\n",
+			wantErr: `git remote -v: remote "origin" has no fetch URL`,
+		},
+		{
+			name: "lines that do not match are skipped",
+			out: "no tab here (fetch)\n" +
+				"\thttps://example.invalid/nameless.git (fetch)\n" +
+				"origin\thttps://example.invalid/r.git (mirror)\n" +
+				"origin\thttps://example.invalid/r.git (fetch)\r\n" +
+				"\n",
+			want: []Remote{{Name: "origin", FetchURL: "https://example.invalid/r.git", PushURL: "https://example.invalid/r.git"}},
+		},
+		{
+			name: "several push URLs are joined",
+			out: "origin\thttps://example.invalid/r.git (fetch)\n" +
+				"origin\thttps://a.invalid/r.git (push)\n" +
+				"origin\thttps://b.invalid/r.git (push)\n",
+			want: []Remote{{Name: "origin", FetchURL: "https://example.invalid/r.git", PushURL: "https://a.invalid/r.git, https://b.invalid/r.git"}},
+		},
+		{
+			name: "no push line falls back to the fetch URL",
+			out: "upstream\thttps://example.invalid/u.git (fetch)\n" +
+				"origin\thttps://example.invalid/r.git (fetch)\n" +
+				"origin\thttps://example.invalid/p.git (push)\n",
+			want: []Remote{
+				{Name: "origin", FetchURL: "https://example.invalid/r.git", PushURL: "https://example.invalid/p.git"},
+				{Name: "upstream", FetchURL: "https://example.invalid/u.git", PushURL: "https://example.invalid/u.git"},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseRemotes(tc.out)
+			if tc.wantErr != "" {
+				if err == nil || err.Error() != tc.wantErr {
+					t.Fatalf("parseRemotes err = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseRemotes: %v", err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("parseRemotes = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestGitManager_CommitAttributable covers ADR 0046 §5.1's check against a
 // real repository: a commit on the run's own branch passes; the base commit,
 // a commit only on a branch outside the run's prefix, a sha the object store
