@@ -30,7 +30,7 @@ func prJSON(t *testing.T, n int) string {
 	t.Helper()
 	prs := make([]OpenPR, n)
 	for i := range prs {
-		prs[i] = OpenPR{Number: i + 1, HeadRefName: fmt.Sprintf("b%d", i+1), HeadRefOid: fmt.Sprintf("%040d", i+1)}
+		prs[i] = OpenPR{Number: i + 1, HeadRefName: fmt.Sprintf("b%d", i+1), HeadRefOid: fmt.Sprintf("%040d", i+1), URL: fmt.Sprintf("https://github.com/o/r/pull/%d", i+1)}
 	}
 	b, err := json.Marshal(prs)
 	if err != nil {
@@ -74,7 +74,7 @@ echo '[]'
 	}
 
 	argv := readFile(t, filepath.Join(out, "argv"))
-	wantArgv := "pr\nlist\n--state\nopen\n--limit\n1000\n--json\nnumber,headRefName,headRefOid\n"
+	wantArgv := "pr\nlist\n--state\nopen\n--limit\n1000\n--json\nnumber,headRefName,headRefOid,url\n"
 	if argv != wantArgv {
 		t.Errorf("argv = %q, want %q", argv, wantArgv)
 	}
@@ -119,7 +119,7 @@ func TestGHRunner_CmdShape(t *testing.T) {
 		t.Errorf("default timeout = %s, want 30s", r.timeout)
 	}
 	cmd := r.ghCmd(context.Background())
-	if got := strings.Join(cmd.Args[1:], " "); got != "pr list --state open --limit 1000 --json number,headRefName,headRefOid" {
+	if got := strings.Join(cmd.Args[1:], " "); got != "pr list --state open --limit 1000 --json number,headRefName,headRefOid,url" {
 		t.Errorf("argv = %q", got)
 	}
 	if cmd.Dir != "/some/repo" {
@@ -131,15 +131,15 @@ func TestGHRunner_CmdShape(t *testing.T) {
 }
 
 func TestGHRunner_ParsesANormalList(t *testing.T) {
-	stubGH(t, `echo '[{"number":7,"headRefName":"feat/x","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"number":9,"headRefName":"fix/y","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]'
+	stubGH(t, `echo '[{"number":7,"headRefName":"feat/x","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","url":"https://github.com/o/r/pull/7"},{"number":9,"headRefName":"fix/y","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","url":"https://github.com/o/r/pull/9"}]'
 `)
 	got := NewGHRunner(t.TempDir()).ListOpenPRs(context.Background())
 	if !got.Observed() || got.Reason != "" {
 		t.Fatalf("got %+v, want observed", got)
 	}
 	want := []OpenPR{
-		{Number: 7, HeadRefName: "feat/x", HeadRefOid: strings.Repeat("a", 40)},
-		{Number: 9, HeadRefName: "fix/y", HeadRefOid: strings.Repeat("b", 40)},
+		{Number: 7, HeadRefName: "feat/x", HeadRefOid: strings.Repeat("a", 40), URL: "https://github.com/o/r/pull/7"},
+		{Number: 9, HeadRefName: "fix/y", HeadRefOid: strings.Repeat("b", 40), URL: "https://github.com/o/r/pull/9"},
 	}
 	if fmt.Sprint(got.PRs) != fmt.Sprint(want) {
 		t.Errorf("PRs = %v, want %v", got.PRs, want)
@@ -203,7 +203,8 @@ func TestGHRunner_UnparsableOutput(t *testing.T) {
 		"empty":      "",
 		"an object":  `{"number":1}`,
 		"null":       "null",
-		"no head":    `[{"number":1,"headRefName":"x"}]`,
+		"no head":    `[{"number":1,"headRefName":"x","url":"https://github.com/o/r/pull/1"}]`,
+		"no url":     `[{"number":1,"headRefName":"x","headRefOid":"abc"}]`,
 		"zero":       `[{"number":0,"headRefName":"x","headRefOid":"abc"}]`,
 		"wrong type": `[{"number":"1","headRefName":"x","headRefOid":"abc"}]`,
 	} {
@@ -268,15 +269,23 @@ func readFile(t *testing.T, path string) string {
 	return string(b)
 }
 
-// Only number, headRefName and headRefOid are kept: a PR whose updatedAt or
+// Only number, headRefName, headRefOid and url are kept: a PR whose updatedAt or
 // title moved parses to the same list, so it can yield no change (ADR 0046
 // §2.2).
 func TestParsePRList_KeepsOnlyWhatAChangeIsKeyedOn(t *testing.T) {
 	sha := strings.Repeat("a", 40)
-	one := parsePRList([]byte(`[{"number":3,"headRefName":"fix","headRefOid":"` + sha + `","updatedAt":"2026-10-01T00:00:00Z","title":"Fix"}]`))
-	two := parsePRList([]byte(`[{"number":3,"headRefName":"fix","headRefOid":"` + sha + `","updatedAt":"2026-10-26T09:30:00Z","title":"Fix it"}]`))
+	one := parsePRList([]byte(`[{"number":3,"headRefName":"fix","headRefOid":"` + sha + `","url":"https://github.com/o/r/pull/3","updatedAt":"2026-10-01T00:00:00Z","title":"Fix"}]`))
+	two := parsePRList([]byte(`[{"number":3,"headRefName":"fix","headRefOid":"` + sha + `","url":"https://github.com/o/r/pull/3","updatedAt":"2026-10-26T09:30:00Z","title":"Fix it"}]`))
 	if !one.Observed() || fmt.Sprint(one) != fmt.Sprint(two) {
 		t.Errorf("lists differ only in fields not collected: %+v vs %+v", one, two)
+	}
+}
+
+// A url carrying a credential is kept with the credential replaced.
+func TestParsePRList_RedactsTheURL(t *testing.T) {
+	got := parsePRList([]byte(`[{"number":3,"headRefName":"fix","headRefOid":"abc","url":"https://x-access-token:ghs_secret@github.com/o/r/pull/3"}]`))
+	if !got.Observed() || len(got.PRs) != 1 || strings.Contains(got.PRs[0].URL, "ghs_secret") || !strings.HasSuffix(got.PRs[0].URL, "github.com/o/r/pull/3") {
+		t.Errorf("got %+v, want the url kept with its credential redacted", got)
 	}
 }
 

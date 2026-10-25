@@ -23,7 +23,9 @@ import (
 // remote it may read the wrong one without failing. So before gh is asked,
 // expectGHRepo works out which repository it will read; when that cannot be
 // told — the remotes could not be read, or two GitHub repositories with no
-// gh default — the pull-request part is unavailable and gh is not asked.
+// gh default — the pull-request part is unavailable and gh is not asked. When
+// gh does answer, the repository its PRs' URLs name must be the expected one,
+// or the part is unavailable too.
 //
 // URLs, and the reasons that may quote them, have any credential in them
 // replaced before they are recorded.
@@ -44,7 +46,7 @@ func takeRemoteSnapshot(ctx context.Context, obs RemoteObserver, prs remote.PRLi
 			Reason: unknown.Reason, Detail: remote.SummarizeReason(unknown.Detail)}
 		return snap, ExpectedGHRepo{}
 	}
-	snap.PullRequests = takePullRequests(ctx, prs)
+	snap.PullRequests = takePullRequests(ctx, prs, expected)
 	return snap, expected
 }
 
@@ -94,8 +96,17 @@ func takeGitParts(ctx context.Context, obs RemoteObserver) (runstate.RemoteSnaps
 // never compared. Anything that is not an observed list is unavailable —
 // never empty — with its reason, and its detail redacted once more, so a
 // lister that skipped the hygiene still records nothing raw.
-func takePullRequests(ctx context.Context, prs remote.PRLister) runstate.PullRequestsSnapshot {
+//
+// An observed list is then checked against expected: PRs whose URLs name
+// another repository — or more than one — were read from the wrong place,
+// so the part is unavailable rather than recorded as this repository's.
+func takePullRequests(ctx context.Context, prs remote.PRLister, expected ExpectedGHRepo) runstate.PullRequestsSnapshot {
 	l := remote.CheckTruncation(prs.ListOpenPRs(ctx))
+	if l.Observed() {
+		if reason, ok := checkGHRepoRead(expected, l.PRs); !ok {
+			l = remote.UnavailablePRs(reason, "")
+		}
+	}
 	if !l.Observed() {
 		reason := l.Reason
 		if reason == "" {

@@ -18,7 +18,10 @@ func TestTakeRemoteSnapshot_ExpectedGHRepo(t *testing.T) {
 		originHTTPS = "https://github.com/me/cli.git"
 		upstream    = "https://github.com/cli/cli.git"
 	)
-	pr := remote.OpenPR{Number: 3, HeadRefName: "fix", HeadRefOid: strings.Repeat("a", 40)}
+	prIn := func(url string) remote.OpenPR {
+		return remote.OpenPR{Number: 3, HeadRefName: "fix", HeadRefOid: strings.Repeat("a", 40), URL: url}
+	}
+	pr := prIn("https://github.com/me/cli/pull/3")
 	cases := []struct {
 		name      string
 		remotes   []Remote
@@ -27,7 +30,10 @@ func TestTakeRemoteSnapshot_ExpectedGHRepo(t *testing.T) {
 		env       remote.RepoEnv
 		prs       []remote.OpenPR
 		// wantReason "" means gh is asked and the part is observed.
-		wantReason   string
+		wantReason string
+		// wantAsked: gh is asked even though the part is unavailable — its
+		// answer named another repository.
+		wantAsked    bool
 		wantExpected ExpectedGHRepo
 	}{
 		{
@@ -52,7 +58,7 @@ func TestTakeRemoteSnapshot_ExpectedGHRepo(t *testing.T) {
 			name:         "GH_REPO over two GitHub remotes",
 			remotes:      []Remote{{Name: "origin", FetchURL: originHTTPS}, {Name: "upstream", FetchURL: upstream}},
 			env:          remote.RepoEnv{Repo: "cli/cli"},
-			prs:          []remote.OpenPR{pr},
+			prs:          []remote.OpenPR{prIn("https://github.com/cli/cli/pull/3")},
 			wantExpected: ExpectedGHRepo{Host: "github.com", Repo: "cli/cli", Source: ExpectedFromGHRepo},
 		},
 		{
@@ -115,6 +121,47 @@ func TestTakeRemoteSnapshot_ExpectedGHRepo(t *testing.T) {
 			wantReason: ReasonAmbiguousGHRepo,
 		},
 		{
+			// (g)
+			name:       "gh lists the PRs of a repository other than the expected origin",
+			remotes:    []Remote{{Name: "origin", FetchURL: originHTTPS}},
+			prs:        []remote.OpenPR{prIn("https://github.com/cli/cli/pull/3")},
+			wantAsked:  true,
+			wantReason: "gh read another repo: expected github.com/me/cli, got github.com/cli/cli",
+		},
+		{
+			name:         "PR urls naming the expected repo in another case are observed",
+			remotes:      []Remote{{Name: "origin", FetchURL: originHTTPS}},
+			prs:          []remote.OpenPR{prIn("https://GitHub.com/Me/CLI/pull/3"), prIn("https://www.github.com/me/Cli/pull/4")},
+			wantExpected: ExpectedGHRepo{Host: "github.com", Repo: "me/cli", Source: ExpectedFromSingleRemote},
+		},
+		{
+			name:       "PRs that disagree on their repository",
+			remotes:    []Remote{{Name: "origin", FetchURL: originHTTPS}},
+			prs:        []remote.OpenPR{pr, prIn("https://github.com/cli/cli/pull/4")},
+			wantAsked:  true,
+			wantReason: "gh read another repo: expected github.com/me/cli, got github.com/me/cli and github.com/cli/cli",
+		},
+		{
+			name:       "a PR url naming no repository",
+			remotes:    []Remote{{Name: "origin", FetchURL: originHTTPS}},
+			prs:        []remote.OpenPR{prIn("")},
+			wantAsked:  true,
+			wantReason: "gh read another repo: expected github.com/me/cli, got a pull request url naming no repo",
+		},
+		{
+			name:         "GHE PRs match the expected GH_HOST repo",
+			remotes:      []Remote{{Name: "corp", FetchURL: "https://ghe.example.com/team/svc.git"}},
+			env:          remote.RepoEnv{Host: "ghe.example.com"},
+			prs:          []remote.OpenPR{prIn("https://GHE.example.com/team/svc/pull/3")},
+			wantExpected: ExpectedGHRepo{Host: "ghe.example.com", Repo: "team/svc", Source: ExpectedFromSingleRemote},
+		},
+		{
+			name:         "no expected repo: PR urls are not compared",
+			remotes:      []Remote{{Name: "origin", FetchURL: "/srv/git/r.git"}},
+			prs:          []remote.OpenPR{prIn("https://github.com/cli/cli/pull/3")},
+			wantExpected: ExpectedGHRepo{},
+		},
+		{
 			name:       "a GH_REPO that is not OWNER/REPO",
 			env:        remote.RepoEnv{Repo: "just-a-name"},
 			wantReason: ReasonBadGHRepo,
@@ -132,11 +179,14 @@ func TestTakeRemoteSnapshot_ExpectedGHRepo(t *testing.T) {
 			snap, expected := takeRemoteSnapshot(context.Background(), obs, prs)
 			got := snap.PullRequests
 			if tc.wantReason != "" {
-				if prs.Calls() != 0 {
-					t.Errorf("gh asked %d times, want not at all", prs.Calls())
+				if wantCalls := map[bool]int{true: 1}[tc.wantAsked]; prs.Calls() != wantCalls {
+					t.Errorf("gh asked %d times, want %d", prs.Calls(), wantCalls)
 				}
 				if got.Status != runstate.RemotePartUnavailable || got.Reason != tc.wantReason || got.Open != nil {
 					t.Errorf("pull requests = %+v, want unavailable %q", got, tc.wantReason)
+				}
+				if tc.wantAsked {
+					return
 				}
 				if expected != (ExpectedGHRepo{}) {
 					t.Errorf("expected repo = %+v, want none when gh is not asked", expected)

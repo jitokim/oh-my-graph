@@ -46,7 +46,7 @@ var ghPRListArgs = []string{
 	"pr", "list",
 	"--state", "open",
 	"--limit", strconv.Itoa(prListLimit),
-	"--json", "number,headRefName,headRefOid",
+	"--json", "number,headRefName,headRefOid,url",
 }
 
 // The reasons an open-PR list is unavailable. They are short and stable on
@@ -80,11 +80,15 @@ const ghAuthExitCode = 4
 
 // OpenPR is one open pull request whose base is the invocation repository's
 // GitHub repo. HeadRefOid is the head commit's sha: a PR is "updated" when it
-// moves, never when updatedAt does (ADR 0046 §2.2).
+// moves, never when updatedAt does (ADR 0046 §2.2). URL is the PR's web
+// page, https://<host>/<owner>/<repo>/pull/<n>: the snapshot reads from it
+// which repository gh actually listed (#410). It is not recorded, and
+// parsePRList redacts any credential in it.
 type OpenPR struct {
 	Number      int    `json:"number"`
 	HeadRefName string `json:"headRefName"`
 	HeadRefOid  string `json:"headRefOid"`
+	URL         string `json:"url"`
 }
 
 // PRList is one read of the open PRs. Status is observed — PRs is the whole
@@ -225,8 +229,8 @@ func (r *GHRunner) ListOpenPRs(ctx context.Context) PRList {
 }
 
 // parsePRList reads gh's JSON array. Anything else — empty output, a JSON
-// object, a PR with no number — is unparsable rather than a guess at an
-// empty list.
+// object, a PR with no number, head sha or url — is unparsable rather than a
+// guess at an empty list.
 func parsePRList(out []byte) PRList {
 	var prs []OpenPR
 	if err := json.Unmarshal(bytes.TrimSpace(out), &prs); err != nil {
@@ -235,10 +239,11 @@ func parsePRList(out []byte) PRList {
 	if prs == nil {
 		return UnavailablePRs(ReasonUnparsable, "not a JSON list")
 	}
-	for _, pr := range prs {
-		if pr.Number <= 0 || pr.HeadRefOid == "" {
-			return UnavailablePRs(ReasonUnparsable, "a pull request has no number or head sha")
+	for i, pr := range prs {
+		if pr.Number <= 0 || pr.HeadRefOid == "" || pr.URL == "" {
+			return UnavailablePRs(ReasonUnparsable, "a pull request has no number, head sha or url")
 		}
+		prs[i].URL = RedactURLCredentials(pr.URL)
 	}
 	return CheckTruncation(ObservedPRs(prs))
 }

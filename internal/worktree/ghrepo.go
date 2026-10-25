@@ -39,6 +39,14 @@ const (
 	ReasonBadGHRepo = "gh repo unknown: GH_REPO is not [HOST/]OWNER/REPO"
 )
 
+// reasonGHReadAnotherRepo is the prefix of the reason the pull-request part
+// is unavailable with when gh answered, but its PRs' URLs name another
+// repository than the expected one; checkGHRepoRead writes the rest.
+const reasonGHReadAnotherRepo = "gh read another repo: "
+
+// noRepoInURL stands for the actual repository when a PR's URL names none.
+const noRepoInURL = "a pull request url naming no repo"
+
 // defaultGHHost is the host gh reads when neither GH_REPO nor GH_HOST names
 // one.
 const defaultGHHost = "github.com"
@@ -152,6 +160,75 @@ func expectGHRepo(ctx context.Context, obs RemoteObserver, env remote.RepoEnv, r
 	default:
 		return ExpectedGHRepo{}, &ghRepoUnknown{Reason: ReasonAmbiguousGHRepo}
 	}
+}
+
+// checkGHRepoRead reports whether the PRs gh listed are the expected
+// repository's, read from their URLs. With no expected repository, or no PRs,
+// there is nothing to compare and the list stands. Otherwise every PR's URL
+// must name the expected host and owner/name, compared case-insensitively;
+// PRs naming more than one repository, or a URL naming none, are a mismatch
+// too. reason is 'gh read another repo: expected <expected>, got <actual>'
+// in host/owner/name forms.
+func checkGHRepoRead(expected ExpectedGHRepo, prs []remote.OpenPR) (reason string, ok bool) {
+	if expected.Repo == "" || len(prs) == 0 {
+		return "", true
+	}
+	want := ghRepoRef{host: expected.Host, repo: expected.Repo}
+	var got []string
+	seen := map[string]bool{}
+	mismatch := false
+	for _, pr := range prs {
+		ref, ok := parsePRURL(pr.URL)
+		name, key := noRepoInURL, ""
+		if ok {
+			name, key = ref.host+"/"+ref.repo, ref.key()
+		}
+		if key != want.key() {
+			mismatch = true
+		}
+		if !seen[strings.ToLower(name)] {
+			seen[strings.ToLower(name)] = true
+			got = append(got, name)
+		}
+	}
+	if !mismatch {
+		return "", true
+	}
+	return reasonGHReadAnotherRepo + "expected " + want.host + "/" + want.repo + ", got " + strings.Join(got, " and "), false
+}
+
+// parsePRURL reads the repository out of a PR's web URL,
+// https://<host>/<owner>/<repo>/pull/<n>. Only the host and owner/repo are
+// kept; anything else is not a match.
+func parsePRURL(raw string) (ghRepoRef, bool) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ghRepoRef{}, false
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "https", "http":
+	default:
+		return ghRepoRef{}, false
+	}
+	host := normalizeGHHost(u.Hostname())
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if host == "" || len(parts) != 4 || parts[0] == "" || parts[1] == "" || parts[2] != "pull" || !isDigits(parts[3]) {
+		return ghRepoRef{}, false
+	}
+	return ghRepoRef{host: host, repo: parts[0] + "/" + parts[1]}, true
+}
+
+// isDigits reports whether s is a non-empty run of ASCII digits.
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // isGitHubHost reports whether host is one gh would read: GH_HOST when it is
