@@ -573,7 +573,8 @@ has no open issue behind it.
   timeout (30 s), so an unreachable remote can add up to 30 s per remote at
   each of those points. Ctrl-C during either snapshot, start or end, ends
   the leg as interrupted (exit 1, never paused); during the start snapshot
-  it ends the leg before any node starts, and an interrupted leg records
+  it ends the leg before any node starts, a resumed run staying paused at its
+  gate for the same `resume --approve <gate>`, and an interrupted leg records
   its end snapshot as `unavailable` ("interrupted") instead of waiting for
   it. During the end snapshot a pause the nodes reached is withdrawn, so
   the leg resumes with `--retry-failed` and its gate pauses again. A leg

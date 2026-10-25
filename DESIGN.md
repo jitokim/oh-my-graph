@@ -1112,7 +1112,9 @@ unreachable remote can add up to 30 s at the start and at the end of each
 leg. Ctrl-C cuts that short: Ctrl-C during either snapshot, *before* or
 *after*, ends the leg as interrupted, as an interrupt during a node does —
 exit 1, `run_finished` `"failed"`, no pause hint. One during the *before*
-snapshot ends the leg there, before any node starts; once a leg is
+snapshot ends the leg there, before any node starts, and on a resumed leg
+leaves the run paused as it was, resumable by the same `resume --approve
+<gate>`; once a leg is
 interrupted its *after* snapshot is not taken, or is cut short, and is
 recorded with both parts unavailable, reason `interrupted`, the record
 printed either way. A leg's `run_finished` is therefore written after its
@@ -1165,8 +1167,9 @@ compared, the line says `none observed in the parts compared` and a
 (`legs`, each with `before`, `after` and `changes`, and `between_legs`),
 additive and optional, so the schema stays 3 and no event is added
 (docs/RUN-FEED.md). Every command runs on `worktree.GitManager`, through the
-`worktree.RemoteObserver` interface, with `GIT_TERMINAL_PROMPT=0` added to
-the scrubbed environment. That stops only git's own prompt — ssh asks on
+`worktree.RemoteObserver` interface, with `GIT_TERMINAL_PROMPT=0` and an
+empty `GIT_ASKPASS` added to the scrubbed environment. That stops only git's
+own prompts, an askpass helper's included — ssh asks on
 `/dev/tty` itself for an unknown host key or a locked key — so `git remote
 -v` and `ls-remote` also get `GIT_SSH_COMMAND=ssh -o BatchMode=yes` unless
 the user chose an ssh command (`GIT_SSH_COMMAND` or `GIT_SSH` in the
@@ -2459,8 +2462,9 @@ incompatible snapshot is refused rather than misread:
   in-flight siblings drain and before the gate branch, so a leg that pauses on
   a limit and at a gate persists both records while the gate still wins the
   returned error. It is cleared the way `gate.paused_at` is: `continueRun`
-  (`cmd/oh-my-graph/resume.go`) seeds the resumed leg's recorder without it,
-  so that leg's first write drops it, and a limit the leg hits records its
+  (`cmd/oh-my-graph/resume.go`) seeds the resumed leg's recorder with it as
+  loaded, and `RecordLegGate` drops it once the leg's before remote snapshot
+  completes uninterrupted, and a limit the leg hits records its
   own. Display only: `runs list` and the end-of-leg pause hint name the cause
   from it, and `resume --approve/--reject` on such a run says it is paused on
   a limit rather than "not paused"; `runstatus` does not read it, nothing a

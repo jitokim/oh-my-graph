@@ -234,8 +234,9 @@ before you print it, and any reset time stays inside it, unparsed; and `at`,
 when the pause was taken, after in-flight siblings drained. It records the
 **pause**, not the nodes: a limited node is still recorded nowhere in `nodes`,
 so `resume --retry-failed` re-launches it. The scheduler writes it once, at the
-end of the leg that hit the limit, and a resumed leg's first snapshot write
-clears it, since that leg's recorder is seeded without it — the lifecycle of
+end of the leg that hit the limit, and a resumed leg clears it in the write
+that follows its before remote snapshot, kept if a Ctrl-C interrupts that
+snapshot — the lifecycle of
 `gate.paused_at`. A leg that pauses on a limit and at a gate holds both
 records, and each is cleared by the leg that runs past it. Its write is
 non-fatal (a warning on the progress output), so a limit-paused run may lack
