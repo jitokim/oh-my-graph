@@ -452,7 +452,7 @@ func TestSnapshotRecorder_RecordLegGate_410(t *testing.T) {
 	}
 
 	decisions := map[string]GateDecision{"first": GateApprove, "second": GateApprove}
-	if err := rec.RecordLegGate(decisions); err != nil {
+	if err := rec.RecordLegGate(decisions, base.Nodes); err != nil {
 		t.Fatal(err)
 	}
 	if err := rec.RecordGateDecision("third", GateReject); err != nil {
@@ -492,7 +492,7 @@ func TestSnapshotRecorder_RecordLegGateKeepsThePauseWhenItsWriteFails_410(t *tes
 	base.LimitPause = &LimitPause{NodeIDs: []string{"b"}, Cause: "limit"}
 	rec := NewSnapshotRecorder(path, base)
 
-	if err := rec.RecordLegGate(map[string]GateDecision{"first": GateApprove, "second": GateApprove}); err == nil {
+	if err := rec.RecordLegGate(map[string]GateDecision{"first": GateApprove, "second": GateApprove}, nil); err == nil {
 		t.Fatal("RecordLegGate returned nil on a write that cannot succeed")
 	}
 	if !reflect.DeepEqual(rec.snap.Gate, base.Gate) || !reflect.DeepEqual(rec.snap.LimitPause, base.LimitPause) {
@@ -511,5 +511,100 @@ func TestSnapshotRecorder_RecordLegGateKeepsThePauseWhenItsWriteFails_410(t *tes
 	}
 	if !reflect.DeepEqual(snap.Gate, base.Gate) || snap.LimitPause == nil || !reflect.DeepEqual(snap.LimitPause.NodeIDs, base.LimitPause.NodeIDs) {
 		t.Errorf("the next record persisted gate %+v, limit pause %+v, want the loaded pause kept", snap.Gate, snap.LimitPause)
+	}
+}
+
+// TestSnapshotRecorder_RecordLegGateWritesTheCarriedRecords_410: a retry leg
+// seeded with every record as loaded keeps the failed one, and its cost, on
+// disk until RecordLegGate writes the retained subset in the same write as
+// the leg's gate state; the retained records keep their cost, and the
+// recorder never shares the caller's map.
+func TestSnapshotRecorder_RecordLegGateWritesTheCarriedRecords_410(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	base := baseSnapshot("run-1")
+	base.Nodes = map[string]NodeRecord{
+		"a": {Verdict: VerdictPass, CostUSD: 0.25},
+		"b": {Verdict: VerdictFail, CostUSD: 0.5},
+	}
+	base.Gate = GateState{Decisions: map[string]GateDecision{"gate1": GateApprove}}
+	rec := NewSnapshotRecorder(path, base)
+
+	var rc RemoteChanges
+	rc.BeginLeg(observed([]RemoteConfig{origin}))
+	if err := rec.RecordRemoteChanges(rc); err != nil {
+		t.Fatal(err)
+	}
+	if snap, err := Load(path); err != nil {
+		t.Fatal(err)
+	} else if !reflect.DeepEqual(snap.Nodes, base.Nodes) {
+		t.Errorf("before RecordLegGate: nodes %+v, want the loaded records %+v", snap.Nodes, base.Nodes)
+	}
+
+	retained := map[string]NodeRecord{"a": base.Nodes["a"]}
+	if err := rec.RecordLegGate(base.Gate.Decisions, retained); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(snap.Nodes, retained) {
+		t.Errorf("nodes = %+v, want the retained records %+v", snap.Nodes, retained)
+	}
+	if !reflect.DeepEqual(snap.Gate, GateState{Decisions: base.Gate.Decisions}) || snap.RemoteChanges == nil || len(snap.RemoteChanges.Legs) != 1 {
+		t.Errorf("gate %+v / remote record %+v not kept", snap.Gate, snap.RemoteChanges)
+	}
+
+	if err := rec.RecordNode("b", NodeRecord{Verdict: VerdictPass, CostUSD: 0.75}); err != nil {
+		t.Fatal(err)
+	}
+	if _, shared := retained["b"]; shared {
+		t.Error("the recorder shares the caller's nodes map")
+	}
+	if snap, err := Load(path); err != nil {
+		t.Fatal(err)
+	} else if got := snap.Nodes["b"]; got.Verdict != VerdictPass || got.CostUSD != 0.75 {
+		t.Errorf("b = %+v, want the re-run's PASS at its own cost, nothing folded in from the cleared record", got)
+	}
+}
+
+// TestSnapshotRecorder_RecordLegGateKeepsTheLoadedRecordsWhenItsWriteFails_410:
+// a RecordLegGate whose write fails returns the error and keeps the records
+// as loaded, so the next record that does reach disk still holds the failed
+// node's record and cost — never the retained subset that was not written.
+func TestSnapshotRecorder_RecordLegGateKeepsTheLoadedRecordsWhenItsWriteFails_410(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "run")
+	// A file where the run directory should be: Write's MkdirAll fails.
+	if err := os.WriteFile(dir, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "state.json")
+	base := baseSnapshot("run-1")
+	base.Nodes = map[string]NodeRecord{
+		"a": {Verdict: VerdictPass, CostUSD: 0.25},
+		"b": {Verdict: VerdictFail, CostUSD: 0.5},
+	}
+	rec := NewSnapshotRecorder(path, base)
+	before := rec.snap
+
+	if err := rec.RecordLegGate(nil, map[string]NodeRecord{"a": base.Nodes["a"]}); err == nil {
+		t.Fatal("RecordLegGate returned nil on a write that cannot succeed")
+	}
+	if !reflect.DeepEqual(rec.snap, before) {
+		t.Errorf("after the failed write: recorder holds %+v, want it unchanged: %+v", rec.snap, before)
+	}
+
+	if err := os.Remove(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.RecordRemoteChanges(RemoteChanges{}); err != nil {
+		t.Fatalf("RecordRemoteChanges once the path is writable: %v", err)
+	}
+	snap, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(snap.Nodes, base.Nodes) {
+		t.Errorf("the next record persisted nodes %+v, want the loaded records %+v", snap.Nodes, base.Nodes)
 	}
 }

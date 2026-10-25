@@ -706,14 +706,15 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// never a new one, so an old run with none attributes nothing.
 		RunBaseSHA:    snap.RunBaseSHA,
 		RemoteChanges: snap.RemoteChanges,
-		Nodes:         records,
-		// The pause as loaded, until the before remote snapshot has completed
-		// uninterrupted: only then does RecordLegGate write this leg's
-		// decisions with PausedAt empty and no limit pause — the run actively
-		// continuing until (if at all) this leg pauses again, a limit it hits
-		// recording its own (ADR 0031 §8.1). A Ctrl-C during that snapshot
-		// so leaves the run paused where it was, resumable by the same
-		// command (#410).
+		// The node records, and the pause, as loaded, until the before remote
+		// snapshot has completed uninterrupted: only then does RecordLegGate
+		// write this leg's carried records — a retry's retained subset, its
+		// failed records and their cost dropped — and its decisions with
+		// PausedAt empty and no limit pause — the run actively continuing
+		// until (if at all) this leg pauses again, a limit it hits recording
+		// its own (ADR 0031 §8.1). A Ctrl-C during that snapshot so leaves the
+		// run where it was, resumable by the same command (#410).
+		Nodes:      snap.Nodes,
 		Gate:       snap.Gate,
 		LimitPause: snap.LimitPause,
 	})
@@ -826,7 +827,8 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	remote := beginRemoteLeg(ctx, runID, recorder, snap.RunBaseSHA, snap.RemoteChanges)
 	// An interrupt during the before snapshot ends the leg before any node
 	// starts, its record printed, as in executeGraph, and before this leg's
-	// gate decisions are written, so the run is still paused as it was.
+	// gate decisions and carried records are written, so the run is still
+	// paused, or still holds its failed records, as it was.
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		remote.end(ctx)
 		remote.print(os.Stdout)
@@ -841,9 +843,9 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// which this leg's own pause would reach. Its after snapshot is taken,
 	// not recorded interrupted, and no run_finished is written: the scheduler
 	// writes this leg's run_started, so nothing opened a leg on the stream.
-	// The recorder kept the pause as loaded, so the run is still paused where
-	// it was and the same command can be retried.
-	if err := recorder.RecordLegGate(decisions); err != nil {
+	// The recorder kept the pause and the node records as loaded, so the run
+	// is still stopped where it was and the same command can be retried.
+	if err := recorder.RecordLegGate(decisions, records); err != nil {
 		remote.end(ctx)
 		remote.print(os.Stdout)
 		return legGateWriteError(snap.Gate.PausedAt, err)

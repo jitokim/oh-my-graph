@@ -167,23 +167,32 @@ func (r *SnapshotRecorder) ClearPause() error {
 	return Write(r.path, r.snap)
 }
 
-// RecordLegGate replaces the earlier leg's gate state and limit pause with the
-// ones a resumed leg starts from — decisions, no paused gate, no limit pause —
-// and persists the snapshot in one write. The CLI seeds a resumed leg's
-// recorder with the snapshot's pause as loaded and calls this once its before
-// remote snapshot has completed uninterrupted (#410): a Ctrl-C during that
-// snapshot then leaves the run paused exactly where it was, resumable by the
-// same command. decisions is copied, so the caller's map is never mutated.
+// RecordLegGate replaces the earlier leg's gate state, limit pause and node
+// records with the ones a resumed leg starts from — decisions, no paused
+// gate, no limit pause, and nodes, the records the leg carries forward (all
+// of them for a gate resume, the retained subset for --retry-failed) — and
+// persists the snapshot in one write. The CLI seeds a resumed leg's recorder
+// with the snapshot's pause and node records as loaded and calls this once
+// its before remote snapshot has completed uninterrupted (#410): a Ctrl-C
+// during that snapshot then leaves the run exactly where it was — paused at
+// its gate, its failed records and their cost still on disk — resumable by
+// the same command. decisions and nodes are copied, so the caller's maps are
+// never mutated.
 //
 // The new state is written before it is kept: a failed write leaves the
-// recorder holding the loaded pause, so no later record persists "not paused"
-// for a leg whose decisions never reached disk.
-func (r *SnapshotRecorder) RecordLegGate(decisions map[string]GateDecision) error {
+// recorder holding the loaded pause and records, so no later record persists
+// "not paused", or a failed node's record dropped, for a leg whose start never
+// reached disk.
+func (r *SnapshotRecorder) RecordLegGate(decisions map[string]GateDecision, nodes map[string]NodeRecord) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	next := r.snap
 	next.Gate = GateState{Decisions: maps.Clone(decisions)}
 	next.LimitPause = nil
+	next.Nodes = maps.Clone(nodes)
+	if next.Nodes == nil {
+		next.Nodes = make(map[string]NodeRecord)
+	}
 	if err := Write(r.path, next); err != nil {
 		return err
 	}

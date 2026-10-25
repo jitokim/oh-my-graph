@@ -823,6 +823,150 @@ func TestResume_AFailedGateDecisionWriteStartsNoNodeAndLeavesTheRunPaused(t *tes
 	}
 }
 
+// Review of #410: a resume --retry-failed seeded its recorder with the
+// retained records only, so a Ctrl-C during its before snapshot persisted
+// state.json with the failed node's record and cost dropped, and the same
+// command then found no failed node to retry. state.json must keep every
+// record exactly as loaded, and the same resume --retry-failed must then
+// re-run the failed node.
+func TestResume_RetryFailedInterruptedDuringTheRemoteSnapshotKeepsTheFailedRecords(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		during bool
+	}{
+		{"cancelled while the before snapshot runs", true},
+		{"cancelled as the before snapshot returns", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateRunHome(t)
+			useRemoteObserver(t, originObserver(), remoteBaseSHA)
+			fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+				"a": {Result: "PASS", ExitCode: 0, TotalCostUSD: 0.25},
+				"b": {Result: "FAIL", ExitCode: 1, TotalCostUSD: 0.5},
+			})
+			// The retry quotes b's failed reply after its own prompt (ADR 0020).
+			fake.KeyFn = func(spec runner.NodeInvocation) string { return nodePromptOf(spec.Prompt) }
+			g := mustParse(t, `{"name":"retry-flow","nodes":[
+				{"id":"a","prompt":"a"},
+				{"id":"b","prompt":"b","depends_on":["a"]}]}`)
+			var err error
+			captureStdout(t, func() {
+				err = executeGraph(context.Background(), "run-1", g, fake, commonRunFlags{inputs: inputFlag{}}, nil, 0, "retry-flow.yaml", []byte("name: retry-flow\n"), false, nil, nil, nil)
+			})
+			if err == nil {
+				t.Fatal("expected the first leg to fail at b")
+			}
+			loaded := remoteRunSnapshot(t, "run-1").Nodes
+			if loaded["b"].Verdict != runstate.VerdictFail || loaded["b"].CostUSD == 0 || loaded["a"].CostUSD == 0 {
+				t.Fatalf("first leg recorded %+v, want a PASS and b FAIL, each with a cost", loaded)
+			}
+			firstCalls := len(fake.Calls())
+
+			useRemoteObserver(t, &interruptingObserver{FakeRemoteObserver: originObserver(), interrupt: sigint(t), during: tc.during}, remoteBaseSHA)
+			captureStdout(t, func() {
+				err = executeResume(parseResumeFlags(t, []string{"run-1", "--retry-failed"}), fake, nil)
+			})
+			if code := exitCodeForError(err); !errors.Is(err, context.Canceled) || code != 1 {
+				t.Fatalf("err = %v (exit %d), want context.Canceled, exit 1", err, code)
+			}
+			if calls := fake.Calls(); len(calls) != firstCalls {
+				t.Errorf("nodes ran after the interrupt: %v", calls[firstCalls:])
+			}
+			if nodes := remoteRunSnapshot(t, "run-1").Nodes; !reflect.DeepEqual(nodes, loaded) {
+				t.Errorf("nodes = %+v after the interrupted resume, want them as loaded: %+v", nodes, loaded)
+			}
+
+			fake.SetOutcome("b", runner.NodeOutcome{Result: "PASS", ExitCode: 0, TotalCostUSD: 0.75})
+			useRemoteObserver(t, originObserver(), remoteBaseSHA)
+			out := captureStdout(t, func() {
+				err = executeResume(parseResumeFlags(t, []string{"run-1", "--retry-failed"}), fake, nil)
+			})
+			if err != nil {
+				t.Fatalf("the same resume --retry-failed after the interrupt: %v", err)
+			}
+			if !strings.Contains(out, "retrying failed nodes: b") {
+				t.Errorf("the same resume --retry-failed did not retry b:\n%s", out)
+			}
+			if calls := fake.Calls()[firstCalls:]; !reflect.DeepEqual(calls, []string{"b"}) {
+				t.Errorf("calls after the interrupt = %v, want b re-run alone", calls)
+			}
+			if b := remoteRunSnapshot(t, "run-1").Nodes["b"]; b.Verdict != runstate.VerdictPass {
+				t.Errorf("b = %+v, want PASS", b)
+			}
+		})
+	}
+}
+
+// Review of #410: the uninterrupted retry leg still drops the cleared
+// records once its before snapshot has completed — state.json holds exactly
+// the retained records, their cost kept, before any node starts — so a
+// retry leg that halts at another node first leaves no stale failure record
+// for the cleared node it never reached. The cleared node is an exhausted
+// feedback declarer, review: salvaging it clears its body, impl, too (ADR
+// 0010), and the retry leg halts at impl, which review depends on.
+func TestResume_RetryFailedWritesTheRetainedRecordsOnceTheRemoteSnapshotCompletes(t *testing.T) {
+	isolateRunHome(t)
+	useRemoteObserver(t, originObserver(), remoteBaseSHA)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"a":                {Result: "PASS", ExitCode: 0, TotalCostUSD: 0.125},
+		"impl: ":           {Result: "draft-v1", ExitCode: 0, TotalCostUSD: 0.25},
+		"review: draft-v1": {Result: "needs work", ExitCode: 0, TotalCostUSD: 0.25},
+		"impl: needs work": {Result: "draft-v2", ExitCode: 0, TotalCostUSD: 0.25},
+		"review: draft-v2": {Result: "still bad", ExitCode: 0, TotalCostUSD: 0.25},
+	})
+	fake.KeyFn = func(spec runner.NodeInvocation) string { return nodePromptOf(spec.Prompt) }
+	g := mustParse(t, `{"name":"loop","nodes":[
+		{"id":"a","prompt":"a"},
+		{"id":"impl","prompt":"impl: {{ feedback.review }}","depends_on":["a"]},
+		{"id":"review","prompt":"review: {{ artifacts.impl | inline }}","depends_on":["impl"],
+		 "success_check":{"result_matches":"ship it"},
+		 "feedback":{"rerun":"impl","max":1}}]}`)
+	var err error
+	captureStdout(t, func() {
+		err = executeGraph(context.Background(), "run-1", g, fake, commonRunFlags{inputs: inputFlag{}}, nil, 0, "loop.yaml", []byte("name: loop\n"), false, nil, nil, nil)
+	})
+	var halted *schedule.HaltError
+	if !errors.As(err, &halted) {
+		t.Fatalf("expected the first leg to halt on the exhausted loop, got %v", err)
+	}
+	loaded := remoteRunSnapshot(t, "run-1").Nodes
+	if loaded["a"].Verdict != runstate.VerdictPass || loaded["impl"].Verdict != runstate.VerdictPass || loaded["review"].Verdict != runstate.VerdictFail {
+		t.Fatalf("first leg recorded %+v, want a and impl PASS, review FAIL", loaded)
+	}
+	firstCalls := len(fake.Calls())
+
+	fake.SetOutcome("impl: ", runner.NodeOutcome{Result: "FAIL", ExitCode: 1})
+	var atFirstNode map[string]runstate.NodeRecord
+	hooked := hookRunner{FakeRunner: fake, before: func(runner.NodeInvocation) {
+		if atFirstNode == nil {
+			atFirstNode = remoteRunSnapshot(t, "run-1").Nodes
+		}
+	}}
+	out := captureStdout(t, func() {
+		err = executeResume(parseResumeFlags(t, []string{"run-1", "--retry-failed"}), hooked, nil)
+	})
+	if !errors.As(err, &halted) {
+		t.Fatalf("expected the retry leg to halt at impl, got %v", err)
+	}
+	if !strings.Contains(out, "retrying failed nodes: impl, review") {
+		t.Errorf("the retry leg did not clear impl and review:\n%s", out)
+	}
+	if calls := fake.Calls()[firstCalls:]; !reflect.DeepEqual(calls, []string{"impl: "}) {
+		t.Fatalf("retry leg calls = %v, want it to halt at impl before reaching review", calls)
+	}
+	retained := map[string]runstate.NodeRecord{"a": loaded["a"]}
+	if !reflect.DeepEqual(atFirstNode, retained) {
+		t.Errorf("state.json nodes when the retry leg's first node started = %+v, want the retained records %+v", atFirstNode, retained)
+	}
+	nodes := remoteRunSnapshot(t, "run-1").Nodes
+	if review, stale := nodes["review"]; stale {
+		t.Errorf("state.json still holds review's cleared record %+v, a node the retry leg never reached", review)
+	}
+	if !reflect.DeepEqual(nodes["a"], loaded["a"]) || nodes["impl"].Verdict != runstate.VerdictFail {
+		t.Errorf("nodes = %+v, want a as loaded and impl FAIL", nodes)
+	}
+}
+
 // afterSnapshotInterrupter is the user's Ctrl-C landing on the after
 // snapshot of a leg whose nodes have finished. Its first Remotes (the before
 // snapshot) answers in full; its second (the after snapshot) interrupts the
