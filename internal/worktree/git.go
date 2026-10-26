@@ -420,8 +420,9 @@ func (m *GitManager) gitRun(ctx context.Context, extraEnv []string, args ...stri
 // on metered API billing.
 //
 // extraEnv is appended AFTER the scrub, never instead of it, and nil for the
-// worktree commands. os/exec keeps the last value of a repeated key, so an
-// extra variable overrides the parent's own setting of it.
+// worktree commands. An extra variable replaces the parent's own setting of
+// it — the parent's entry is dropped, not left beside it — so cmd.Env holds
+// each key once: LsRemoteHeadsURL's GIT_CONFIG_COUNT is the only one.
 //
 // WaitDelay makes the timeout hold: killing git does not kill what git
 // spawned (an ext:: transport, a credential helper, a hook), and a
@@ -431,9 +432,28 @@ func (m *GitManager) gitCmd(ctx context.Context, extraEnv []string, args ...stri
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = m.repoDir
 	cmd.Env = childenv.Scrub(m.environ())
-	cmd.Env = append(cmd.Env, extraEnv...)
+	cmd.Env = append(withoutKeysOf(cmd.Env, extraEnv), extraEnv...)
 	cmd.WaitDelay = gitWaitDelay
 	return cmd
+}
+
+// withoutKeysOf is env less every entry whose key some entry of extra sets.
+func withoutKeysOf(env, extra []string) []string {
+	if len(extra) == 0 {
+		return env
+	}
+	keys := make(map[string]bool, len(extra))
+	for _, kv := range extra {
+		k, _, _ := strings.Cut(kv, "=")
+		keys[k] = true
+	}
+	kept := make([]string, 0, len(env))
+	for _, kv := range env {
+		if k, _, _ := strings.Cut(kv, "="); !keys[k] {
+			kept = append(kept, kv)
+		}
+	}
+	return kept
 }
 
 // noPromptEnv is appended to every remote-snapshot command (ADR 0046 §2.3).

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jitokim/oh-my-graph/internal/childenv"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
 )
 
@@ -409,6 +410,12 @@ func TestGitManager_LsRemoteHeadsURLIsOffTheArgvOfTheGitProcessTheEngineStarts(t
 		}
 		if c.args[0] == "ls-remote" {
 			lsRemote = &calls[i]
+			continue
+		}
+		for _, kv := range c.env {
+			if strings.Contains(kv, "s3cret") || strings.Contains(kv, "example.invalid") {
+				t.Errorf("git %q got the URL in its env as %q; only ls-remote's GIT_CONFIG_VALUE_1 may hold it", c.args, kv)
+			}
 		}
 	}
 	if lsRemote == nil || countCalls(calls, "ls-remote") != 1 {
@@ -418,10 +425,18 @@ func TestGitManager_LsRemoteHeadsURLIsOffTheArgvOfTheGitProcessTheEngineStarts(t
 		t.Errorf("ls-remote args = %q, want %q", lsRemote.args, want)
 	}
 	env := lsRemote.env
+	holders := 0
 	for _, kv := range env {
-		if strings.Contains(kv, "s3cret") && kv != "GIT_CONFIG_VALUE_1="+fakeCredentialURL {
+		if !strings.Contains(kv, "s3cret") && !strings.Contains(kv, "example.invalid") {
+			continue
+		}
+		holders++
+		if kv != "GIT_CONFIG_VALUE_1="+fakeCredentialURL {
 			t.Errorf("the URL is in env as %q, want it only as GIT_CONFIG_VALUE_1", kv)
 		}
+	}
+	if holders != 1 {
+		t.Errorf("%d env entries hold the URL, want exactly GIT_CONFIG_VALUE_1", holders)
 	}
 	for key, want := range map[string]string{
 		"GIT_CONFIG_COUNT":    "2",
@@ -439,17 +454,55 @@ func TestGitManager_LsRemoteHeadsURLIsOffTheArgvOfTheGitProcessTheEngineStarts(t
 	assertNoAskpass(t, env, "ls-remote's env")
 }
 
-// Before 2.31 git does not read GIT_CONFIG_COUNT: the read is refused, never
-// moved back onto argv, and no ls-remote runs. The version is asked once
-// per manager.
+// The parent's GIT_CONFIG_COUNT=1 is replaced by ours, not left beside it: the
+// exact env the engine hands its ls-remote child holds one GIT_CONFIG_COUNT,
+// 2, with the parent's pair at index 0 and ours at 1.
+func TestGitManager_LsRemoteHeadsURLReplacesTheInheritedConfigCount(t *testing.T) {
+	m := fakeGitManager(t)
+	n, err := inheritedConfigCount(childenv.Scrub(m.environ()))
+	if err != nil || n != 1 {
+		t.Fatalf("inheritedConfigCount = %d, %v; want 1", n, err)
+	}
+	env := append(append([]string(nil), noPromptEnv...), beforeSnapshotEnv(n, fakeCredentialURL)...)
+	cmd := m.gitCmd(context.Background(), env, lsRemoteHeadsArgs(beforeSnapshotRemote)...)
+
+	var counts []string
+	for _, kv := range cmd.Env {
+		if strings.HasPrefix(kv, "GIT_CONFIG_COUNT=") {
+			counts = append(counts, kv)
+		}
+	}
+	if want := []string{"GIT_CONFIG_COUNT=2"}; !reflect.DeepEqual(counts, want) {
+		t.Errorf("GIT_CONFIG_COUNT entries = %q, want %q", counts, want)
+	}
+	for key, want := range map[string]string{
+		"GIT_CONFIG_KEY_0":   "core.foo",
+		"GIT_CONFIG_VALUE_0": "bar",
+		"GIT_CONFIG_KEY_1":   "remote.omg-before-snapshot.url",
+		"GIT_CONFIG_VALUE_1": fakeCredentialURL,
+	} {
+		if got := lastValue(cmd.Env, key); got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+	if want := []string{"git", "ls-remote", "--heads", "omg-before-snapshot"}; !reflect.DeepEqual(cmd.Args, want) {
+		t.Errorf("argv = %q, want %q", cmd.Args, want)
+	}
+}
+
+// Before 2.31 git does not read GIT_CONFIG_COUNT, and a version that will not
+// parse may be such a git: the read is refused, never moved back onto argv,
+// and no ls-remote runs. The version is asked once per manager.
 func TestGitManager_LsRemoteHeadsURLNeedsGit231(t *testing.T) {
 	for _, tc := range []struct {
 		version string
 		ok      bool
+		reason  string
 	}{
-		{"2.30.9", false},
-		{"2.31.0", true},
-		{"2.43.0", true},
+		{"2.30.9", false, "git older than 2.31"},
+		{"two", false, "cannot determine git version"},
+		{"2.31.0", true, ""},
+		{"2.43.0", true, ""},
 	} {
 		t.Run(tc.version, func(t *testing.T) {
 			logs := writeFakeGit(t, tc.version, false)
@@ -459,8 +512,9 @@ func TestGitManager_LsRemoteHeadsURLNeedsGit231(t *testing.T) {
 				if tc.ok && err != nil {
 					t.Fatalf("LsRemoteHeadsURL on git %s: %v", tc.version, err)
 				}
-				if !tc.ok && (err == nil || !strings.Contains(err.Error(), "2.31")) {
-					t.Fatalf("LsRemoteHeadsURL on git %s: err = %v, want it to name 2.31", tc.version, err)
+				if !tc.ok && (err == nil || !strings.Contains(err.Error(), tc.reason) ||
+					!strings.Contains(err.Error(), noUnexposedRead)) {
+					t.Fatalf("LsRemoteHeadsURL on git %s: err = %v, want %q and %q", tc.version, err, tc.reason, noUnexposedRead)
 				}
 				if err != nil && strings.Contains(err.Error(), "s3cret") {
 					t.Errorf("error %q quotes the URL", err)
