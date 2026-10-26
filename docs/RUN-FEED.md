@@ -441,8 +441,9 @@ so every leg of the run is guarded. On a guarded run, a leg whose own
 never a `between_legs` entry — exits 6 and closes with `run_finished` outcome
 `"failed"`, a pause its nodes reached withdrawn from `state.json` as for a
 Ctrl-C during the after snapshot. Such a run derives `FAIL` even with every
-node `PASS`: a closed leg whose outcome is `"failed"` reads `FAIL` before the
-node count is looked at. **A snapshot carrying the flag is stamped `schema:
+node `PASS`: on a guarded run a closed leg whose outcome is `"failed"` reads
+`FAIL` before the node count is looked at. An unguarded run derives exactly
+what it did before the flag existed. **A snapshot carrying the flag is stamped `schema:
 5`**, the second conditional stamp, conventions or not: the flag alone would be
 additive, and an older binary would drop it and finish the run unguarded, so
 the bump makes that binary refuse it by name. An unguarded snapshot keeps 3

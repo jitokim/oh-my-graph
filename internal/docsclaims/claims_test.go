@@ -94,11 +94,10 @@ type stated struct {
 	anchors []string
 }
 
-// The sentences a document was still denying after the behaviour shipped.
-// The first two landed in 456d374, which corrected docs/LIMITATIONS.md and did
-// not touch DESIGN.md at all — one claim living in two places with only one of
-// them moving, which is the whole failure mode this package exists for. The
-// third is the same miss with the two documents swapped.
+// The two sentences DESIGN.md was still denying after the behaviour shipped.
+// Both landed in 456d374, which corrected docs/LIMITATIONS.md and did not
+// touch DESIGN.md at all — one claim living in two places with only one of
+// them moving, which is the whole failure mode this package exists for.
 var statedByShippedBehaviour = []stated{
 	{
 		name: "a verify FAIL names the scrubbed variable when both halves hold",
@@ -132,23 +131,6 @@ var statedByShippedBehaviour = []stated{
 			"markdown. Anything the node does need to report goes in the FAIL branch,",
 			"const plannedVerdictPattern = ",
 		},
-	},
-	// The same miss in the other direction between the same two documents:
-	// 67efca8 made a closed leg that failed derive FAIL and corrected
-	// DESIGN.md, and docs/LIMITATIONS.md went on saying that a passed leg
-	// interrupted during its end remote snapshot reads PASS, "the one
-	// single-run exception to ADR 0023 §2.6" — the exception the commit
-	// removed, and which ADR 0046 amends that section around.
-	{
-		name: "a passed leg interrupted during its end remote snapshot reads FAIL",
-		doc:  "docs/LIMITATIONS.md",
-		phrases: []*regexp.Regexp{
-			regexp.MustCompile("reads `FAIL` in `runs`, a leg whose every node had already passed included, as its exit 1 says"),
-		},
-		address: "internal/runstatus/runstatus.go:220 — Derive answers a closed leg whose outcome is " +
-			"failed with Fail before the completed-count is looked at, so an all-PASS leg the " +
-			"interrupt closed failed reads FAIL, as its exit 1 says",
-		anchors: []string{"case f.LastOutcome == runfeed.OutcomeFailed:"},
 	},
 }
 
@@ -312,7 +294,7 @@ func TestNoDocumentStatesAnAbsoluteADR0032Falsified(t *testing.T) {
 // cannot reach: a sentence that was true when it was written, that a shipped
 // change made false in the direction of DENIAL, and that survives because
 // nothing red goes off when a document merely stops short of what the code
-// does. Every claim below was corrected in one document and left standing in
+// does. Both claims below were corrected in one document and left standing in
 // another, so the pin is on the document that was missed.
 //
 // A missing phrase names itself in the failure, because "DESIGN.md no longer

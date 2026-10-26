@@ -1128,9 +1128,12 @@ printed either way. A leg's `run_finished` is therefore written after its
 overrides the pause or pass the scheduler reached: a gate or session-limit
 pause is withdrawn from `state.json` — the leg resumes with
 `--retry-failed`, its gate pausing again when reached — and the run reads
-`FAIL` — a leg whose every node had already passed included, since a
-closed leg whose `run_finished` is `"failed"` reads `FAIL` whatever its
-node count, so the exit and the status agree (ADR 0023 §2.6).
+`FAIL`. The one disagreement left is a leg whose every node had already
+passed: `state.json` holds them all `PASS`, so the run reads `PASS` while
+the invocation exits 1, an exception to ADR 0023 §2.6 pinned by
+`TestExitCode_DoesNotAgreeWithStatusWhenAnInterruptLandsOnAPassedLegsAfterSnapshot`.
+It is an unguarded run's only: on a `--forbid-remote-changes` run the same
+leg reads `FAIL`, as its exit 1 says (below).
 
 **Pull requests.** The third part is read through `remote.PRLister`,
 whose production implementation is the fifth exec seam,
@@ -1272,9 +1275,11 @@ withdrawn from `state.json`, `run_finished` says `"failed"`, no pause hint is
 printed, and the run reads `FAIL`; it continues with `resume --retry-failed`,
 its gate pausing again when reached. Unlike exits 3 and 5 a guarded failure
 has a run directory, and it reads `FAIL` in `runs list`, `show` and every
-surface of the shared rule even with every node `PASS`, because a closed leg
-whose outcome is `"failed"` reads `FAIL` before its node count is looked at
-(ADR 0023 §2.6 as amended: exit 1 or 6 ↔ `FAIL`). In a goal loop a guarded
+surface of the shared rule even with every node `PASS`, because on a guarded
+run a closed leg whose outcome is `"failed"` reads `FAIL` before its node
+count is looked at (ADR 0023 §2.6 as amended: exit 1 or 6 ↔ `FAIL`). An
+unguarded run's statuses are unchanged by the flag's existence: its node
+count still answers first (ADR 0046 §8.4). In a goal loop a guarded
 failure is a failed cycle: the assessor gets `RunPassed=false` and the loop
 goes on to its next cycle, as after any failed run.
 
@@ -2897,12 +2902,13 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   executing (#163). `PAUSED` is read off the closed leg's `run_finished`
   outcome, never off the snapshot's gate block, which is what makes it cover
   ADR 0009's gate-less session-limit pause as well as a gate pause; both used to
-  render `FAIL`. A closed leg whose outcome is `"failed"` reads `FAIL` before
-  the node count is looked at, so a leg can read `FAIL` with every node `PASS`:
-  a `--forbid-remote-changes` leg that observed a forbidden remote change
-  (exit 6) and one interrupted during its *after* remote snapshot (exit 1),
-  each as its exit says (ADR 0023 §2.6 as amended by ADR 0046: exit 1 or 6 ↔
-  `FAIL`). `PASS` is the one value that requires the snapshot, so a
+  render `FAIL`. On a `--forbid-remote-changes` run, and only there, a closed
+  leg whose outcome is `"failed"` reads `FAIL` before the node count is looked
+  at, so a guarded leg failed with exit 6 reads `FAIL` with every node `PASS`,
+  as its exit says (ADR 0023 §2.6 as amended by ADR 0046: exit 1 or 6 ↔
+  `FAIL`). An unguarded run's statuses are what they were before the flag:
+  one interrupted during a passed leg's *after* remote snapshot still reads
+  `PASS` while it exits 1. `PASS` is the one value that requires the snapshot, so a
   settled run without one cannot claim it. `Status.Settled()` and
   `Status.InFlight()` are both predicates, because `PLANNING` splits the
   in-flight side — `ResolveRun` keys on `InFlight()` and would silently stop

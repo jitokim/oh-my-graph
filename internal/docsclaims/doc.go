@@ -14,11 +14,10 @@
 // direction cannot see for exactly that reason — a document that stops short
 // of the behaviour reads as silence. It is not opened up into a coverage
 // requirement: each `stated` claim pins ONE named sentence in ONE document,
-// and it earns its place by having already drifted. Every claim there is the
-// same shape of miss: 456d374 shipped a behaviour and corrected
+// and it earns its place by having already drifted. Both of the claims there
+// are the same shape of miss: 456d374 shipped a behaviour and corrected
 // docs/LIMITATIONS.md, DESIGN.md said the opposite of the new behaviour and
-// was not in the diff, and nothing was red; 67efca8 did the same with the two
-// documents swapped.
+// was not in the diff, and nothing was red.
 //
 // The third is a document naming a verdict TOKEN in a graph that graph does
 // not carry, which neither of the first two can see: such a sentence asserts
