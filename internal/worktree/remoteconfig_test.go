@@ -96,15 +96,14 @@ func pushRunCommit(t *testing.T, f remoteFixture) string {
 }
 
 // guardedLeg is what guardedConfigLeg returns: the leg's diff and after, the
-// run's commit, and whether the leg's attribution is unproven — the after
-// read outside the repository, or a §5.1 check could not be read — the
-// state a guarded run fails closed on.
+// run's commit, why the leg's attribution was unavailable ("" when it was
+// not), and whether a §5.1 check could not be read.
 type guardedLeg struct {
-	diff      runstate.RemoteDiff
-	after     runstate.RemoteSnapshot
-	runCommit string
-	unproven  bool
-	checkErr  bool
+	diff        runstate.RemoteDiff
+	after       runstate.RemoteSnapshot
+	runCommit   string
+	unavailable string
+	checkErr    bool
 }
 
 // guardedConfigLeg is a guarded leg over f whose node runs during, its diff
@@ -118,7 +117,7 @@ func guardedConfigLeg(t *testing.T, f remoteFixture, during func() string) guard
 	check, failed := GuardedRunCommitCheck(ctx, f.m, f.base)
 	diff := DiffGuardedRemoteSnapshots(before, after, check)
 	return guardedLeg{diff: diff, after: after, runCommit: runCommit,
-		unproven: pin.AfterReadOutsideRepo() || failed(), checkErr: failed()}
+		unavailable: pin.AttributionUnavailable(f.m, failed()), checkErr: failed()}
 }
 
 // hasRunCommitBranch reports whether diff holds feat/run's run_commit
@@ -167,8 +166,8 @@ var configBreakages = []struct {
 // outside the repository and the push is compared. The real §5.1 check reads
 // the broken config too: where git still reads it the push is a run_commit;
 // where it cannot, the check fails rather than answering, the entry is
-// not_attributable and the leg's attribution unproven — what a guarded run
-// fails closed on.
+// not_attributable and the leg's attribution unavailable, the config
+// unreadable — what a guarded run reports its branches not guarded with.
 func TestGuardedRemoteLeg_ABrokenRepoConfigCannotHideAPush(t *testing.T) {
 	requireRealGit231(t)
 	for _, tc := range configBreakages {
@@ -187,9 +186,13 @@ func TestGuardedRemoteLeg_ABrokenRepoConfigCannotHideAPush(t *testing.T) {
 			if !hasBranchCreated(leg.diff, leg.runCommit, want) {
 				t.Fatalf("diff = %+v, want feat/run's %s branch_created", leg.diff, want)
 			}
-			if !leg.unproven || leg.checkErr == tc.checkReads {
-				t.Errorf("unproven = %v, check failed = %v; want unproven, the check failed = %v",
-					leg.unproven, leg.checkErr, !tc.checkReads)
+			wantUnavailable := AttributionConfigUnreadable
+			if tc.checkReads {
+				wantUnavailable = ""
+			}
+			if leg.unavailable != wantUnavailable || leg.checkErr == tc.checkReads {
+				t.Errorf("unavailable = %q, check failed = %v; want %q, the check failed = %v",
+					leg.unavailable, leg.checkErr, wantUnavailable, !tc.checkReads)
 			}
 			if !reflect.DeepEqual(leg.after.Branches.ReadThroughBeforeURL, []string{"origin"}) {
 				t.Errorf("branches = %+v, want observed through origin's before URL", leg.after.Branches)
@@ -239,8 +242,8 @@ func TestGuardedRemoteLeg_AnInsteadOfCannotRedirectTheRead(t *testing.T) {
 			if !hasRunCommitBranch(leg.diff, leg.runCommit) {
 				t.Fatalf("diff = %+v, want feat/run's run_commit branch_created", leg.diff)
 			}
-			if !leg.unproven || leg.checkErr {
-				t.Errorf("unproven = %v, check failed = %v; want unproven by the moved config alone", leg.unproven, leg.checkErr)
+			if leg.unavailable != "" || leg.checkErr {
+				t.Errorf("unavailable = %q, check failed = %v; want the check to run on the readable config", leg.unavailable, leg.checkErr)
 			}
 			if leg.after.Branches.Status != runstate.RemotePartObserved {
 				t.Errorf("branches = %+v, want observed", leg.after.Branches)
@@ -273,8 +276,8 @@ func TestGuardedRemoteLeg_AnUnchangedConfigIsReadInsideTheRepository(t *testing.
 	if !hasRunCommitBranch(leg.diff, leg.runCommit) {
 		t.Fatalf("diff = %+v, want feat/run's run_commit branch_created", leg.diff)
 	}
-	if leg.unproven {
-		t.Error("an unchanged config left the leg's attribution unproven")
+	if leg.unavailable != "" {
+		t.Errorf("an unchanged config left the leg's attribution unavailable: %q", leg.unavailable)
 	}
 	reads := beforeURLReads(seen())
 	if len(reads) != 2 {
@@ -429,16 +432,18 @@ func TestTakeGuardedRemoteSnapshot_AnUnresolvedLocalPathMakesBranchesUnavailable
 
 // The fake's scripted digest drives where the after reads: unchanged inside,
 // changed or unreadable outside, and a failed `git remote -v` outside too.
+// Only an unreadable config makes the leg's attribution unavailable.
 func TestTakeGuardedRemoteSnapshot_ReadsOutsideTheRepositoryOnlyWhenItsConfigMoved(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		change  func(obs *FakeRemoteObserver)
-		outside bool
+		name        string
+		change      func(obs *FakeRemoteObserver)
+		outside     bool
+		unavailable string
 	}{
-		{"unchanged", func(*FakeRemoteObserver) {}, false},
-		{"changed", func(obs *FakeRemoteObserver) { obs.SetRepoConfig("other", nil) }, true},
-		{"unreadable", func(obs *FakeRemoteObserver) { obs.SetRepoConfig("", errors.New("exit status 128")) }, true},
-		{"remote -v fails", func(obs *FakeRemoteObserver) { obs.SetRemotes(nil, errors.New("exit status 128")) }, true},
+		{"unchanged", func(*FakeRemoteObserver) {}, false, ""},
+		{"changed", func(obs *FakeRemoteObserver) { obs.SetRepoConfig("other", nil) }, true, ""},
+		{"unreadable", func(obs *FakeRemoteObserver) { obs.SetRepoConfig("", errors.New("exit status 128")) }, true, AttributionConfigUnreadable},
+		{"remote -v fails", func(obs *FakeRemoteObserver) { obs.SetRemotes(nil, errors.New("exit status 128")) }, true, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -451,8 +456,8 @@ func TestTakeGuardedRemoteSnapshot_ReadsOutsideTheRepositoryOnlyWhenItsConfigMov
 			if got := len(obs.OutsideURLCalls()) == 1; got != tc.outside {
 				t.Errorf("outside reads = %v, want outside = %v", obs.OutsideURLCalls(), tc.outside)
 			}
-			if got := pin.AfterReadOutsideRepo(); got != tc.outside {
-				t.Errorf("AfterReadOutsideRepo = %v, want %v", got, tc.outside)
+			if got := pin.AttributionUnavailable(obs, false); got != tc.unavailable {
+				t.Errorf("AttributionUnavailable = %q, want %q", got, tc.unavailable)
 			}
 			if calls := obs.URLCalls(); len(calls) != 1 {
 				t.Errorf("URL reads = %v, want one", calls)
@@ -527,5 +532,157 @@ func TestIsRelativeLocalPath(t *testing.T) {
 		if got := isRelativeLocalPath(url); got != want {
 			t.Errorf("isRelativeLocalPath(%q) = %v, want %v", url, got, want)
 		}
+	}
+}
+
+// isAttributionCommand reports whether args is one of CommitAttributable's
+// git commands.
+func isAttributionCommand(args []string) bool {
+	switch {
+	case len(args) == 0:
+		return false
+	case args[0] == "merge-base", args[0] == "for-each-ref":
+		return true
+	default:
+		return len(args) > 2 && args[0] == "rev-parse" && args[1] == "--quiet" && args[2] == "--verify"
+	}
+}
+
+// The §5.1 check's commands — rev-parse --verify, merge-base and
+// for-each-ref — and no other git the engine starts turn off replace refs and
+// grafts, on top of the scrub.
+func TestGitManager_OnlyTheAttributionCommandsTurnOffReplaceAndGrafts(t *testing.T) {
+	requireRealGit231(t)
+	f := newRemoteFixture(t)
+	f.m.environ = func() []string {
+		return append(os.Environ(),
+			"ANTHROPIC_API_KEY=sk-live-secret",
+			"ANTHROPIC_AUTH_TOKEN=tok-secret",
+			"OPENAI_API_KEY=sk-openai-secret",
+			"CODEX_API_KEY=sk-codex-secret",
+		)
+	}
+	seen := recordCommands(f.m)
+	leg := guardedConfigLeg(t, f, func() string {
+		sha := pushRunCommit(t, f)
+		gitIn(t, f.repo, "config", "omg.changed", "yes")
+		return sha
+	})
+	if !hasRunCommitBranch(leg.diff, leg.runCommit) {
+		t.Fatalf("diff = %+v, want feat/run's run_commit branch_created", leg.diff)
+	}
+	attribution := map[string]int{}
+	for _, c := range seen() {
+		assertScrubbedEnv(t, c.env)
+		on := isAttributionCommand(c.args)
+		if on {
+			attribution[c.args[0]]++
+		}
+		for _, kv := range []string{"GIT_NO_REPLACE_OBJECTS=1", "GIT_GRAFT_FILE=" + os.DevNull} {
+			k, v, _ := strings.Cut(kv, "=")
+			switch {
+			case on && lastValue(c.env, k) != v:
+				t.Errorf("git %q: %s = %q, want %q", c.args, k, lastValue(c.env, k), v)
+			case !on && hasKey(c.env, k):
+				t.Errorf("git %q is not an attribution command and got %s", c.args, k)
+			}
+		}
+	}
+	for _, cmd := range []string{"rev-parse", "merge-base", "for-each-ref"} {
+		if attribution[cmd] == 0 {
+			t.Errorf("no attribution %s ran; ran %v", cmd, attribution)
+		}
+	}
+}
+
+// A replace ref or a graft that makes the base's parent the node's own
+// commit does not hide that commit from the §5.1 check.
+func TestGitManager_CommitAttributableIgnoresReplaceRefsAndGrafts(t *testing.T) {
+	for _, name := range []string{"replace", "grafts"} {
+		t.Run(name, func(t *testing.T) {
+			f := newRemoteFixture(t)
+			run := pushRunCommit(t, f)
+			if name == "replace" {
+				fake := gitIn(t, f.repo, "commit-tree", f.base+"^{tree}", "-p", run, "-m", "fake")
+				gitIn(t, f.repo, "replace", "-f", f.base, fake)
+			} else {
+				appendFile(t, filepath.Join(f.repo, ".git", "info", "grafts"), f.base+" "+run+"\n")
+			}
+			// The rewrite took: to a plain git, the run's commit is now in
+			// the base's history (gitIn fails the test on exit 1).
+			gitIn(t, f.repo, "merge-base", "--is-ancestor", run, f.base)
+			ok, err := f.m.CommitAttributable(context.Background(), run, f.base)
+			if !ok || err != nil {
+				t.Errorf("CommitAttributable = %v, %v; want the run's commit attributed", ok, err)
+			}
+		})
+	}
+}
+
+// The shallow file in the common git dir is pinned at the before: unchanged —
+// absent both times, or shallow from the start — the attribution stands; one
+// written during the leg, or changed, makes it unavailable.
+func TestGuardedBefore_AShallowBoundaryChangedMakesAttributionUnavailable(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		start, during string
+		want          string
+	}{
+		{"absent", "", "", ""},
+		{"shallow from the start", "base", "", ""},
+		{"written during the leg", "", "run", AttributionShallowChanged},
+		{"changed during the leg", "base", "run", AttributionShallowChanged},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRemoteFixture(t)
+			shallow := filepath.Join(f.repo, ".git", "shallow")
+			if path, err := f.m.ShallowFile(context.Background()); err != nil || resolvePath(path) != resolvePath(shallow) {
+				t.Fatalf("ShallowFile = %q, %v; want %s", path, err, shallow)
+			}
+			if tc.start != "" {
+				appendFile(t, shallow, f.base+"\n")
+			}
+			leg := guardedConfigLeg(t, f, func() string {
+				sha := pushRunCommit(t, f)
+				if tc.during != "" {
+					lane := f.lane(t)
+					appendFile(t, shallow, commitIn(t, lane, "child")+"\n")
+				}
+				return sha
+			})
+			if leg.unavailable != tc.want {
+				t.Errorf("unavailable = %q, want %q", leg.unavailable, tc.want)
+			}
+		})
+	}
+}
+
+// NoteAttributionUnavailable adds its reason for the branches and
+// pull-request parts the leg observed, and leaves the entries as they were.
+func TestNoteAttributionUnavailable_NamesTheObservedRunBranchParts(t *testing.T) {
+	entry := runstate.RemoteChangeEntry{Kind: runstate.BranchCreated, Remote: "origin", Branch: "feat/x",
+		NewSHA: strings.Repeat("a", 40), Attribution: runstate.AttributionNotAttributable}
+	c := runstate.RemoteChanges{Legs: []runstate.RemoteLeg{{Changes: &runstate.RemoteDiff{
+		Observed: []runstate.RemotePart{runstate.RemotePartRemotes, runstate.RemotePartBranches},
+		Entries:  []runstate.RemoteChangeEntry{entry},
+		NotCompared: []runstate.RemoteNotCompared{
+			{Part: runstate.RemotePartPullRequests, Reason: "gh not logged in"},
+		},
+	}}}}
+	NoteAttributionUnavailable(&c, "")
+	if got := len(c.Legs[0].Changes.NotCompared); got != 1 {
+		t.Fatalf("an empty reason added not-compared items: %d", got)
+	}
+	NoteAttributionUnavailable(&c, AttributionConfigUnreadable)
+	d := c.Legs[0].Changes
+	want := []runstate.RemoteNotCompared{
+		{Part: runstate.RemotePartPullRequests, Reason: "gh not logged in"},
+		{Part: runstate.RemotePartBranches, Reason: AttributionConfigUnreadable},
+	}
+	if !reflect.DeepEqual(d.NotCompared, want) {
+		t.Errorf("not compared = %+v, want %+v", d.NotCompared, want)
+	}
+	if !reflect.DeepEqual(d.Entries, []runstate.RemoteChangeEntry{entry}) {
+		t.Errorf("entries = %+v, want them unchanged", d.Entries)
 	}
 }

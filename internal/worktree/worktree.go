@@ -136,6 +136,14 @@ type RemoteObserver interface {
 	// own branches and not from baseSHA, the run's base commit. A false with
 	// an error is one the check could not prove: a git read failed.
 	CommitAttributable(ctx context.Context, sha, baseSHA string) (bool, error)
+	// ShallowFile is the absolute path of the invocation repository's
+	// shallow file, in its common git dir, present or not.
+	ShallowFile(ctx context.Context) (string, error)
+	// ShallowFingerprint is a SHA-256 of the content of the shallow file at
+	// path, an absent file read as empty: a guarded leg compares it between
+	// its before and its after, since a rewritten shallow boundary can hide
+	// a commit's ancestry from the §5.1 check and no variable turns it off.
+	ShallowFingerprint(path string) (string, error)
 	// GHDefaultRemotes maps each remote `gh repo set-default` marked to its
 	// remote.<name>.gh-resolved value in the invocation repository's config:
 	// "base" for the remote's own repository, or the OWNER/REPO gh chose

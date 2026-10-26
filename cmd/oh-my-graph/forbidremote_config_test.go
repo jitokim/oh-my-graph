@@ -19,9 +19,13 @@ import (
 
 // A guarded after reads the before URLs inside the repository only while the
 // repository's own config is what it was at the before (#410). A node that
-// pushes its own commit to a new branch and then breaks that config, or
-// rewrites it to send the read to another repository, gets the read moved
-// outside the repository, and the push still fails the run with exit 6.
+// pushes its own commit to a new branch and then rewrites that config to send
+// the read to another repository gets the read moved outside the repository,
+// and the push still fails the run with exit 6. One that makes the config
+// unreadable, or moves the shallow boundary, leaves the §5.1 check unable to
+// attribute the push: the run is not failed for it (only an attributable
+// entry fails a run), and the end line names the branches and pull requests
+// not guarded, with why.
 
 // configToken is a config value the node writes beside its change; it must
 // reach no file of the run, and no output.
@@ -169,31 +173,61 @@ func guardedRealRun(t *testing.T, dir string, change func()) realRun {
 // branch_created as a run_commit, and the record agrees.
 func assertGuardedPushFailed(t *testing.T, err error) {
 	t.Helper()
-	assertGuardedPushForbidden(t, err, runstate.AttributionRunCommit)
-}
-
-// assertGuardedPushForbidden fails unless err is exit 6 naming feat/x's
-// branch_created, which the record attributes attr: a run_commit, or a
-// not_attributable one forbidden because the leg's commit check could not be
-// trusted, which the error then says.
-func assertGuardedPushForbidden(t *testing.T, err error, attr runstate.RemoteAttribution) {
-	t.Helper()
 	if got := exitCodeForError(err); got != 6 {
 		t.Fatalf("err = %v (exit %d), want exit 6", err, got)
 	}
-	want := "(" + labelNotAttributable + "; " + unprovenAttribution + ")"
-	if attr == runstate.AttributionRunCommit {
-		want = "(" + labelRunCommit + ")"
+	if want := "branch_created origin/feat/x"; !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "("+labelRunCommit+")") {
+		t.Errorf("err = %v, want it to name the %s as a run commit", err, want)
 	}
-	if !strings.Contains(err.Error(), "branch_created origin/feat/x") || !strings.Contains(err.Error(), want) {
-		t.Errorf("err = %v, want it to name the branch_created of origin/feat/x with %q", err, want)
+	if !hasBranchCreated(t, "feat/x", runstate.AttributionRunCommit) {
+		t.Error("state.json lacks feat/x's run_commit branch_created")
 	}
-	found := false
+}
+
+// hasBranchCreated reports whether the run's last leg recorded a
+// branch_created of branch, attributed attr.
+func hasBranchCreated(t *testing.T, branch string, attr runstate.RemoteAttribution) bool {
+	t.Helper()
 	for _, e := range lastLegChanges(t, remoteRunSnapshot(t, soleRunID(t))).Entries {
-		found = found || e.Kind == runstate.BranchCreated && e.Branch == "feat/x" && e.Attribution == attr
+		if e.Kind == runstate.BranchCreated && e.Branch == branch && e.Attribution == attr {
+			return true
+		}
 	}
-	if !found {
-		t.Errorf("state.json lacks feat/x's %s branch_created", attr)
+	return false
+}
+
+// assertAttributionUnavailable fails unless the guarded run passed (exit 0)
+// with feat/x's branch_created recorded not_attributable, the end line names
+// the branches and pull-request parts not guarded with reason and never as
+// guarded, and the record keeps reason on both parts.
+func assertAttributionUnavailable(t *testing.T, run realRun, reason string) {
+	t.Helper()
+	if got := exitCodeForError(run.err); got != 0 {
+		t.Fatalf("err = %v (exit %d), want exit 0", run.err, got)
+	}
+	if !hasBranchCreated(t, "feat/x", runstate.AttributionNotAttributable) {
+		t.Error("state.json lacks feat/x's not_attributable branch_created")
+	}
+	var line string
+	for _, l := range strings.Split(run.out, "\n") {
+		if strings.HasPrefix(l, "--forbid-remote-changes: not guarded: ") {
+			line = l
+		}
+	}
+	notGuarded, guarded, _ := strings.Cut(line, "; guarded: ")
+	for _, part := range []string{"branches", "pull_requests"} {
+		if want := part + " (" + reason + ")"; !strings.Contains(notGuarded, want) {
+			t.Errorf("the end line lacks %q:\n%s", want, run.out)
+		}
+		if strings.Contains(guarded, part) {
+			t.Errorf("the end line claims %s as guarded:\n%s", part, run.out)
+		}
+	}
+	nc := lastLegChanges(t, remoteRunSnapshot(t, soleRunID(t))).NotCompared
+	for _, part := range []runstate.RemotePart{runstate.RemotePartBranches, runstate.RemotePartPullRequests} {
+		if !slices.Contains(nc, runstate.RemoteNotCompared{Part: part, Reason: reason}) {
+			t.Errorf("state.json's not compared = %+v, want %s with %q", nc, part, reason)
+		}
 	}
 }
 
@@ -243,24 +277,22 @@ func assertNotWritten(t *testing.T, run realRun, leaks ...string) {
 	}
 }
 
-// Breaking the repository's config after the push — a garbage line, a remote
-// whose url has no value, no read permission — no longer ends the run with
-// exit 0 and the branches read as not guarded. The real §5.1 check reads that
-// config too: a bare url leaves it readable and the push is a run_commit;
-// garbage or no permission fails the check itself, the push is recorded
-// not_attributable, and the guard fails closed on it.
+// Breaking the repository's config after the push. A remote whose url has no
+// value fails only `git remote -v`: the config stays readable, the after reads
+// origin through its before URL from outside the repository, the real §5.1
+// check attributes the push, and the run exits 6. A garbage line or no read
+// permission fails the check itself: the push is recorded not_attributable,
+// the run passes (exit 0), and the end line names the branches and pull
+// requests not guarded, the config unreadable.
 func TestRunGraph_ABrokenRepoConfigCannotHideAGuardedPush(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		attr  runstate.RemoteAttribution
-		apply func(t *testing.T, config string)
+		name     string
+		readable bool
+		apply    func(t *testing.T, config string)
 	}{
-		{"garbage line", runstate.AttributionNotAttributable, func(t *testing.T, config string) { appendTo(t, config, "this is not config\n") }},
-		{"remote with a bare url", runstate.AttributionRunCommit, func(t *testing.T, config string) { appendTo(t, config, "[remote \"x\"]\n\turl\n") }},
-		{"chmod 000", runstate.AttributionNotAttributable, func(t *testing.T, config string) {
-			if os.Getuid() == 0 {
-				t.Skip("root reads a mode 000 file")
-			}
+		{"garbage line", false, func(t *testing.T, config string) { appendTo(t, config, "this is not config\n") }},
+		{"remote with a bare url", true, func(t *testing.T, config string) { appendTo(t, config, "[remote \"x\"]\n\turl\n") }},
+		{"chmod 000", false, func(t *testing.T, config string) {
 			if err := os.Chmod(config, 0); err != nil {
 				t.Fatal(err)
 			}
@@ -268,19 +300,107 @@ func TestRunGraph_ABrokenRepoConfigCannotHideAGuardedPush(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.name == "chmod 000" && os.Geteuid() == 0 {
+				t.Skip("root reads a mode 000 file")
+			}
 			isolateRunHome(t)
 			dir := remoteRepo(t)
 			origin := originPath(t, dir)
 			run := guardedRealRun(t, dir, func() { tc.apply(t, filepath.Join(dir, ".git", "config")) })
-			assertGuardedPushForbidden(t, run.err, tc.attr)
-			if strings.Contains(run.out, "not guarded (not compared): branches") {
-				t.Errorf("the branches read as not guarded:\n%s", run.out)
+			if tc.readable {
+				assertGuardedPushFailed(t, run.err)
+				if strings.Contains(run.out, worktree.AttributionConfigUnreadable) {
+					t.Errorf("a readable config read as unreadable:\n%s", run.out)
+				}
+			} else {
+				assertAttributionUnavailable(t, run, worktree.AttributionConfigUnreadable)
 			}
 			if strings.Contains(run.argv, origin) {
 				t.Errorf("a git the engine started carries the before URL %q on its argv", origin)
 			}
 		})
 	}
+}
+
+// An unreadable config with someone else's branch pushed beside the node's
+// own: neither is attributed, and the run passes, reporting both.
+func TestRunGraph_AnUnreadableConfigWithSomeoneElsesBranchIsReportedOnly(t *testing.T) {
+	isolateRunHome(t)
+	dir := remoteRepo(t)
+	origin := originPath(t, dir)
+	run := guardedRealRun(t, dir, func() {
+		other := filepath.Join(t.TempDir(), "other")
+		mustGit(t, filepath.Dir(other), "clone", "-q", origin, other)
+		launchCommitWork(t, other, "theirs.md")
+		mustGit(t, other, "push", "-q", "origin", "HEAD:refs/heads/feat/theirs")
+		appendTo(t, filepath.Join(dir, ".git", "config"), "this is not config\n")
+	})
+	assertAttributionUnavailable(t, run, worktree.AttributionConfigUnreadable)
+	if !hasBranchCreated(t, "feat/theirs", runstate.AttributionNotAttributable) {
+		t.Error("state.json lacks feat/theirs's not_attributable branch_created")
+	}
+	if want := "branch_created origin/feat/theirs"; !strings.Contains(run.out, want) {
+		t.Errorf("stdout lacks %q:\n%s", want, run.out)
+	}
+}
+
+// ancestryOf is what the guardedRealRun node's change needs to rewrite the
+// ancestry the §5.1 check reads: the run's base, dir's HEAD, and the node's
+// own commit, origin's feat/x.
+func ancestryOf(t *testing.T, dir string) (base, own string) {
+	t.Helper()
+	return mustGit(t, dir, "rev-parse", "HEAD"), mustGit(t, originPath(t, dir), "rev-parse", "refs/heads/feat/x")
+}
+
+// A node that pushes its own commit and then makes the base read as its
+// child — a replace ref for the base whose parent is its commit, or the same
+// in .git/info/grafts — does not get the push past the check: it runs with
+// both turned off, attributes the push, and the run exits 6.
+func TestRunGraph_ARewrittenAncestryCannotHideAGuardedPush(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		rewrite func(t *testing.T, dir, base, own string)
+	}{
+		{"git replace", func(t *testing.T, dir, base, own string) {
+			fake := mustGit(t, dir, "commit-tree", base+"^{tree}", "-p", own, "-m", "fake")
+			mustGit(t, dir, "replace", "-f", base, fake)
+		}},
+		{".git/info/grafts", func(t *testing.T, dir, base, own string) {
+			appendTo(t, filepath.Join(dir, ".git", "info", "grafts"), base+" "+own+"\n")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateRunHome(t)
+			dir := remoteRepo(t)
+			run := guardedRealRun(t, dir, func() {
+				base, own := ancestryOf(t, dir)
+				tc.rewrite(t, dir, base, own)
+				// The rewrite took: to a plain git, the node's commit is now
+				// in the base's history (mustGit fails the test on exit 1).
+				mustGit(t, dir, "merge-base", "--is-ancestor", own, base)
+			})
+			assertGuardedPushFailed(t, run.err)
+		})
+	}
+}
+
+// A node that pushes its own commit, moves its run branch to a child of it
+// and writes that child into .git/shallow hides the commit's ancestry from
+// the check, and no variable turns the shallow file off. The guarded leg's
+// before pinned the file's digest, so the moved boundary is seen: the run
+// passes, and the end line names the branches and pull requests not guarded,
+// the shallow boundary changed.
+func TestRunGraph_AShallowBoundaryWrittenDuringTheLegIsNotGuarded(t *testing.T) {
+	isolateRunHome(t)
+	dir := remoteRepo(t)
+	run := guardedRealRun(t, dir, func() {
+		_, own := ancestryOf(t, dir)
+		child := mustGit(t, dir, "commit-tree", own+"^{tree}", "-p", own, "-m", "child")
+		lane := mustGit(t, dir, "for-each-ref", "--format=%(refname)", "refs/heads/omg/")
+		mustGit(t, dir, "update-ref", lane, child)
+		appendTo(t, filepath.Join(dir, ".git", "shallow"), child+"\n")
+	})
+	assertAttributionUnavailable(t, run, worktree.AttributionShallowChanged)
 }
 
 // decoyToken is the credential in credentialDecoy, an insteadOf target that
@@ -425,28 +545,33 @@ func TestRunGraph_ARelativePathOriginIsReadByAGuardedAfter(t *testing.T) {
 	}
 }
 
-// The guard fails closed only where the leg's commit check could not be
-// trusted: a new branch at a commit the check did not attribute is forbidden
-// when the repository's config changed or could not be read by the after, or
-// `git remote -v` failed, or the check's own git read failed — and allowed,
-// as always, when none of that happened. The record keeps what the check
-// answered, not_attributable, and an unguarded run is untouched by any of it.
-func TestRunGraph_AGuardedLegFailsClosedOnAnUnprovenCommitCheck(t *testing.T) {
+// A guarded leg is failed only by an attributable entry, whatever happened to
+// the repository's config: a new branch at a commit the check did not
+// attribute passes the run (exit 0), changed, unreadable or with `git remote
+// -v` failing. Where the check could not run — the config unreadable at the
+// after, a check's own git read failed, or the shallow boundary moved — the
+// end line and the record name the branches and pull requests not guarded
+// with why; everywhere else, and on an unguarded run, no such reason is
+// given.
+func TestRunGraph_AGuardedLegNeverFailsOnAnUnattributedPushWhateverTheConfig(t *testing.T) {
 	const foreign = "branch_created origin/feat/x at 444444444444"
-	breakConfig := func(obs *worktree.FakeRemoteObserver) { obs.SetRepoConfig("changed", nil) }
 	// byNameUnseen: unguarded, the after reads by name, so with the remotes
 	// unlisted it sees no branch at all.
 	for _, tc := range []struct {
 		name         string
 		during       func(obs *worktree.FakeRemoteObserver)
-		forbidden    bool
+		reason       string
 		byNameUnseen bool
 	}{
-		{"config unchanged", func(*worktree.FakeRemoteObserver) {}, false, false},
-		{"config changed", breakConfig, true, false},
-		{"config unreadable", func(obs *worktree.FakeRemoteObserver) { obs.SetRepoConfig("", errors.New("exit status 128")) }, true, false},
-		{"git remote -v fails", func(obs *worktree.FakeRemoteObserver) { obs.SetRemotes(nil, errors.New("exit status 128")) }, true, true},
-		{"the commit check fails", func(obs *worktree.FakeRemoteObserver) { obs.SetAttributionErr(errors.New("exit status 128")) }, true, false},
+		{"config unchanged", func(*worktree.FakeRemoteObserver) {}, "", false},
+		{"config changed", func(obs *worktree.FakeRemoteObserver) { obs.SetRepoConfig("changed", nil) }, "", false},
+		{"config unreadable", func(obs *worktree.FakeRemoteObserver) { obs.SetRepoConfig("", errors.New("exit status 128")) },
+			worktree.AttributionConfigUnreadable, false},
+		{"git remote -v fails", func(obs *worktree.FakeRemoteObserver) { obs.SetRemotes(nil, errors.New("exit status 128")) }, "", true},
+		{"the commit check fails", func(obs *worktree.FakeRemoteObserver) { obs.SetAttributionErr(errors.New("exit status 128")) },
+			worktree.AttributionConfigUnreadable, false},
+		{"the shallow boundary moved", func(obs *worktree.FakeRemoteObserver) { obs.SetShallow("moved", nil) },
+			worktree.AttributionShallowChanged, false},
 	} {
 		for _, guarded := range []bool{true, false} {
 			name := tc.name + map[bool]string{true: "/guarded", false: "/unguarded"}[guarded]
@@ -462,16 +587,20 @@ func TestRunGraph_AGuardedLegFailsClosedOnAnUnprovenCommitCheck(t *testing.T) {
 					extra = []string{"--forbid-remote-changes"}
 				}
 				out, err := runWithRemoteChange(t, obs, prs, change, extra...)
-				if tc.forbidden && guarded {
-					if got := exitCodeForError(err); got != 6 {
-						t.Fatalf("err = %v (exit %d), want exit 6", err, got)
+				if err != nil {
+					t.Fatalf("err = %v (exit %d), want nil", err, exitCodeForError(err))
+				}
+				changes := lastLegChanges(t, remoteRunSnapshot(t, soleRunID(t)))
+				for _, part := range []runstate.RemotePart{runstate.RemotePartBranches, runstate.RemotePartPullRequests} {
+					for _, reason := range []string{worktree.AttributionConfigUnreadable, worktree.AttributionShallowChanged} {
+						noted := slices.Contains(changes.NotCompared, runstate.RemoteNotCompared{Part: part, Reason: reason})
+						if want := guarded && reason == tc.reason; noted != want {
+							t.Errorf("%s not compared with %q = %v, want %v: %+v", part, reason, noted, want, changes.NotCompared)
+						}
+						if want := guarded && reason == tc.reason; strings.Contains(out, string(part)+" ("+reason+")") != want {
+							t.Errorf("stdout names %s not guarded with %q: %v, want %v:\n%s", part, reason, !want, want, out)
+						}
 					}
-					want := foreign + " (" + labelNotAttributable + "; " + unprovenAttribution + ")"
-					if !strings.Contains(err.Error(), want) {
-						t.Errorf("err = %v, want it to name %q", err, want)
-					}
-				} else if err != nil {
-					t.Fatalf("err = %v, want nil", err)
 				}
 				if !guarded && tc.byNameUnseen {
 					return
@@ -479,11 +608,7 @@ func TestRunGraph_AGuardedLegFailsClosedOnAnUnprovenCommitCheck(t *testing.T) {
 				if want := "  " + foreign + " — " + labelNotAttributable + "\n"; !strings.Contains(out, want) {
 					t.Errorf("stdout lacks %q:\n%s", want, out)
 				}
-				found := false
-				for _, e := range lastLegChanges(t, remoteRunSnapshot(t, soleRunID(t))).Entries {
-					found = found || e.Kind == runstate.BranchCreated && e.Attribution == runstate.AttributionNotAttributable
-				}
-				if !found {
+				if !hasBranchCreated(t, "feat/x", runstate.AttributionNotAttributable) {
 					t.Error("state.json lacks the not_attributable branch_created")
 				}
 			})

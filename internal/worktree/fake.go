@@ -81,7 +81,7 @@ func (f *FakeManager) Calls() []string {
 // counterpart for the remote snapshot. It answers from what a test set on it
 // (no git, no network): the remotes list or an error for it, each remote's
 // heads or an error for them, the set of shas CommitAttributable passes (or
-// cannot check), and the remotes marked gh's default.
+// cannot check), the shallow digest, and the remotes marked gh's default.
 // Mutating it between two snapshots is how a test scripts a change.
 //
 // A read by URL answers what SetURLHeads scripted for that URL, else what
@@ -106,6 +106,8 @@ type FakeRemoteObserver struct {
 	runCommits  map[string]bool
 	attribErr   error
 	attribCalls []string
+	shallowFP   string
+	shallowErr  error
 	ghDefaults  map[string]string
 	ghDefErr    error
 	ghDefCalls  int
@@ -168,6 +170,33 @@ func (f *FakeRemoteObserver) SetAttributionErr(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.attribErr = err
+}
+
+// SetShallow scripts what ShallowFingerprint returns. Nothing scripted is
+// one fixed digest, so a test that never sets it reads an unchanged
+// shallow boundary.
+func (f *FakeRemoteObserver) SetShallow(fingerprint string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.shallowFP, f.shallowErr = fingerprint, err
+}
+
+// fakeShallowFile is the path the fake's ShallowFile names.
+const fakeShallowFile = "/fake/.git/shallow"
+
+// ShallowFile returns a fixed path; the fake reads no file.
+func (f *FakeRemoteObserver) ShallowFile(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return fakeShallowFile, nil
+}
+
+// ShallowFingerprint returns the scripted digest, or the scripted error.
+func (f *FakeRemoteObserver) ShallowFingerprint(string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.shallowFP, f.shallowErr
 }
 
 // Remotes returns the scripted remotes, sorted by name, or the scripted error.

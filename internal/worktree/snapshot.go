@@ -51,26 +51,76 @@ type FetchURLs map[string]string
 
 // GuardedBefore is what a guarded leg's before keeps in memory to read its
 // after through: the FetchURLs, the remotes whose relative local-path URL
-// could not be resolved (with why), and the digest of the repository's own
-// config (RepoConfigFingerprint) — the digest only, never a value.
+// could not be resolved (with why), the digest of the repository's own
+// config (RepoConfigFingerprint) and that of its shallow file
+// (ShallowFingerprint) — digests only, never a value.
 type GuardedBefore struct {
-	urls       FetchURLs
-	unresolved map[string]string
-	config     string
-	configRead bool
-	// readOutside is set by the after: it read the before URLs from outside
-	// the repository (readOutsideRepo).
-	readOutside bool
+	urls        FetchURLs
+	unresolved  map[string]string
+	config      string
+	configRead  bool
+	shallowPath string
+	shallow     string
+	shallowRead bool
+	// configUnreadable is set by the after: its RepoConfigFingerprint failed.
+	configUnreadable bool
 }
 
-// AfterReadOutsideRepo reports whether the after taken against b read the
-// before URLs from outside the repository, because the repository's config
-// changed since the before, could not be read, or `git remote -v` failed —
-// the config the local §5.1 check reads, in the repository, is then not the
-// before's, or unreadable, so a guarded leg treats a false from that check
-// as unproven. Nil-safe; false until that after is taken.
-func (b *GuardedBefore) AfterReadOutsideRepo() bool {
-	return b != nil && b.readOutside
+// The reasons a guarded leg's branches and pull-request parts are not
+// guarded when its §5.1 check could not run (AttributionUnavailable).
+const (
+	AttributionConfigUnreadable = "attribution unavailable: repository config unreadable"
+	AttributionShallowChanged   = "attribution unavailable: shallow boundary changed"
+)
+
+// AttributionUnavailable is why the leg's §5.1 check, run after the after
+// taken against b, could not attribute a commit, or "" when it could. The
+// check reads the repository and its config: when that config could not be
+// read at the after, or checkFailed — a check's own git read failed, not a
+// proven false — it is AttributionConfigUnreadable. When the repository's
+// shallow file is not what it was at the before — its digest differs, a
+// file absent then exists now, or either read failed — it is
+// AttributionShallowChanged: a shallow boundary a node wrote hides its
+// commit's parents from the check. A repository shallow at the before, and
+// unchanged, is attributed as any other.
+//
+// It changes no attribution and fails nothing: a guarded leg reports its
+// branches and pull requests not guarded with the reason
+// (NoteAttributionUnavailable), and only its attributable entries fail it.
+// Nil-safe: "" for no before.
+func (b *GuardedBefore) AttributionUnavailable(obs RemoteObserver, checkFailed bool) string {
+	if b == nil {
+		return ""
+	}
+	if checkFailed || b.configUnreadable {
+		return AttributionConfigUnreadable
+	}
+	if !b.shallowRead {
+		return AttributionShallowChanged
+	}
+	if shallow, err := obs.ShallowFingerprint(b.shallowPath); err != nil || shallow != b.shallow {
+		return AttributionShallowChanged
+	}
+	return ""
+}
+
+// NoteAttributionUnavailable records reason, an AttributionUnavailable
+// reason, on the last leg's diff: a not-compared item for each of the
+// branches and pull-request parts that diff observed, since a new branch or
+// pull request in them could not be attributed. The entries stay as they
+// are, each with the attribution the check answered. Nothing for an empty
+// reason or a leg with no diff.
+func NoteAttributionUnavailable(c *runstate.RemoteChanges, reason string) {
+	n := len(c.Legs)
+	if reason == "" || n == 0 || c.Legs[n-1].Changes == nil {
+		return
+	}
+	d := c.Legs[n-1].Changes
+	for _, p := range d.Observed {
+		if p == runstate.RemotePartBranches || p == runstate.RemotePartPullRequests {
+			d.NotCompared = append(d.NotCompared, runstate.RemoteNotCompared{Part: p, Reason: reason})
+		}
+	}
 }
 
 // readThrough is every remote the before listed, sorted: each is read
@@ -103,25 +153,27 @@ func (b *GuardedBefore) readsThrough(name string) bool {
 // config may no longer name the servers the before read — its digest
 // differs from the before's, or it could not be read at either, or `git
 // remote -v` failed (remotesErr). Otherwise the read stays inside, where a
-// repository credential helper still works. Nil-safe; false when there is no
-// URL to read.
+// repository credential helper still works. It also records whether the
+// config could be read, for AttributionUnavailable. Nil-safe; false when
+// there is no URL to read.
 func (b *GuardedBefore) readOutsideRepo(ctx context.Context, obs RemoteObserver, remotesErr error) bool {
-	if b == nil || len(b.urls) == 0 {
+	if b == nil {
 		return false
 	}
-	if remotesErr != nil || !b.configRead {
-		return true
-	}
 	config, err := obs.RepoConfigFingerprint(ctx)
-	return err != nil || config != b.config
+	b.configUnreadable = err != nil
+	if len(b.urls) == 0 {
+		return false
+	}
+	return remotesErr != nil || !b.configRead || err != nil || config != b.config
 }
 
 // TakeGuardedRemoteSnapshot is TakeRemoteSnapshot for a guarded leg. Taking
 // the before (before nil), it also returns what the after reads through:
 // every listed remote's raw fetch URL, a relative local path made absolute
 // against the repository root — one that cannot be is kept as unresolved,
-// and its read at the after fails with why — and the digest of the
-// repository's own config. Taking the after, before is the leg's before's,
+// and its read at the after fails with why — the digest of the
+// repository's own config, and that of its shallow file. Taking the after, before is the leg's before's,
 // and it returns nil: each remote in before is read with `ls-remote --heads
 // <that URL>` rather than by name, whether it is still configured, removed
 // or re-pointed, its refs recorded under its name and the name in
@@ -142,6 +194,11 @@ func TakeGuardedRemoteSnapshot(ctx context.Context, obs RemoteObserver, prs remo
 		return snap, nil
 	}
 	pin := &GuardedBefore{urls: FetchURLs{}, unresolved: map[string]string{}}
+	if path, err := obs.ShallowFile(ctx); err == nil {
+		pin.shallowPath = path
+		pin.shallow, err = obs.ShallowFingerprint(path)
+		pin.shallowRead = err == nil
+	}
 	if len(remotes) == 0 {
 		return snap, pin
 	}
@@ -199,9 +256,6 @@ func takeGitParts(ctx context.Context, obs RemoteObserver, through *GuardedBefor
 
 	remotes, err := obs.Remotes(ctx)
 	outside := through.readOutsideRepo(ctx, obs, err)
-	if through != nil {
-		through.readOutside = outside
-	}
 	if err != nil {
 		reason := remote.SummarizeReason(err.Error())
 		snap.Remotes = runstate.RemotesSnapshot{Status: runstate.RemotePartUnavailable, Reason: reason}
