@@ -4286,6 +4286,12 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   Fixed markers would be forgeable by the very material they fence: an
   injected artifact could close its own block and speak from apparent
   outside it.
+  Right after the run-outcome line comes an `ENGINE-OBSERVED remote changes`
+  block (ADR 0046 §3.1, guarded run or not), built from the run's remote
+  change record: the entry counts and which parts were compared or guarded
+  outside the fence, every entry and not-compared reason (repository and `gh`
+  text) inside a nonce fence, each line cut to 300 bytes; with no record it is
+  one line saying the remote state is unknown, not "no changes".
   **A node with a `verification` record gets an engine verification block**
   (#332; `cycleEvidence` copies the record into
   `coordinator.NodeVerification`, so the coordinator still does not import

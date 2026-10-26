@@ -88,7 +88,7 @@ A snapshot holds three parts:
    the git the engine starts; git's own https helper may still receive it, see
    docs/LIMITATIONS.md).
 3. **Open pull requests.** `gh pr list --state open --limit 1000 --json
-   number,headRefName,headRefOid`, run in the invocation repository, so the
+   number,headRefName,headRefOid,url`, run in the invocation repository, so the
    list is the PRs whose base is this repository's GitHub repo. Only when `gh`
    is on `PATH` and authenticated. `gh pr list` returns 30 PRs unless told
    otherwise, so two snapshots of a busy repository could list different
