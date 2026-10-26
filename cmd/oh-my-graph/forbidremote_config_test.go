@@ -27,6 +27,13 @@ import (
 // entry fails a run), and the end line names the branches and pull requests
 // not guarded, with why.
 
+// The reasons the end line names a part not guarded with, spelled out as an
+// operator reads them, so a change to worktree's constants shows here.
+const (
+	configUnreadableReason = "attribution unavailable: repository config unreadable"
+	shallowChangedReason   = "attribution unavailable: shallow boundary changed"
+)
+
 // configToken is a config value the node writes beside its change; it must
 // reach no file of the run, and no output.
 const configToken = "omg-config-token-9876"
@@ -81,7 +88,8 @@ func originPath(t *testing.T, dir string) string {
 }
 
 // gitArgvLog is a git on PATH that appends the argv of every git started
-// while it is not paused to a log, then runs the real git: the engine's own
+// while it is not paused to a log, and to a second log the same argv after
+// the directory it ran in and a tab, then runs the real git: the engine's own
 // git commands, which a cmd test cannot otherwise see. The test's own gits
 // run paused. A git that git itself starts finds the real one first, on
 // git's exec path, and is not logged.
@@ -96,7 +104,7 @@ func logGitArgv(t *testing.T) gitArgvLog {
 		t.Fatal(err)
 	}
 	l := gitArgvLog{dir: t.TempDir()}
-	script := "#!/bin/sh\n[ -e '" + l.dir + "/paused' ] || printf '%s\\n' \"$*\" >> '" + l.dir + "/argv'\nexec '" + real + "' \"$@\"\n"
+	script := "#!/bin/sh\n[ -e '" + l.dir + "/paused' ] || { printf '%s\\n' \"$*\" >> '" + l.dir + "/argv'; printf '%s\\t%s\\n' \"$(pwd -P)\" \"$*\" >> '" + l.dir + "/cwd'; }\nexec '" + real + "' \"$@\"\n"
 	if err := os.WriteFile(filepath.Join(l.dir, "git"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +130,13 @@ func (l gitArgvLog) resume(t *testing.T) {
 // read is every argv logged, one per line.
 func (l gitArgvLog) read(t *testing.T) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(l.dir, "argv"))
+	return l.readLog(t, "argv")
+}
+
+// readLog is the log named name, empty if nothing was logged.
+func (l gitArgvLog) readLog(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(l.dir, name))
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		t.Fatal(err)
 	}
@@ -130,10 +144,11 @@ func (l gitArgvLog) read(t *testing.T) string {
 }
 
 // realRun is what guardedRealRun saw: stdout, stderr, the argv of every git
-// the engine started, and the run's error.
+// the engine started, the same with the directory each ran in, and the run's
+// error.
 type realRun struct {
-	out, stderr, argv string
-	err               error
+	out, stderr, argv, cwd string
+	err                    error
 }
 
 // guardedRealRun runs a one-node guarded graph against dir, the production
@@ -163,6 +178,7 @@ func guardedRealRun(t *testing.T, dir string, change func()) realRun {
 	})
 	argv.pause(t)
 	run.argv = argv.read(t)
+	run.cwd = argv.readLog(t, "cwd")
 	if !strings.Contains(run.argv, "ls-remote --heads omg-before-snapshot") {
 		t.Fatalf("the argv log missed the engine's before-URL read:\n%s", run.argv)
 	}
@@ -228,6 +244,30 @@ func assertAttributionUnavailable(t *testing.T, run realRun, reason string) {
 		if !slices.Contains(nc, runstate.RemoteNotCompared{Part: part, Reason: reason}) {
 			t.Errorf("state.json's not compared = %+v, want %s with %q", nc, part, reason)
 		}
+	}
+}
+
+// assertBeforeURLReadOutside fails unless every ls-remote through the before
+// URL the engine started ran in a directory outside the repository at dir.
+func assertBeforeURLReadOutside(t *testing.T, run realRun, dir string) {
+	t.Helper()
+	repo, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	for _, l := range strings.Split(run.cwd, "\n") {
+		cwd, argv, _ := strings.Cut(l, "\t")
+		if !strings.HasPrefix(argv, "ls-remote --heads omg-before-snapshot") {
+			continue
+		}
+		reads++
+		if cwd == repo || strings.HasPrefix(cwd, repo+string(filepath.Separator)) {
+			t.Errorf("git %s ran in %s, inside the repository whose config changed", argv, cwd)
+		}
+	}
+	if reads == 0 {
+		t.Errorf("no before-URL read in the cwd log:\n%s", run.cwd)
 	}
 }
 
@@ -309,11 +349,12 @@ func TestRunGraph_ABrokenRepoConfigCannotHideAGuardedPush(t *testing.T) {
 			run := guardedRealRun(t, dir, func() { tc.apply(t, filepath.Join(dir, ".git", "config")) })
 			if tc.readable {
 				assertGuardedPushFailed(t, run.err)
-				if strings.Contains(run.out, worktree.AttributionConfigUnreadable) {
+				if strings.Contains(run.out, configUnreadableReason) {
 					t.Errorf("a readable config read as unreadable:\n%s", run.out)
 				}
+				assertBeforeURLReadOutside(t, run, dir)
 			} else {
-				assertAttributionUnavailable(t, run, worktree.AttributionConfigUnreadable)
+				assertAttributionUnavailable(t, run, configUnreadableReason)
 			}
 			if strings.Contains(run.argv, origin) {
 				t.Errorf("a git the engine started carries the before URL %q on its argv", origin)
@@ -335,7 +376,7 @@ func TestRunGraph_AnUnreadableConfigWithSomeoneElsesBranchIsReportedOnly(t *test
 		mustGit(t, other, "push", "-q", "origin", "HEAD:refs/heads/feat/theirs")
 		appendTo(t, filepath.Join(dir, ".git", "config"), "this is not config\n")
 	})
-	assertAttributionUnavailable(t, run, worktree.AttributionConfigUnreadable)
+	assertAttributionUnavailable(t, run, configUnreadableReason)
 	if !hasBranchCreated(t, "feat/theirs", runstate.AttributionNotAttributable) {
 		t.Error("state.json lacks feat/theirs's not_attributable branch_created")
 	}
@@ -400,7 +441,7 @@ func TestRunGraph_AShallowBoundaryWrittenDuringTheLegIsNotGuarded(t *testing.T) 
 		mustGit(t, dir, "update-ref", lane, child)
 		appendTo(t, filepath.Join(dir, ".git", "shallow"), child+"\n")
 	})
-	assertAttributionUnavailable(t, run, worktree.AttributionShallowChanged)
+	assertAttributionUnavailable(t, run, shallowChangedReason)
 }
 
 // decoyToken is the credential in credentialDecoy, an insteadOf target that
