@@ -618,6 +618,11 @@ has no open issue behind it.
   compared, and the end line says so), a push that names a URL directly with
   no remote (`git push https://other/x.git …`), or a push made after changing
   a remote's `pushurl` to another server: the guard never reads those servers.
+  <br>**A remote added and pushed to before `.git/config` breaks.** In a
+  guarded run, a node that adds a remote during a leg, pushes to it, then
+  breaks `.git/config` so `git remote -v` fails at the end leaves that remote
+  with no start fetch URL, so its branches are not read; the remotes part is
+  reported "not guarded", which is where the added remote would have shown.
   <br>**Git older than 2.31 leaves the branches unguarded.** The guarded end
   read passes the start URL through `GIT_CONFIG_*` env, which git reads only
   from 2.31; with an older git, every remote's branches read as not guarded in
