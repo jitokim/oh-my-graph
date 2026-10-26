@@ -638,7 +638,9 @@ has no open issue behind it.
   config changed or unreadable, or `git remote -v` failing, or a check's git
   read failed, a guarded `run` leg also fails on a new branch or PR labelled
   `not_attributable` — a human's push of a commit the run did not make
-  included. The record keeps the label; the exit-6 line says `not proven not
+  included. The check is not moved outside the repository but fails closed
+  instead, so a node's own push that a broken config left `not_attributable`
+  fails the guarded run with exit 6. The record keeps the label; the exit-6 line says `not proven not
   this run's`.
   <br>**A changed repository config leaves only the global config.** That
   outside read uses no repository config, so a credential helper set

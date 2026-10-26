@@ -26,11 +26,15 @@
   the remotes.** A node that pushed and then broke `git remote -v` (a
   corrupted `.git/config`) used to leave the branches part not compared and
   its push unseen; a `--forbid-remote-changes` leg now reads each remote it
-  had at the start through that start's fetch URL, so the push is recorded
-  and the run exits 6, while the remotes part stays not compared. Once the
-  repository's own config changed or cannot be read, those reads run from an
-  empty directory outside the repository, so an `insteadOf` or a broken
-  `.git/config` cannot redirect them. Unguarded
-  runs are unchanged. If git cannot read the repository at all, the branches
-  part is still not compared, as ADR 0046 already lists.
+  had at the start through that start's fetch URL, so the push is recorded,
+  while the remotes part stays not compared. Once the repository's own
+  config changed or cannot be read, those reads run from an empty directory
+  outside the repository, so an `insteadOf` or a broken `.git/config` cannot
+  redirect them. The commit check is not moved outside: it still reads that
+  config, so a broken one can leave the node's own push `not_attributable`,
+  and a guarded `run` leg then fails closed — a `not_attributable` new branch
+  or PR fails it too — so that push exits 6; an `auto` leg, with no run
+  branches, does not. Unguarded runs are unchanged. If the leg's start could
+  not list the remotes, the branches part is still not compared, as ADR 0046
+  already lists.
   ([#410](https://github.com/jitokim/oh-my-graph/issues/410))
