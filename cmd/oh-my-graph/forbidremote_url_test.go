@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -51,19 +52,26 @@ func pushThenRepointOrigin(obs *worktree.FakeRemoteObserver, prs *remote.FakePRL
 
 const pushedEntry = "branch_created origin/feat/x at 333333333333 (observed during the run; points at a commit this run made)"
 
+// repointedNotCompared is the piece a re-pointed origin leaves uncompared:
+// the repository it now points at, which no before read.
+const repointedNotCompared = "fetch URL changed: the new repository has no before refs to compare"
+
 // Tests 1 and 2: the QA cases. Removing or re-pointing origin after the push
 // no longer hides it: the guarded leg reads origin through its before URL,
 // records the push as a run_commit branch_created beside the remote entry,
-// and ends with exit 6. Nothing went uncompared, so the end line claims
-// nothing it did not compare.
+// and ends with exit 6. Removed, nothing went uncompared, so the end line
+// claims nothing it did not compare; re-pointed, the new repository's
+// branches were never read, so the end line names them as not guarded and
+// leaves branches out of guarded.
 func TestRunGraph_AGuardedLegReadsThroughTheBeforeURL(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		change remoteChange
-		kind   runstate.RemoteChangeKind
+		name    string
+		change  remoteChange
+		kind    runstate.RemoteChangeKind
+		skipped string
 	}{
-		{"push then remote remove origin", pushThenRemoveOrigin, runstate.RemoteRemoved},
-		{"push then remote set-url origin to an unreachable URL", pushThenRepointOrigin, runstate.RemoteURLChanged},
+		{"push then remote remove origin", pushThenRemoveOrigin, runstate.RemoteRemoved, ""},
+		{"push then remote set-url origin to an unreachable URL", pushThenRepointOrigin, runstate.RemoteURLChanged, repointedNotCompared},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			isolateRunHome(t)
@@ -83,11 +91,22 @@ func TestRunGraph_AGuardedLegReadsThroughTheBeforeURL(t *testing.T) {
 				d.Entries[1].Attribution != runstate.AttributionRunCommit {
 				t.Errorf("entries = %+v, want %s, then the run_commit branch_created", d.Entries, tc.kind)
 			}
-			if len(d.NotCompared) != 0 {
-				t.Errorf("not_compared = %+v, want origin's refs compared", d.NotCompared)
-			}
-			if strings.Contains(out, "not guarded") || strings.Contains(out, "not compared") {
-				t.Errorf("every part was compared; nothing may read as not guarded:\n%s", out)
+			if want := tc.skipped; want == "" {
+				if len(d.NotCompared) != 0 {
+					t.Errorf("not_compared = %+v, want origin's refs compared", d.NotCompared)
+				}
+				if strings.Contains(out, "not guarded") || strings.Contains(out, "not compared") {
+					t.Errorf("every part was compared; nothing may read as not guarded:\n%s", out)
+				}
+			} else {
+				wantNC := []runstate.RemoteNotCompared{{Part: runstate.RemotePartBranches, Remote: "origin", Reason: want}}
+				if !reflect.DeepEqual(d.NotCompared, wantNC) {
+					t.Errorf("not_compared = %+v, want %+v", d.NotCompared, wantNC)
+				}
+				summary := "--forbid-remote-changes: not guarded (not compared): branches of origin (" + want + "); guarded: remotes, pull_requests\n"
+				if !strings.HasSuffix(out, summary) {
+					t.Errorf("summary = want suffix\n%s\ngot\n%s", summary, out)
+				}
 			}
 			if want := "  branch_created origin/feat/x at 333333333333 — " + labelRunCommit + "\n"; !strings.Contains(out, want) {
 				t.Errorf("stdout lacks %q:\n%s", want, out)
@@ -345,11 +364,12 @@ func (o attributingObserver) CommitAttributable(_ context.Context, sha, _ string
 // what it saw by name.
 func TestRunGraph_TheBeforeURLReadAgainstARealRepository(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		hide []string
+		name    string
+		hide    []string
+		skipped int
 	}{
-		{"remote remove", []string{"remote", "remove", "origin"}},
-		{"remote set-url", []string{"remote", "set-url", "origin", "https://127.0.0.1:1/unreachable.git"}},
+		{"remote remove", []string{"remote", "remove", "origin"}, 0},
+		{"remote set-url", []string{"remote", "set-url", "origin", "https://127.0.0.1:1/unreachable.git"}, 1},
 	} {
 		for _, guarded := range []bool{true, false} {
 			name := tc.name + "/unguarded"
@@ -391,8 +411,8 @@ func TestRunGraph_TheBeforeURLReadAgainstARealRepository(t *testing.T) {
 					if got := exitCodeForError(err); got != 6 {
 						t.Fatalf("err = %v (exit %d), want exit 6", err, got)
 					}
-					if !pushed || len(d.NotCompared) != 0 {
-						t.Errorf("diff = %+v, want the run_commit branch_created and nothing uncompared", d)
+					if !pushed || len(d.NotCompared) != tc.skipped {
+						t.Errorf("diff = %+v, want the run_commit branch_created and %d uncompared", d, tc.skipped)
 					}
 					return
 				}

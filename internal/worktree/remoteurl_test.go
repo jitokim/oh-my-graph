@@ -160,17 +160,20 @@ func (f remoteFixture) guardedLeg(t *testing.T, during func()) (runstate.RemoteD
 // The QA case, against a real repository: the node pushes its own commit to
 // a new branch, then removes or re-points origin. Read through the before's
 // URL, the push is still a run_commit branch_created, beside the remote
-// entry that reports what was done to origin.
+// entry that reports what was done to origin. Re-pointed, the repository
+// origin now names was never read, so its branches are still not compared.
 func TestGuardedRemoteLeg_ARemovedOrRepointedRemoteCannotHideAPush(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		hide func(t *testing.T, f remoteFixture)
-		kind runstate.RemoteChangeKind
+		name    string
+		hide    func(t *testing.T, f remoteFixture)
+		kind    runstate.RemoteChangeKind
+		skipped []runstate.RemoteNotCompared
 	}{
-		{"remote removed", func(t *testing.T, f remoteFixture) { gitIn(t, f.repo, "remote", "remove", "origin") }, runstate.RemoteRemoved},
+		{"remote removed", func(t *testing.T, f remoteFixture) { gitIn(t, f.repo, "remote", "remove", "origin") }, runstate.RemoteRemoved, nil},
 		{"remote re-pointed", func(t *testing.T, f remoteFixture) {
 			gitIn(t, f.repo, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "unreachable.git"))
-		}, runstate.RemoteURLChanged},
+		}, runstate.RemoteURLChanged, []runstate.RemoteNotCompared{{Part: runstate.RemotePartBranches, Remote: "origin",
+			Reason: "fetch URL changed: the new repository has no before refs to compare"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newRemoteFixture(t)
@@ -192,8 +195,8 @@ func TestGuardedRemoteLeg_ARemovedOrRepointedRemoteCannotHideAPush(t *testing.T)
 			if !reflect.DeepEqual(diff.Entries[1], want) {
 				t.Errorf("entry = %+v\nwant    %+v", diff.Entries[1], want)
 			}
-			if len(diff.NotCompared) != 0 {
-				t.Errorf("not_compared = %+v, want origin's refs compared", diff.NotCompared)
+			if len(diff.NotCompared) != len(tc.skipped) || (len(tc.skipped) != 0 && !reflect.DeepEqual(diff.NotCompared, tc.skipped)) {
+				t.Errorf("not_compared = %+v, want %+v", diff.NotCompared, tc.skipped)
 			}
 			if !reflect.DeepEqual(after.Branches.ReadThroughBeforeURL, []string{"origin"}) {
 				t.Errorf("read_through_before_url = %v, want [origin]", after.Branches.ReadThroughBeforeURL)

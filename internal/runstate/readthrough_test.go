@@ -11,6 +11,8 @@ import (
 // (ReadThroughBeforeURL): those refs come from the repository the before
 // read, so they are compared even when the remote was removed or re-pointed,
 // beside the remote entry that reports it. Without the field they are not.
+// A re-pointed remote's new repository was never read, so beside the
+// comparison its branches are still named as not compared.
 func TestDiffRemoteSnapshots_ComparesARemoteReadThroughItsBeforeURL(t *testing.T) {
 	origin := RemoteConfig{Name: "origin", FetchURL: "https://example.com/o.git", PushURL: "https://example.com/o.git"}
 	moved := RemoteConfig{Name: "origin", FetchURL: "https://example.com/m.git", PushURL: "https://example.com/m.git"}
@@ -27,9 +29,11 @@ func TestDiffRemoteSnapshots_ComparesARemoteReadThroughItsBeforeURL(t *testing.T
 		name       string
 		configured []RemoteConfig
 		kind       RemoteChangeKind
+		skipped    []RemoteNotCompared
 	}{
-		{"removed", nil, RemoteRemoved},
-		{"re-pointed", []RemoteConfig{moved}, RemoteURLChanged},
+		{"removed", nil, RemoteRemoved, nil},
+		{"re-pointed", []RemoteConfig{moved}, RemoteURLChanged, []RemoteNotCompared{{Part: RemotePartBranches, Remote: "origin",
+			Reason: "fetch URL changed: the new repository has no before refs to compare"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			after := RemoteSnapshot{
@@ -51,8 +55,8 @@ func TestDiffRemoteSnapshots_ComparesARemoteReadThroughItsBeforeURL(t *testing.T
 			if through.Entries[0].Kind != tc.kind || !reflect.DeepEqual(through.Entries, want) {
 				t.Errorf("entries = %+v, want %s and the run_commit branch_created", through.Entries, tc.kind)
 			}
-			if len(through.NotCompared) != 0 {
-				t.Errorf("not_compared = %+v, want none", through.NotCompared)
+			if len(through.NotCompared) != len(tc.skipped) || (len(tc.skipped) != 0 && !reflect.DeepEqual(through.NotCompared, tc.skipped)) {
+				t.Errorf("not_compared = %+v, want %+v", through.NotCompared, tc.skipped)
 			}
 		})
 	}

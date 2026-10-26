@@ -433,7 +433,13 @@ func diffBranches(before, after RemoteSnapshot, attribute func(string) RemoteAtt
 			skipped = append(skipped, RemoteNotCompared{Part: RemotePartBranches, Remote: name,
 				Reason: "remote added: it has no before refs to compare"})
 		case readThrough[name]:
+			// The before repository's refs are compared; a re-pointed
+			// remote's new repository was never read, and has no before.
 			comparedRemote[name] = true
+			if inCur && o.FetchURL != n.FetchURL {
+				skipped = append(skipped, RemoteNotCompared{Part: RemotePartBranches, Remote: name,
+					Reason: "fetch URL changed: the new repository has no before refs to compare"})
+			}
 		case !inCur:
 			skipped = append(skipped, RemoteNotCompared{Part: RemotePartBranches, Remote: name,
 				Reason: "remote removed: it has no after refs to compare"})
