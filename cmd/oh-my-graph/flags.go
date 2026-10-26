@@ -31,9 +31,14 @@ type commonRunFlags struct {
 	// same winner the precedence line names first. Filled by bindInputFiles
 	// for every invocation, with or without a file, so undeclaredInputWarnings
 	// can name where a key the graph does not declare came from.
-	inputSources        map[string]string
-	concurrency         int
-	continueOnFail      bool
+	inputSources   map[string]string
+	concurrency    int
+	continueOnFail bool
+	// forbidRemoteChanges is --forbid-remote-changes (ADR 0046 §4): a
+	// forbidden entry in the run's remote change record fails the run.
+	// Persisted in state.json, so resume reads it from the snapshot and
+	// registers no flag of its own that could turn it off.
+	forbidRemoteChanges bool
 	noWeb               bool
 	planningCostUnknown bool
 	planningUsage       runner.TokenUsage
@@ -105,6 +110,7 @@ func (c *commonRunFlags) register(set *flag.FlagSet) {
 	set.Var(&c.inputFiles, "input-file", "bind graph inputs from a flat YAML or JSON map file (repeatable; later files override earlier ones, --input overrides every file)")
 	set.IntVar(&c.concurrency, "concurrency", 0, "max nodes to run at once (0 = use the graph's value; ceiling 10)")
 	set.BoolVar(&c.continueOnFail, "continue-on-fail", false, "prune only a failed node's subtree instead of halting the run (ORs with the graph's on_fail field: either saying continue means continue)")
+	set.BoolVar(&c.forbidRemoteChanges, "forbid-remote-changes", false, "fail the run when the remote change record shows a new branch or pull request at a commit this run made, or a new remote (ADR 0046). The engine observes the remote itself, before and after each leg; a moved branch or updated pull request is reported, never failed. Without it every remote change is reported only. Recorded in state.json, so every resumed leg is guarded too")
 	set.BoolVar(&c.noWeb, "no-web", false, "do not serve or open the web live view for this run (it only appears when stdout is a terminal)")
 }
 

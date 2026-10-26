@@ -11,8 +11,8 @@
 // dispatch switch and every subcommand's FlagSet, so neither can drift):
 //
 //	oh-my-graph init [dir]
-//	oh-my-graph run <graph.yaml> [--dry-run] [--auto-approve <gate-id> ...] [--input k=v ...] [--input-file <path> ...] [--concurrency N] [--continue-on-fail] [--no-web]
-//	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--no-baseline] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--interview] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--input-file <path> ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation] [--no-reuse]
+//	oh-my-graph run <graph.yaml> [--dry-run] [--auto-approve <gate-id> ...] [--input k=v ...] [--input-file <path> ...] [--concurrency N] [--continue-on-fail] [--forbid-remote-changes] [--no-web]
+//	oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--no-baseline] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--interview] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--input-file <path> ...] [--concurrency N] [--continue-on-fail] [--forbid-remote-changes] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation] [--no-reuse]
 //	oh-my-graph lint <graph.yaml>
 //	oh-my-graph design "<goal>" --out <file>
 //	oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
@@ -123,7 +123,7 @@ func mainExitCode(args []string) int {
 		return exitCodeForError(err)
 	}
 	code := exitCodeForError(err)
-	if code == 1 {
+	if code == 1 || code == 6 {
 		fmt.Fprintf(os.Stderr, "oh-my-graph: %v\n", err)
 	}
 	return code
@@ -150,6 +150,16 @@ func exitCodeForError(err error) int {
 	var usage *usageRequest
 	if errors.As(err, &usage) {
 		return 0
+	}
+	// A guarded run whose leg observed a forbidden remote change (ADR 0046
+	// §5.1). Checked before the pauses: it ends a leg whatever the scheduler
+	// returned, a pause it withdrew included. Its own code so a script can
+	// tell it from a node failure; unlike 3 and 5 it has a run directory, and
+	// that run reads FAIL — ADR 0023 §2.6's agreement as amended, exit 1 or 6
+	// ↔ FAIL.
+	var forbidden *RemoteChangeForbiddenError
+	if errors.As(err, &forbidden) {
+		return 6
 	}
 	var paused *schedule.PausedError
 	if errors.As(err, &paused) {
@@ -209,8 +219,8 @@ func exitCodeForError(err error) int {
 // registered flag hides a feature. The continuation indent aligns each line
 // under the "usage: " prefix.
 const usageLines = `oh-my-graph init [dir]
-       oh-my-graph run <graph.yaml> [--dry-run] [--auto-approve <gate-id> ...] [--input k=v ...] [--input-file <path> ...] [--concurrency N] [--continue-on-fail] [--no-web]
-       oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--no-baseline] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--interview] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--input-file <path> ...] [--concurrency N] [--continue-on-fail] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation] [--no-reuse]
+       oh-my-graph run <graph.yaml> [--dry-run] [--auto-approve <gate-id> ...] [--input k=v ...] [--input-file <path> ...] [--concurrency N] [--continue-on-fail] [--forbid-remote-changes] [--no-web]
+       oh-my-graph auto "<goal>" [--plan-only] [--verify-cmd 'CMD'] [--verify-timeout D] [--no-baseline] [--accept-no-build-evidence] [--accept-loaded-user-config] [--conventions <path> ...] [--interview] [--max-cycles N] [--max-goal-budget-usd X] [--input k=v ...] [--input-file <path> ...] [--concurrency N] [--continue-on-fail] [--forbid-remote-changes] [--no-web] [--no-agent-mapping] [--no-agent <name> ...] [--no-skill-activation] [--no-reuse]
        oh-my-graph lint <graph.yaml>
        oh-my-graph design "<goal>" --out <file>
        oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-failed) [--verify-cmd 'CMD'] [--verify-timeout D] [--concurrency N] [--no-web] [--no-skill-activation]
@@ -1285,9 +1295,10 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	})
 
 	fmt.Fprintf(os.Stdout, "Running graph %q (run %s)\n\n", g.Name, runID)
-	// The leg's remote record brackets the scheduler (ADR 0046 §2.1): a
-	// report only, so a remote it cannot read never stops the leg.
-	remote := beginRemoteLeg(ctx, runID, recorder, baseSHA, nil)
+	// The leg's remote record brackets the scheduler (ADR 0046 §2.1). A remote
+	// it cannot read never stops the leg; only a guarded run's forbidden entry
+	// changes its exit (§5.1).
+	remote := beginRemoteLeg(ctx, runID, recorder, baseSHA, nil, flags.forbidRemoteChanges)
 	// An interrupt during the before snapshot ends the leg here, as one before
 	// any node started: the scheduler is never entered, the after snapshot is
 	// recorded interrupted and the record printed as on the normal path, so
@@ -1300,6 +1311,8 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 		closeLeg(leg, runfeed.OutcomeFailed)
 		return ctxErr
 	}
+	// A guarded leg names the parts it starts without (ADR 0046 §5.2).
+	remote.printLaunchNotice(os.Stdout)
 	// The after snapshot ends the leg, not the scheduler: an interrupt during
 	// it ends the leg interrupted (finish), so its run_finished waits for it.
 	runErr := remote.finish(ctx, hold, scheduler.Run(ctx, g, h, led))
@@ -1377,7 +1390,10 @@ func newRunRecorder(runID, graphSourcePath string, rawSource []byte, g *graph.Gr
 		Graph:           graphJSON,
 		Inputs:          map[string]string(flags.inputs),
 		ContinueOnFail:  flags.continueOnFail,
-		AutoApprove:     []string(flags.autoApprove),
+		// Stamps SchemaWithRemoteGuard when set, so an older binary refuses
+		// to resume the run rather than drop the guard (ADR 0046 §5.3).
+		ForbidRemoteChanges: flags.forbidRemoteChanges,
+		AutoApprove:         []string(flags.autoApprove),
 		// Recorded, not defaulted: a later `resume` must be able to put this run
 		// back under the mode it was launched in even if the binary's default has
 		// changed underneath it (see runstate.Snapshot.DefaultPermissionMode).

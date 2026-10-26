@@ -295,6 +295,51 @@ func TestDashboard_ARunDirectoryThatHasSaidNothingIsPendingNotFailed(t *testing.
 	}
 }
 
+func TestDashboard_AFailedLegWithEveryNodePassedReadsAsTheSharedRuleSays(t *testing.T) {
+	// A leg that closed failed with every node PASS (ADR 0046): unguarded it
+	// is an interrupt on the after remote snapshot and still reads PASS, as
+	// before the guard existed; guarded it is exit 6 and reads FAIL. The card
+	// reads the snapshot's guard itself, so it must land where runstatus.Of
+	// does, or the dashboard and `runs list` disagree about the same bytes.
+	for _, tc := range []struct {
+		guarded bool
+		want    string
+	}{
+		{guarded: false, want: statePassed},
+		{guarded: true, want: stateFailed},
+	} {
+		root := runsRootWith(t, "run-x")
+		dir := filepath.Join(root, "run-x")
+		writeSnapshot(t, dir, runstate.Snapshot{
+			RunID: "run-x",
+			Graph: json.RawMessage(twoNodeGraph),
+			Nodes: map[string]runstate.NodeRecord{
+				"a": {Verdict: runstate.VerdictPass},
+				"b": {Verdict: runstate.VerdictPass},
+			},
+			ForbidRemoteChanges: tc.guarded,
+		})
+		writeEvents(t, dir, "run-x",
+			runfeed.Event{Type: runfeed.EventRunStarted},
+			runfeed.Event{Type: runfeed.EventNodePassed, NodeID: "a", Verdict: runfeed.VerdictPass},
+			runfeed.Event{Type: runfeed.EventNodePassed, NodeID: "b", Verdict: runfeed.VerdictPass},
+			runfeed.Event{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomeFailed},
+		)
+
+		card := buildCard(root, "run-x")
+		if card.State != tc.want {
+			t.Errorf("guarded=%v: card state = %q, want %q", tc.guarded, card.State, tc.want)
+		}
+		status, err := runstatus.Of(dir)
+		if err != nil {
+			t.Fatalf("runstatus.Of: %v", err)
+		}
+		if wantStatus := map[bool]runstatus.Status{false: runstatus.Pass, true: runstatus.Fail}[tc.guarded]; status != wantStatus {
+			t.Errorf("guarded=%v: runstatus.Of = %v, want %v", tc.guarded, status, wantStatus)
+		}
+	}
+}
+
 func TestDashboard_AFailedRunIsAFailedCard(t *testing.T) {
 	// The settled-and-not-all-passed case: the leg is closed and one node
 	// failed. It is runState's default arm — the one with no positive fact of

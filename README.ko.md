@@ -75,6 +75,12 @@ oh-my-graph auto "lint this repo and summarize the findings" --input repo=$PWD -
 # 실행하고, 그때 이미 빨간색이면 exit 5(baseline red)로 끝냅니다:
 oh-my-graph auto "fix the failing test" --input repo=$PWD --verify-cmd 'go build ./...'
 
+# 원격을 건드리면 안 되는 목표: 엔진이 실행 구간마다 시작 전과 끝난 뒤 원격을 직접 읽고, 이 실행이
+# 만든 커밋을 가리키는 새 브랜치나 PR, 또는 새 remote가 보이면 exit 6으로 실패합니다
+# (이미 있던 브랜치로의 push는 보고만 됩니다 — docs/LIMITATIONS.md).
+# `resume`도 이 가드를 그대로 이어받습니다:
+oh-my-graph auto "fix the failing test, do not push" --input repo=$PWD --verify-cmd 'go build ./...' --forbid-remote-changes
+
 # 목표에 빠진 내용을 플래너에게 들려주기: 먼저 터미널에서 질문을 최대 다섯 개
 # 받습니다(기본은 꺼짐). 또는 검토하고 `run`할 그래프 파일로 끝낼 수도 있습니다:
 oh-my-graph auto "fix the failing test" --input repo=$PWD --verify-cmd 'go build ./...' --interview

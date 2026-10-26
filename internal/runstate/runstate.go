@@ -36,13 +36,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 // Schema is the current state.json format version. Bump it whenever a change to
 // the types below alters the on-disk bytes in a way an older reader could
-// misinterpret; Load refuses any snapshot whose Schema is neither this nor
-// SchemaWithConventions.
+// misinterpret; Load refuses any snapshot whose Schema is not this,
+// SchemaWithConventions or SchemaWithRemoteGuard.
 //
 // Schema 2 added NodeRecord.BudgetUSD and NodeRecord.Detail —
 // the gate/resume wiring PR that NodeRecord's original doc comment deferred
@@ -59,11 +60,13 @@ import (
 // reader would otherwise resume a Codex run with Claude and render an
 // unreported USD cost as a known $0, so this is not safely additive.
 //
-// Schema is still what every snapshot WITHOUT a conventions record is stamped
-// with. SchemaWithConventions is the first conditional stamp; see there. A
-// future bump of Schema must also move or retire SchemaWithConventions — left
-// at 4, it would stamp new-format runs with a version this build accepts, and
-// TestWrite_ConventionsStampSchema4 fails unless it stays above Schema.
+// Schema is still what every snapshot WITHOUT a conventions record or the
+// remote guard is stamped with. SchemaWithConventions is the first conditional
+// stamp and SchemaWithRemoteGuard the second; see there. A future bump of
+// Schema must also move or retire both — left at 4 and 5, they would stamp
+// new-format runs with versions this build accepts, and
+// TestWrite_ConventionsStampSchema4 and TestWrite_RemoteGuardStampsSchema5
+// fail unless they stay above Schema.
 const Schema = 3
 
 // SchemaWithConventions is stamped instead of Schema on a snapshot that
@@ -75,6 +78,16 @@ const Schema = 3
 // flag keeps writing 3, so the bump costs nothing to anyone who does not use
 // it. Load accepts both.
 const SchemaWithConventions = 4
+
+// SchemaWithRemoteGuard is stamped instead of Schema or SchemaWithConventions
+// on a snapshot whose run was launched with --forbid-remote-changes
+// (ADR 0046 §5.3), with or without a Conventions record. The flag alone is
+// additive, and that is the problem it shares with the conventions record: an
+// older binary would drop it on resume and finish the run without the guard
+// the operator asked for. An older reader refuses 5 by name instead. A run
+// without the flag keeps writing 3, or 4 with conventions. Load accepts 3, 4
+// and 5.
+const SchemaWithRemoteGuard = 5
 
 // Verdict is a node's terminal judgement as persisted in the snapshot. The
 // string values match ledger.Verdict so the resume path can carry a record
@@ -675,6 +688,14 @@ type Snapshot struct {
 	// It changes what a node failure means (prune a subtree vs. halt), so a resume
 	// must honor the same choice the first leg ran under, not a fresh default.
 	ContinueOnFail bool `json:"continue_on_fail,omitempty"`
+	// ForbidRemoteChanges is the --forbid-remote-changes flag as the run was
+	// launched with it (ADR 0046 §4): a forbidden entry in the remote change
+	// record fails the run. Persisted for the reason ContinueOnFail is — it
+	// changes what the run's verdict means — so every resumed leg is guarded
+	// exactly as the first was; resume has no flag that turns it off. Absent
+	// on every unguarded run, so such a snapshot is byte for byte what it was
+	// before. Present, it stamps SchemaWithRemoteGuard.
+	ForbidRemoteChanges bool `json:"forbid_remote_changes,omitempty"`
 	// AutoApprove is the `run --auto-approve` list as the run was launched with
 	// it (#285): the gate node ids whose approval the operator registered at
 	// launch, in argv order. The approvals themselves are recorded exactly as any
@@ -965,19 +986,24 @@ func (s Snapshot) SettledNodes() map[string]bool {
 // the running binary accepts. It names the path and the versions so the CLI can
 // tell the user exactly why an old run cannot be resumed by a newer (or older)
 // build, instead of failing on a confusing downstream decode error. Want is the
-// Schema constant; WantAlso, when non-zero, is the other version this build
-// accepts (SchemaWithConventions), so the message never claims Want is the only one.
+// Schema constant; WantAlso, when non-empty, is the other versions this build
+// accepts (SchemaWithConventions, SchemaWithRemoteGuard), so the message never
+// claims Want is the only one.
 type SchemaMismatchError struct {
 	Path     string
 	Found    int
 	Want     int
-	WantAlso int
+	WantAlso []int
 }
 
 func (e *SchemaMismatchError) Error() string {
 	want := fmt.Sprintf("version %d", e.Want)
-	if e.WantAlso != 0 {
-		want = fmt.Sprintf("versions %d and %d", e.Want, e.WantAlso)
+	if n := len(e.WantAlso); n != 0 {
+		versions := []string{fmt.Sprint(e.Want)}
+		for _, v := range e.WantAlso[:n-1] {
+			versions = append(versions, fmt.Sprint(v))
+		}
+		want = fmt.Sprintf("versions %s and %d", strings.Join(versions, ", "), e.WantAlso[n-1])
 	}
 	return fmt.Sprintf(
 		"snapshot %q has schema version %d, but this build understands %s; "+
@@ -1013,6 +1039,9 @@ func Write(path string, s Snapshot) error {
 	s.Schema = Schema
 	if s.Conventions != nil {
 		s.Schema = SchemaWithConventions
+	}
+	if s.ForbidRemoteChanges {
+		s.Schema = SchemaWithRemoteGuard
 	}
 
 	data, err := json.MarshalIndent(s, "", "  ")
@@ -1053,7 +1082,8 @@ func Write(path string, s Snapshot) error {
 }
 
 // Load reads and decodes the snapshot at path. It refuses a snapshot whose Schema
-// is neither Schema nor SchemaWithConventions with a *SchemaMismatchError, so an
+// is not Schema, SchemaWithConventions or SchemaWithRemoteGuard with a
+// *SchemaMismatchError, so an
 // incompatible format is a clear, named failure rather than a misread. A missing
 // file or malformed JSON is returned wrapped, never as a zero Snapshot with a nil
 // error.
@@ -1067,8 +1097,8 @@ func Load(path string) (Snapshot, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return Snapshot{}, fmt.Errorf("decode snapshot %q: %w", path, err)
 	}
-	if s.Schema != Schema && s.Schema != SchemaWithConventions {
-		return Snapshot{}, &SchemaMismatchError{Path: path, Found: s.Schema, Want: Schema, WantAlso: SchemaWithConventions}
+	if s.Schema != Schema && s.Schema != SchemaWithConventions && s.Schema != SchemaWithRemoteGuard {
+		return Snapshot{}, &SchemaMismatchError{Path: path, Found: s.Schema, Want: Schema, WantAlso: []int{SchemaWithConventions, SchemaWithRemoteGuard}}
 	}
 	return s, nil
 }

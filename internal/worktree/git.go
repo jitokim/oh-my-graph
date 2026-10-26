@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,11 +36,13 @@ const gitWaitDelay = time.Second
 //
 // Its scope is the git commands the engine itself issues against the
 // invocation repository: worktrees, and the remote snapshot (#410). The
-// snapshot's reads — Remotes, LsRemoteHeads, the local CommitAttributable
-// check and the GHDefaultRemotes config read — go through the same
-// m.gitEnv/gitCmd path that m.git uses, so they inherit the one exec.Command,
-// the env scrub and the timeout, and add only GIT_TERMINAL_PROMPT=0 and an
-// empty GIT_ASKPASS — plus, for Remotes and LsRemoteHeads, GIT_SSH_COMMAND
+// snapshot's reads — Remotes, LsRemoteHeads, LsRemoteHeadsURL (with its
+// `git version` and collision checks), the local CommitAttributable check and
+// the GHDefaultRemotes config read — go through
+// the same m.gitRun/gitCmd path that m.git uses, so they inherit the one
+// exec.Command, the env scrub and the timeout, and add only
+// GIT_TERMINAL_PROMPT=0 and an empty GIT_ASKPASS — plus, for Remotes and the
+// two ls-remote reads, GIT_SSH_COMMAND
 // running ssh in BatchMode unless the user chose an ssh command (see
 // snapshotEnv). That widens ADR 0005's "the git worktree commands behind a
 // node's worktree:" to cover them; it adds no spawner.
@@ -69,6 +72,12 @@ type GitManager struct {
 
 	mu      sync.Mutex
 	created map[string]*managedWorktree
+
+	// versionMu guards version, the `git version` LsRemoteHeadsURL asks once
+	// per manager. A read that failed to run is not kept, so a cancelled
+	// first call does not refuse every later one.
+	versionMu sync.Mutex
+	version   *gitVersion
 }
 
 // managedWorktree records what Acquire provisioned for one name — everything
@@ -361,25 +370,41 @@ func (m *GitManager) git(ctx context.Context, args ...string) (string, error) {
 }
 
 // gitEnv is git with extra variables appended after the scrub — the remote
-// snapshot's noPromptEnv or snapshotEnv. It is the one place the timeout and
-// the error shape live, so the worktree and the remote-snapshot commands
-// cannot drift apart on either.
+// snapshot's noPromptEnv or snapshotEnv.
 func (m *GitManager) gitEnv(ctx context.Context, extraEnv []string, args ...string) (string, error) {
+	output, err := m.gitRun(ctx, extraEnv, args...)
+	if err != nil {
+		return "", gitFailure(args, err, output)
+	}
+	return output, nil
+}
+
+// gitFailure is the one error shape of a failed git command: its argv, git's
+// error and what it printed. It is the one place that shape lives, so the
+// worktree and the remote-snapshot commands cannot drift apart on it.
+func gitFailure(args []string, err error, output string) error {
+	if output != "" {
+		return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, output)
+	}
+	return fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+}
+
+// gitRun runs one git command under the per-command timeout and returns its
+// trimmed combined output and git's bare error — the exit, the kill, the
+// timeout — naming neither the argv nor the output. It is the one place the
+// timeout lives: gitFailure dresses its error for every command but
+// LsRemoteHeadsURL's, which must not echo the URL their env or config carries
+// — the URL is never on the argv of the git process the engine starts.
+func (m *GitManager) gitRun(ctx context.Context, extraEnv []string, args ...string) (string, error) {
 	cmdCtx, cancel := context.WithTimeout(ctx, m.timeout)
 	defer cancel()
 
 	out, err := m.gitCmd(cmdCtx, extraEnv, args...).CombinedOutput()
 	output := strings.TrimSpace(string(out))
-	if err != nil {
-		if errors.Is(cmdCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-			err = fmt.Errorf("timed out after %s: %w", m.timeout, err)
-		}
-		if output != "" {
-			return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, output)
-		}
-		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+	if err != nil && errors.Is(cmdCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+		err = fmt.Errorf("timed out after %s: %w", m.timeout, err)
 	}
-	return output, nil
+	return output, err
 }
 
 // gitCmd assembles the exact *exec.Cmd for one git invocation: argv, the
@@ -395,8 +420,9 @@ func (m *GitManager) gitEnv(ctx context.Context, extraEnv []string, args ...stri
 // on metered API billing.
 //
 // extraEnv is appended AFTER the scrub, never instead of it, and nil for the
-// worktree commands. os/exec keeps the last value of a repeated key, so an
-// extra variable overrides the parent's own setting of it.
+// worktree commands. An extra variable replaces the parent's own setting of
+// it — the parent's entry is dropped, not left beside it — so cmd.Env holds
+// each key once: LsRemoteHeadsURL's GIT_CONFIG_COUNT is the only one.
 //
 // WaitDelay makes the timeout hold: killing git does not kill what git
 // spawned (an ext:: transport, a credential helper, a hook), and a
@@ -406,9 +432,28 @@ func (m *GitManager) gitCmd(ctx context.Context, extraEnv []string, args ...stri
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = m.repoDir
 	cmd.Env = childenv.Scrub(m.environ())
-	cmd.Env = append(cmd.Env, extraEnv...)
+	cmd.Env = append(withoutKeysOf(cmd.Env, extraEnv), extraEnv...)
 	cmd.WaitDelay = gitWaitDelay
 	return cmd
+}
+
+// withoutKeysOf is env less every entry whose key some entry of extra sets.
+func withoutKeysOf(env, extra []string) []string {
+	if len(extra) == 0 {
+		return env
+	}
+	keys := make(map[string]bool, len(extra))
+	for _, kv := range extra {
+		k, _, _ := strings.Cut(kv, "=")
+		keys[k] = true
+	}
+	kept := make([]string, 0, len(env))
+	for _, kv := range env {
+		if k, _, _ := strings.Cut(kv, "="); !keys[k] {
+			kept = append(kept, kv)
+		}
+	}
+	return kept
 }
 
 // noPromptEnv is appended to every remote-snapshot command (ADR 0046 §2.3).
@@ -426,7 +471,7 @@ var noPromptEnv = []string{"GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS="}
 // instead of asking on /dev/tty until gitTimeout and reading what is typed.
 const batchSSH = "GIT_SSH_COMMAND=ssh -o BatchMode=yes"
 
-// snapshotEnv is the extra env of Remotes and LsRemoteHeads: noPromptEnv,
+// snapshotEnv is the extra env of Remotes and the ls-remote reads: noPromptEnv,
 // plus batchSSH unless the user chose an ssh command — GIT_SSH_COMMAND or
 // GIT_SSH in the environment the git child receives (the scrubbed environ),
 // or a non-empty core.sshCommand in the invocation repository's config. A
@@ -515,11 +560,187 @@ func (m *GitManager) LsRemoteHeads(ctx context.Context, remote string) ([]Remote
 	if remote == "" || strings.HasPrefix(remote, "-") {
 		return nil, fmt.Errorf("refusing to ls-remote remote %q: not a usable remote name", remote)
 	}
-	out, err := m.gitEnv(ctx, m.snapshotEnv(ctx), "ls-remote", "--heads", remote)
+	args := lsRemoteHeadsArgs(remote)
+	out, err := m.lsRemoteHeads(ctx, args)
+	if err != nil {
+		return nil, gitFailure(args, err, out)
+	}
+	return parseLsRemoteHeads(out), nil
+}
+
+// LsRemoteHeadsURL is LsRemoteHeads for a repository named by its URL rather
+// than by a remote's name, on the same env, timeout and WaitDelay. A guarded
+// leg reads each remote its before listed this way, through the fetch URL
+// that before saw, so a remote removed or re-pointed during the leg cannot
+// hide what was pushed to it (ADR 0046 §5.1).
+//
+// The URL is the raw one — it may carry a credential — so it is kept off the
+// argv of the git process the engine starts, where any local user could read
+// it: the child's env defines a temporary remote, beforeSnapshotRemote,
+// through git's GIT_CONFIG_COUNT/KEY/VALUE (see beforeSnapshotEnv), and the
+// argv is only `git ls-remote --heads omg-before-snapshot`. That covers the
+// engine's own child only: git itself starts its http(s) transport helper
+// with the URL on that helper's argv, which is outside the engine's control.
+//
+// The read is refused, without running ls-remote, when it cannot be done that
+// way: an inherited GIT_CONFIG_COUNT that is not a count, git older than 2.31
+// (no GIT_CONFIG_COUNT) or of a version that cannot be determined, and a
+// config — the repository's or the inherited env's — that already has keys
+// under remote.omg-before-snapshot, whose remote it would read instead. It
+// never falls back to the URL on argv. No error ever names the URL: a URL
+// starting with "-" is refused, as a name is, without quoting it, and a
+// failed read reports git's exit, never its argv or its output, which may
+// echo the URL.
+func (m *GitManager) LsRemoteHeadsURL(ctx context.Context, url string) ([]RemoteHead, error) {
+	if url == "" || strings.HasPrefix(url, "-") {
+		return nil, errors.New("refusing to ls-remote the before fetch URL: not a usable URL")
+	}
+	n, err := inheritedConfigCount(childenv.Scrub(m.environ()))
 	if err != nil {
 		return nil, err
 	}
+	if err := m.requireConfigEnvGit(ctx); err != nil {
+		return nil, err
+	}
+	env := m.snapshotEnv(ctx)
+	if err := m.checkBeforeSnapshotRemoteFree(ctx, env); err != nil {
+		return nil, err
+	}
+	env = append(env, beforeSnapshotEnv(n, url)...)
+	out, err := m.gitRun(ctx, env, lsRemoteHeadsArgs(beforeSnapshotRemote)...)
+	if err != nil {
+		return nil, fmt.Errorf("git ls-remote --heads <before fetch URL>: %w", err)
+	}
 	return parseLsRemoteHeads(out), nil
+}
+
+// beforeSnapshotRemote is the remote LsRemoteHeadsURL defines in its child's
+// env to read a before fetch URL through.
+const beforeSnapshotRemote = "omg-before-snapshot"
+
+// noUnexposedRead closes every refusal of LsRemoteHeadsURL that keeps the URL
+// off the engine's git argv rather than read it there.
+const noUnexposedRead = "cannot read the before fetch URL without exposing it"
+
+// inheritedConfigCount is the GIT_CONFIG_COUNT of env, the environment the git
+// child receives — its last value, as os/exec hands it on — and 0 when unset.
+// Anything but a non-negative integer is an error: git would reject it, and
+// the next free index is unknown.
+func inheritedConfigCount(env []string) (int, error) {
+	value, set := "", false
+	for _, kv := range env {
+		if k, v, _ := strings.Cut(kv, "="); k == "GIT_CONFIG_COUNT" {
+			value, set = v, true
+		}
+	}
+	if !set {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 0 || strings.HasPrefix(value, "+") {
+		return 0, errors.New("the inherited GIT_CONFIG_COUNT is not a count: " + noUnexposedRead)
+	}
+	return n, nil
+}
+
+// beforeSnapshotEnv defines remote.omg-before-snapshot.url as url at index n,
+// the next one after every GIT_CONFIG_KEY_/VALUE_ pair the child inherits,
+// which all stay as they are.
+func beforeSnapshotEnv(n int, url string) []string {
+	return []string{
+		fmt.Sprintf("GIT_CONFIG_COUNT=%d", n+1),
+		fmt.Sprintf("GIT_CONFIG_KEY_%d=remote.%s.url", n, beforeSnapshotRemote),
+		fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", n, url),
+	}
+}
+
+// beforeSnapshotRemoteKeys matches every config key of beforeSnapshotRemote.
+const beforeSnapshotRemoteKeys = `^remote\.omg-before-snapshot\.`
+
+// checkBeforeSnapshotRemoteFree fails when the config the read would see —
+// the repository's, or the env's — already has a key under
+// remote.omg-before-snapshot: git would merge it into the remote the read
+// defines, and read the user's remote instead. `git config --get-regexp`
+// exits 1 when no key matches, the clean case; any other failure is an
+// error. Its output, which may hold a URL, is never quoted.
+func (m *GitManager) checkBeforeSnapshotRemoteFree(ctx context.Context, env []string) error {
+	_, err := m.gitRun(ctx, env, "config", "--get-regexp", beforeSnapshotRemoteKeys)
+	var exitErr *exec.ExitError
+	switch {
+	case errors.As(err, &exitErr) && exitErr.ExitCode() == 1:
+		return nil
+	case err == nil:
+		return errors.New("the repository already has a remote named " + beforeSnapshotRemote + ": " + noUnexposedRead)
+	default:
+		return fmt.Errorf("git config --get-regexp remote.%s: %w", beforeSnapshotRemote, err)
+	}
+}
+
+// gitVersion is the major.minor of `git version`; ok is false when the
+// output did not parse.
+type gitVersion struct {
+	major, minor int
+	ok           bool
+}
+
+// configEnvMinor is the git 2.x that first reads GIT_CONFIG_COUNT.
+const configEnvMinor = 31
+
+// requireConfigEnvGit fails unless git reads GIT_CONFIG_COUNT (2.31 or
+// later). The version is asked once per manager and kept, unless the ask
+// itself failed to run.
+func (m *GitManager) requireConfigEnvGit(ctx context.Context) error {
+	m.versionMu.Lock()
+	defer m.versionMu.Unlock()
+	if m.version == nil {
+		out, err := m.gitRun(ctx, noPromptEnv, "version")
+		if err != nil {
+			return fmt.Errorf("cannot determine git version: %w: %s", err, noUnexposedRead)
+		}
+		v := parseGitVersion(out)
+		m.version = &v
+	}
+	switch v := *m.version; {
+	case !v.ok:
+		return errors.New("cannot determine git version: unrecognised `git version` output: " + noUnexposedRead)
+	case v.major < 2 || v.major == 2 && v.minor < configEnvMinor:
+		return fmt.Errorf("git older than 2.%d (found %d.%d): %s", configEnvMinor, v.major, v.minor, noUnexposedRead)
+	}
+	return nil
+}
+
+// parseGitVersion reads "git version 2.43.0", "git version 2.39.3 (Apple
+// Git-145)" or "git version 2.45.0.windows.1": the major and minor of the
+// first word after "git version".
+func parseGitVersion(out string) gitVersion {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(out), "git version ")
+	if !ok {
+		return gitVersion{}
+	}
+	word, _, _ := strings.Cut(strings.TrimSpace(rest), " ")
+	parts := strings.Split(word, ".")
+	if len(parts) < 2 {
+		return gitVersion{}
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil || major < 0 {
+		return gitVersion{}
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil || minor < 0 {
+		return gitVersion{}
+	}
+	return gitVersion{major: major, minor: minor, ok: true}
+}
+
+func lsRemoteHeadsArgs(repository string) []string {
+	return []string{"ls-remote", "--heads", repository}
+}
+
+// lsRemoteHeads is LsRemoteHeads's run: snapshotEnv, under gitRun's timeout.
+// It returns git's output beside its bare error, for the caller to word.
+func (m *GitManager) lsRemoteHeads(ctx context.Context, args []string) (string, error) {
+	return m.gitRun(ctx, m.snapshotEnv(ctx), args...)
 }
 
 // parseLsRemoteHeads reads "<sha>\trefs/heads/<branch>" lines. A line that is

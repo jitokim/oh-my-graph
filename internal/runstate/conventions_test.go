@@ -79,23 +79,23 @@ func TestWrite_ConventionsStampSchema4(t *testing.T) {
 	}
 }
 
-// TestLoad_SchemaBeyondConventionsIsRefused: accepting 4 does not open the
-// door to every newer number.
-func TestLoad_SchemaBeyondConventionsIsRefused(t *testing.T) {
+// TestLoad_SchemaBeyondRemoteGuardIsRefused: accepting 4 and 5 does not open
+// the door to every newer number.
+func TestLoad_SchemaBeyondRemoteGuardIsRefused(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
-	if err := os.WriteFile(path, []byte(`{"schema":5,"run_id":"x","graph":{}}`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"schema":6,"run_id":"x","graph":{}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, err := Load(path)
 	var mErr *SchemaMismatchError
-	if !errors.As(err, &mErr) || mErr.Found != 5 {
-		t.Fatalf("want a SchemaMismatchError naming 5, got %T: %v", err, err)
+	if !errors.As(err, &mErr) || mErr.Found != 6 {
+		t.Fatalf("want a SchemaMismatchError naming 6, got %T: %v", err, err)
 	}
-	// The refusal names BOTH accepted versions, not just Schema.
-	if mErr.Want != Schema || mErr.WantAlso != SchemaWithConventions {
-		t.Errorf("mismatch carried want %d/%d, want %d/%d", mErr.Want, mErr.WantAlso, Schema, SchemaWithConventions)
+	// The refusal names EVERY accepted version, not just Schema.
+	if mErr.Want != Schema || len(mErr.WantAlso) != 2 || mErr.WantAlso[0] != SchemaWithConventions || mErr.WantAlso[1] != SchemaWithRemoteGuard {
+		t.Errorf("mismatch carried want %d/%v, want %d/[%d %d]", mErr.Want, mErr.WantAlso, Schema, SchemaWithConventions, SchemaWithRemoteGuard)
 	}
-	if msg := err.Error(); !strings.Contains(msg, "understands versions 3 and 4") {
-		t.Errorf("message does not name both accepted versions: %s", msg)
+	if msg := err.Error(); !strings.Contains(msg, "understands versions 3, 4 and 5") {
+		t.Errorf("message does not name every accepted version: %s", msg)
 	}
 }

@@ -83,9 +83,9 @@ const (
 	// pause (ADR 0003) and a session-limit pause (ADR 0009), which has no gate
 	// to point at and is the one the dashboard painted red.
 	Paused
-	// Pass means the leg closed and every node of the graph reached PASS. It is
-	// the one value that requires the snapshot, so a settled run without one
-	// cannot read it.
+	// Pass means the leg closed and every node of the graph reached PASS — on a
+	// guarded run, also that its outcome was not failed. It is the one value
+	// that requires the snapshot, so a settled run without one cannot read it.
 	Pass
 	// Fail means the leg closed and it did not pass — a settled run with no
 	// snapshot at all included. That combination used to be nearly unreachable;
@@ -177,6 +177,11 @@ type Facts struct {
 	// package's graph dependency is confined to Of.
 	CompletedNodes int
 	TotalNodes     int
+	// Guarded is the snapshot's forbid_remote_changes: the run was launched
+	// with --forbid-remote-changes (ADR 0046 §5.1). It decides one cell only —
+	// a closed leg whose outcome is failed with every node PASS — so an
+	// unguarded run reads exactly what it read before the flag existed.
+	Guarded bool
 }
 
 // Derive is the rule itself, over the facts and nothing else.
@@ -185,7 +190,13 @@ type Facts struct {
 // before any snapshot question (mid-run the snapshot holds only the nodes
 // completed so far, so a completed==all test would read a healthy run as FAIL),
 // a free lock answers before the phase question, and "paused" answers before
-// the completed-count.
+// the completed-count. On a guarded run "failed" does too: a guarded leg that
+// observed a forbidden remote change closes failed with every node PASS (exit
+// 6, ADR 0046 §5.1) and reads FAIL, as its exit says (ADR 0023 §2.6 as amended,
+// exit 1 or 6 ↔ FAIL). An unguarded run is untouched by that arm (ADR 0046
+// §8.4): a leg interrupted during the after remote snapshot once every node had
+// passed exits 1 and still reads PASS, the documented exception to ADR 0023
+// §2.6.
 //
 // Abandoned still requires TWO affirmative facts, never the absence of one: an
 // open leg in the stream, and a LivenessFree that runstate actually
@@ -214,6 +225,8 @@ func Derive(f Facts, lock runstate.Liveness) Status {
 		return Running
 	case f.LastOutcome == runfeed.OutcomePaused:
 		return Paused
+	case f.Guarded && f.LastOutcome == runfeed.OutcomeFailed:
+		return Fail
 	case f.HasSnapshot && f.TotalNodes > 0 && f.CompletedNodes == f.TotalNodes:
 		return Pass
 	default:
@@ -292,6 +305,7 @@ func Gather(runDir string) (Facts, error) {
 		facts.HasSnapshot = true
 		facts.CompletedNodes = len(snap.CompletedNodes())
 		facts.TotalNodes = len(g.Nodes)
+		facts.Guarded = snap.ForbidRemoteChanges
 	case errors.Is(err, fs.ErrNotExist):
 		// Legitimate at every status, not only before a run settles:
 		// state.json is written atomically after a node's terminal verdict, so

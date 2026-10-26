@@ -2,6 +2,7 @@ package worktree
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"path/filepath"
 	"sort"
@@ -82,12 +83,21 @@ func (f *FakeManager) Calls() []string {
 // heads or an error for them, the set of shas CommitAttributable passes, and
 // the remotes marked gh's default.
 // Mutating it between two snapshots is how a test scripts a change.
+//
+// A read by URL answers what SetURLHeads scripted for that URL, else what
+// the remote that URL was ever set on (SetRemotes, as a fetch URL) answers by
+// name: the repository behind a URL outlives a remote removed or re-pointed
+// away from it.
 type FakeRemoteObserver struct {
 	mu          sync.Mutex
 	remotes     []Remote
 	remotesErr  error
 	heads       map[string][]RemoteHead
 	headsErr    map[string]error
+	urlRemote   map[string]string
+	urlHeads    map[string][]RemoteHead
+	urlErr      map[string]error
+	urlCalls    []string
 	runCommits  map[string]bool
 	attribCalls []string
 	ghDefaults  map[string]string
@@ -100,6 +110,9 @@ func NewFakeRemoteObserver() *FakeRemoteObserver {
 	return &FakeRemoteObserver{
 		heads:      make(map[string][]RemoteHead),
 		headsErr:   make(map[string]error),
+		urlRemote:  make(map[string]string),
+		urlHeads:   make(map[string][]RemoteHead),
+		urlErr:     make(map[string]error),
 		runCommits: make(map[string]bool),
 	}
 }
@@ -110,6 +123,18 @@ func (f *FakeRemoteObserver) SetRemotes(remotes []Remote, err error) {
 	defer f.mu.Unlock()
 	f.remotes = append([]Remote(nil), remotes...)
 	f.remotesErr = err
+	for _, r := range remotes {
+		f.urlRemote[r.FetchURL] = r.Name
+	}
+}
+
+// SetURLHeads scripts what LsRemoteHeadsURL returns for url; a non-nil err
+// replaces the list. It wins over the remote url was set on.
+func (f *FakeRemoteObserver) SetURLHeads(url string, heads []RemoteHead, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.urlHeads[url] = append([]RemoteHead(nil), heads...)
+	f.urlErr[url] = err
 }
 
 // SetHeads scripts what LsRemoteHeads returns for remote; a non-nil err
@@ -151,12 +176,51 @@ func (f *FakeRemoteObserver) LsRemoteHeads(ctx context.Context, remote string) (
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	return f.headsOf(remote)
+}
+
+// headsOf is remote's scripted heads, sorted, or its scripted error. f.mu is
+// held.
+func (f *FakeRemoteObserver) headsOf(remote string) ([]RemoteHead, error) {
 	if err := f.headsErr[remote]; err != nil {
 		return nil, err
 	}
 	out := append([]RemoteHead{}, f.heads[remote]...)
 	sort.Slice(out, func(i, j int) bool { return out[i].Branch < out[j].Branch })
 	return out, nil
+}
+
+// LsRemoteHeadsURL returns the heads SetURLHeads scripted for url, else those
+// of the remote url was set on as a fetch URL, sorted by branch, or the
+// scripted error. A URL neither names fails, as a repository nobody set up
+// would; the error does not contain it. It records each URL it was asked.
+func (f *FakeRemoteObserver) LsRemoteHeadsURL(ctx context.Context, url string) ([]RemoteHead, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.urlCalls = append(f.urlCalls, url)
+	if heads, ok := f.urlHeads[url]; ok {
+		if err := f.urlErr[url]; err != nil {
+			return nil, err
+		}
+		out := append([]RemoteHead{}, heads...)
+		sort.Slice(out, func(i, j int) bool { return out[i].Branch < out[j].Branch })
+		return out, nil
+	}
+	if name, ok := f.urlRemote[url]; ok {
+		return f.headsOf(name)
+	}
+	return nil, errors.New("fake: no repository at the URL")
+}
+
+// URLCalls returns every URL LsRemoteHeadsURL was asked, in order. Returns a
+// copy; never nil.
+func (f *FakeRemoteObserver) URLCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string{}, f.urlCalls...)
 }
 
 // CommitAttributable passes exactly the shas SetRunCommit named, except the

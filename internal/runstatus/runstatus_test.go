@@ -110,6 +110,22 @@ func TestDerive_IsTotalOverTheSixValues(t *testing.T) {
 			want:  Fail,
 		},
 		{
+			// On a guarded run "failed" answers before the completed-count: a
+			// leg that observed a forbidden remote change exits 6 with every
+			// node PASS (ADR 0046 §5.1) and reads FAIL, as the exit says.
+			name:  "a guarded run's failed outcome beats the completed count",
+			facts: Facts{LastOutcome: runfeed.OutcomeFailed, HasSnapshot: true, CompletedNodes: 3, TotalNodes: 3, Guarded: true},
+			want:  Fail,
+		},
+		{
+			// An unguarded run reads what it read before the guard existed
+			// (ADR 0046 §8.4): an interrupt on a passed leg's after snapshot
+			// exits 1 with every node PASS, and the run still reads PASS.
+			name:  "an unguarded run's failed outcome does not beat the completed count",
+			facts: Facts{LastOutcome: runfeed.OutcomeFailed, HasSnapshot: true, CompletedNodes: 3, TotalNodes: 3},
+			want:  Pass,
+		},
+		{
 			// §2.1.1's newest cell, and the one §3 makes the shape of every
 			// refused plan: a closed leg with no snapshot at all.
 			name:  "a refused plan: settled, no snapshot",
@@ -265,13 +281,20 @@ func TestOf_ComposesTheStreamWithTheLock(t *testing.T) {
 		{Type: runfeed.EventNodeStarted, NodeID: "a"},
 		{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomePaused},
 	}
+	// Every node passed and the leg still closed failed: an interrupt on the
+	// after remote snapshot, or — guarded — a forbidden remote change (exit 6).
+	failedPassedLeg := append(append([]runfeed.Event{}, openLeg...),
+		runfeed.Event{Type: runfeed.EventNodePassed, NodeID: "a", Verdict: runfeed.VerdictPass},
+		runfeed.Event{Type: runfeed.EventRunFinished, Outcome: runfeed.OutcomeFailed},
+	)
 
 	cases := []struct {
-		name   string
-		events []runfeed.Event
-		lock   string // "none", "held", "free", "legacy-gone", "legacy-alive"
-		snap   string // "" for none; otherwise the node id that passed
-		want   Status
+		name    string
+		events  []runfeed.Event
+		lock    string // "none", "held", "free", "legacy-gone", "legacy-alive"
+		snap    string // "" for none; otherwise the node id that passed
+		guarded bool   // the snapshot's forbid_remote_changes
+		want    Status
 	}{
 		{name: "no stream and no snapshot at all", lock: "none", want: Fail},
 		{name: "closed leg, free lock, every node passed", events: closedLeg, lock: "free", snap: "a", want: Pass},
@@ -293,6 +316,9 @@ func TestOf_ComposesTheStreamWithTheLock(t *testing.T) {
 		{name: "a refused plan: two events, no graph.json, no state.json", events: refusedPlan, lock: "free", want: Fail},
 		{name: "a paused leg, snapshot present but incomplete", events: pausedLeg, lock: "free", snap: "a", want: Paused},
 		{name: "a paused leg with no snapshot at all", events: pausedLeg, lock: "free", want: Paused},
+		// ADR 0046: the snapshot's guard is the one fact that moves this cell.
+		{name: "an unguarded leg closed failed with every node passed", events: failedPassedLeg, lock: "free", snap: "a", want: Pass},
+		{name: "a guarded leg closed failed with every node passed", events: failedPassedLeg, lock: "free", snap: "a", guarded: true, want: Fail},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -301,7 +327,7 @@ func TestOf_ComposesTheStreamWithTheLock(t *testing.T) {
 				writeEvents(t, runDir, "run-1", tc.events)
 			}
 			if tc.snap != "" {
-				writeSnapshot(t, runDir, tc.snap)
+				writeSnapshotGuarded(t, runDir, tc.snap, tc.guarded)
 			}
 			switch tc.lock {
 			case "held":
@@ -463,12 +489,20 @@ func TestPausedHint_NamesBothResumeShapes(t *testing.T) {
 // both run against bytes a real run would have left.
 func writeSnapshot(t *testing.T, runDir, passedNodeID string) {
 	t.Helper()
+	writeSnapshotGuarded(t, runDir, passedNodeID, false)
+}
+
+// writeSnapshotGuarded is writeSnapshot with the run's persisted
+// --forbid-remote-changes set as given (ADR 0046 §5.3).
+func writeSnapshotGuarded(t *testing.T, runDir, passedNodeID string, guarded bool) {
+	t.Helper()
 	if err := runstate.Write(filepath.Join(runDir, runstate.SnapshotFileName), runstate.Snapshot{
 		RunID: "run-1",
 		Graph: []byte(`{"name":"fixture","nodes":[{"id":"` + passedNodeID + `","prompt":"p"}]}`),
 		Nodes: map[string]runstate.NodeRecord{
 			passedNodeID: {Verdict: runstate.VerdictPass},
 		},
+		ForbidRemoteChanges: guarded,
 	}); err != nil {
 		t.Fatalf("write fixture snapshot: %v", err)
 	}
@@ -506,6 +540,7 @@ func factsOf(t *testing.T, runDir string) Facts {
 	facts.HasSnapshot = true
 	facts.CompletedNodes = len(snap.CompletedNodes())
 	facts.TotalNodes = len(g.Nodes)
+	facts.Guarded = snap.ForbidRemoteChanges
 	return facts
 }
 

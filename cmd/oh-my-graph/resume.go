@@ -657,6 +657,10 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		Graph:               snap.Graph,
 		Inputs:              snap.Inputs,
 		ContinueOnFail:      snap.ContinueOnFail,
+		// The launch's --forbid-remote-changes, from the snapshot only:
+		// resume registers no flag for it, so a guarded run stays guarded on
+		// every leg (ADR 0046 §4), and the stamp stays SchemaWithRemoteGuard.
+		ForbidRemoteChanges: snap.ForbidRemoteChanges,
 		// The launch-time pre-approval list (runstate.Snapshot.AutoApprove)
 		// rides along for the record's sake and for the next leg's controller,
 		// which seeds itself from it exactly as this leg's does below.
@@ -824,7 +828,7 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// A resumed leg takes its own before snapshot (ADR 0046 §3.1): what
 	// changed while the run was stopped is recorded between the legs and
 	// never attributed.
-	remote := beginRemoteLeg(ctx, runID, recorder, snap.RunBaseSHA, snap.RemoteChanges)
+	remote := beginRemoteLeg(ctx, runID, recorder, snap.RunBaseSHA, snap.RemoteChanges, snap.ForbidRemoteChanges)
 	// An interrupt during the before snapshot ends the leg before any node
 	// starts, its record printed, as in executeGraph, and before this leg's
 	// gate decisions and carried records are written, so the run is still
@@ -834,6 +838,8 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		remote.print(os.Stdout)
 		return ctxErr
 	}
+	// A guarded leg names the parts it starts without (ADR 0046 §5.2).
+	remote.printLaunchNotice(os.Stdout)
 	// A failed write of this leg's decisions ends the leg the same way, before
 	// any node starts, but as a failure — a plain wrapped error that
 	// mainExitCode maps to exit 1 and prints as its `oh-my-graph: ` stderr

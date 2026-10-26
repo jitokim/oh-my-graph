@@ -71,6 +71,12 @@ oh-my-graph auto "lint this repo and summarize the findings" --input repo=$PWD -
 # once on the starting tree first; already red there, it exits 5 (baseline red):
 oh-my-graph auto "fix the failing test" --input repo=$PWD --verify-cmd 'go build ./...'
 
+# A goal that must not touch the remote: the engine reads the remote before and
+# after each leg itself, and a new branch or PR at a commit this run made, or a
+# new remote, fails the run with exit 6 (a push onto an existing branch is only
+# reported — docs/LIMITATIONS.md). `resume` keeps the guard:
+oh-my-graph auto "fix the failing test, do not push" --input repo=$PWD --verify-cmd 'go build ./...' --forbid-remote-changes
+
 # Let the planner hear what the goal left out: up to five questions on your
 # terminal first (off by default). Or end in a graph file you review and `run`:
 oh-my-graph auto "fix the failing test" --input repo=$PWD --verify-cmd 'go build ./...' --interview

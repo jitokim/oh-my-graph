@@ -367,8 +367,8 @@ func TestListRuns_ShowSkippedNamesEverySkippedRunAndItsReason(t *testing.T) {
 			!strings.Contains(line, runstatus.SkipIncompatible.String()) {
 			t.Errorf("%s's detail line is not the shared unreadable sentence: %q", runID, line)
 		}
-		if !strings.Contains(line, fmt.Sprintf("has schema version %d, but this build understands versions %d and %d",
-			runstate.Schema-1, runstate.Schema, runstate.SchemaWithConventions)) {
+		if !strings.Contains(line, fmt.Sprintf("has schema version %d, but this build understands versions %d, %d and %d",
+			runstate.Schema-1, runstate.Schema, runstate.SchemaWithConventions, runstate.SchemaWithRemoteGuard)) {
 			t.Errorf("%s's detail line does not quote the loader's own reason: %q", runID, line)
 		}
 	}

@@ -113,6 +113,11 @@ type RemoteObserver interface {
 	// LsRemoteHeads lists the branch refs the named remote advertises,
 	// sorted by branch.
 	LsRemoteHeads(ctx context.Context, remote string) ([]RemoteHead, error)
+	// LsRemoteHeadsURL lists the branch refs the repository at url
+	// advertises, sorted by branch: a guarded leg's after read of a remote
+	// through the fetch URL its before saw. url is the raw URL, credentials
+	// and all, so no error it returns may contain it.
+	LsRemoteHeadsURL(ctx context.Context, url string) ([]RemoteHead, error)
 	// CommitAttributable is ADR 0046 §5.1's local check: whether sha is a
 	// commit in the invocation repository reachable from one of this run's
 	// own branches and not from baseSHA, the run's base commit.

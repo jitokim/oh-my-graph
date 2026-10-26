@@ -1082,10 +1082,11 @@ the concrete `GitManager`. See ADR 0005.
 
 A node holding `Bash(git *)` can push a branch or add a remote, and no check
 node is asked to notice. The engine records it itself, outside any model, as
-a report: the record itself changes no verdict, no exit code and no run
-status, and nothing in the engine reads it to decide anything. A Ctrl-C
-while a snapshot is taken is the interrupt's doing, not the record's: it
-ends the leg interrupted, below.
+a report: without `--forbid-remote-changes` the record changes no verdict, no
+exit code and no run status, and nothing in the engine reads it to decide
+anything. With the flag, a forbidden entry fails the run with exit 6 (the
+guard, below). A Ctrl-C while a snapshot is taken is the interrupt's doing,
+not the record's: it ends the leg interrupted, below.
 
 **Timing: two snapshots per leg.** `run`, `auto` and `resume` take a *before*
 snapshot of the **invocation repository** (the one the command was started
@@ -1131,6 +1132,8 @@ pause is withdrawn from `state.json` — the leg resumes with
 passed: `state.json` holds them all `PASS`, so the run reads `PASS` while
 the invocation exits 1, an exception to ADR 0023 §2.6 pinned by
 `TestExitCode_DoesNotAgreeWithStatusWhenAnInterruptLandsOnAPassedLegsAfterSnapshot`.
+It is an unguarded run's only: on a `--forbid-remote-changes` run the same
+leg reads `FAIL`, as its exit 1 says (below).
 
 **Pull requests.** The third part is read through `remote.PRLister`,
 whose production implementation is the fifth exec seam,
@@ -1191,7 +1194,8 @@ runs a real gh.
 new `updatedAt` or a renamed head branch alone gives no entry) and
 `pr_no_longer_open` (closed or merged; only a PR open at the *before* can
 show). Branch refs are compared only for a
-remote both sides list with the same fetch URL; an added, removed or
+remote both sides list with the same fetch URL, or one a guarded *after*
+read through its *before* URL (see the guard, below); an added, removed or
 re-pointed remote gets a `not_compared` item for its branches instead. A
 part unavailable on either side gives a `not_compared` item with the reason,
 so "no change" and "could not see" never read the same. A PR part not
@@ -1242,11 +1246,88 @@ remotes, branches, pull_requests)`. With nothing changed but a part not
 compared, the line says `none observed in the parts compared` and a
 `not compared:` line follows for each such part.
 
+**The guard: `--forbid-remote-changes` (ADR 0046 §4, §5).** `run` and `auto`
+take the flag; it is persisted as `forbid_remote_changes`, and `resume` takes
+no flag of its own but reads it from the snapshot, so every later leg is
+guarded as the first was. On a guarded leg, after its *after* snapshot, the
+engine reads the leg's own entries — never the between-legs set — and fails
+the leg if any is **forbidden**, and only these are:
+
+- `branch_created` or `pr_opened` labelled `run_commit`;
+- `remote_added` (no sha, and new by definition).
+
+Nothing else is ever forbidden: `branch_moved` and `pr_updated` whatever their
+label, `remote_removed`, `remote_url_changed`, `branch_deleted`,
+`pr_no_longer_open` and every between-legs entry are reported only, with or
+without the flag. So a push of the run's own commits onto a branch that
+already existed, `main` included, is reported and never fails the run
+(docs/LIMITATIONS.md).
+
+A forbidden entry ends the leg with `RemoteChangeForbiddenError`, **exit 6**,
+printed on stderr like exit 1: `oh-my-graph: new remote state observed during
+the run, and --forbid-remote-changes was set: <entry> (<label>); …`. It is
+checked whatever `scheduler.Run` returned, and it is not a node failure, so
+`--continue-on-fail` cannot prune it. A node failure in the same leg is kept
+and reported with it (`; the leg also failed: …`); the exit is still 6. A leg
+that **paused** — at a gate or on the session limit — while holding a
+forbidden entry fails too (`; the leg had paused at gate "<id>", and that
+pause is withdrawn`, or `… on the session limit at <nodes> …`): the pause is
+withdrawn from `state.json`, `run_finished` says `"failed"`, no pause hint is
+printed, and the run reads `FAIL`; it continues with `resume --retry-failed`,
+its gate pausing again when reached. Unlike exits 3 and 5 a guarded failure
+has a run directory, and it reads `FAIL` in `runs list`, `show` and every
+surface of the shared rule even with every node `PASS`, because on a guarded
+run a closed leg whose outcome is `"failed"` reads `FAIL` before its node
+count is looked at (ADR 0023 §2.6 as amended: exit 1 or 6 ↔ `FAIL`). An
+unguarded run's statuses are unchanged by the flag's existence: its node
+count still answers first (ADR 0046 §8.4). In a goal loop a guarded
+failure is a failed cycle: the assessor gets `RunPassed=false` and the loop
+goes on to its next cycle, as after any failed run.
+
+*An unavailable part is not guarded.* The run still starts; the verdict uses
+only the parts compared. A guarded leg whose *before* snapshot could not read
+a part says so after the `Running graph …` line (or the resume banner):
+
+```
+--forbid-remote-changes: not guarded (unavailable at this leg's start): pull_requests (not authenticated); guarded: remotes, branches
+PR part not guarded: not authenticated
+```
+
+and after the change record it names every part the leg did not compare — a
+part lost only at the *after* snapshot, or an interrupted *after*, included:
+
+```
+--forbid-remote-changes: not guarded (not compared): pull_requests (not authenticated); guarded: remotes, branches
+PR part not guarded: not authenticated
+```
+
+The `PR part not guarded: <reason>` line appears only when `pull_requests` is
+among those parts, so an operator who reads only the end of the output still
+sees it; `<reason>` is the part's reason (gh's own `detail` stays in
+`state.json`). A remote whose branches alone were not compared is named too,
+as `branches of <remote> (<reason>)`, and `guarded:` then leaves out
+`branches`. A guarded leg's *after* reads each remote present at the leg's
+*before* through the raw fetch URL recorded at that *before* — kept in memory
+only; `state.json` keeps the redacted URL and lists those remotes' names in
+`branches.read_through_before_url`; the URL reaches git through `GIT_CONFIG_*`
+env as a temporary remote, never on the argv of the git process the engine
+starts, which needs git 2.31 or later, else the branches read as not
+guarded — so removing or re-pointing a remote
+cannot hide a push (a re-pointed remote's new repository is named `not
+compared`); a remote added during the leg is read by name, and a *before* URL
+that cannot be read leaves `branches` not compared, which the end line says. A resumed leg prints its own launch notice from its own
+*before*. An unguarded run prints neither notice.
+
 **Storage.** `state.json` carries `run_base_sha` and `remote_changes`
 (`legs`, each with `before`, `after` and `changes`, and `between_legs`),
 additive and optional, so the schema stays 3 and no event is added
 (docs/RUN-FEED.md); the `pull_requests` part is additive within it, as are
 its `repo` and `repo_source`, and a snapshot without them loads unchanged.
+`forbid_remote_changes` is not additive in that sense — an older binary that
+dropped it would finish the run unguarded — so a guarded snapshot is stamped
+`runstate.SchemaWithRemoteGuard` = **5**, with or without conventions, and an
+older binary refuses to resume it; an unguarded one stays 3 (4 with
+conventions). Load accepts 3, 4 and 5.
 Every git command runs on `worktree.GitManager`, through the
 `worktree.RemoteObserver` interface, with `GIT_TERMINAL_PROMPT=0` and an empty
 `GIT_ASKPASS` added to the scrubbed environment. That stops only git's own
@@ -2291,7 +2372,9 @@ by design, persists everything a second leg needs, and exits.
    refused to start for want of build evidence (ADR 0030 — nothing ran, nothing
    is resumable, nothing was billed, and no run directory exists), `5` = `auto`'s
    `--verify-cmd` was already red on the starting tree (#315 — the same: no model
-   call, no run directory). A pause is not a failure and must not be reported as
+   call, no run directory), `6` = a `--forbid-remote-changes` run observed a
+   forbidden remote change (ADR 0046 — it has a run directory, and it reads
+   `FAIL`). A pause is not a failure and must not be reported as
    one; nor is a refusal.
 
 `--continue-on-fail` does not apply to gates: a pause always stops the whole
@@ -2473,6 +2556,10 @@ incompatible snapshot is refused rather than misread:
   are not in this list but in the gate decisions below, written by the same
   `recordGateApprove` path every approval takes. Optional and additive too:
   absent on every flag-less `run` and on every `auto`, schema still 3.
+  `forbid_remote_changes` (ADR 0046) is the same class as `continue_on_fail`
+  — it changes what the run's verdict means — but it is **not** additive: an
+  older binary would drop it and finish the run unguarded, so a snapshot
+  carrying it is stamped schema 5 (see "Remote change record").
 - **per-node completion records**: verdict, **session id**, cost, duration,
   artifact path. The cost is the session-corrected `cost_usd`; beside a session
   id and a known USD amount the record also carries `reported_cost_usd`, the raw
@@ -2681,6 +2768,10 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   semantic. `--no-web` is accepted with `run`/`auto`'s exact meaning: a
   resumed leg embeds the same live view under the same TTY gate (see "Web
   live view"), and this opts out.
+- `--forbid-remote-changes` is **not** a `resume` flag: a run launched with it
+  carries `forbid_remote_changes` in its snapshot, and every resumed leg is
+  guarded from that record, so no resume can turn the guard off (see "Remote
+  change record").
 - `--verify-cmd`/`--verify-timeout` are accepted for the opposite reason `--input`
   is refused: build evidence is the one thing a resumed leg must take from the
   human rather than from the run directory (ADR 0016 §4). An auto run started
@@ -2821,7 +2912,13 @@ oh-my-graph resume <run-id> (--approve <gate-id> | --reject <gate-id> | --retry-
   executing (#163). `PAUSED` is read off the closed leg's `run_finished`
   outcome, never off the snapshot's gate block, which is what makes it cover
   ADR 0009's gate-less session-limit pause as well as a gate pause; both used to
-  render `FAIL`. `PASS` is the one value that requires the snapshot, so a
+  render `FAIL`. On a `--forbid-remote-changes` run, and only there, a closed
+  leg whose outcome is `"failed"` reads `FAIL` before the node count is looked
+  at, so a guarded leg failed with exit 6 reads `FAIL` with every node `PASS`,
+  as its exit says (ADR 0023 §2.6 as amended by ADR 0046: exit 1 or 6 ↔
+  `FAIL`). An unguarded run's statuses are what they were before the flag:
+  one interrupted during a passed leg's *after* remote snapshot still reads
+  `PASS` while it exits 1. `PASS` is the one value that requires the snapshot, so a
   settled run without one cannot claim it. `Status.Settled()` and
   `Status.InFlight()` are both predicates, because `PLANNING` splits the
   in-flight side — `ResolveRun` keys on `InFlight()` and would silently stop

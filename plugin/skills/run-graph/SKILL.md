@@ -22,7 +22,7 @@ reason and with the same consequences as for `/graph`; see
 
 1. Confirm the graph file path and any `--input k=v` values with the user if
    not already given.
-2. Run via Bash: `oh-my-graph run <graph.yaml> [--input k=v ...] [--concurrency N] [--continue-on-fail] [--no-web]`
+2. Run via Bash: `oh-my-graph run <graph.yaml> [--input k=v ...] [--concurrency N] [--continue-on-fail] [--forbid-remote-changes] [--no-web]`
 3. Report the run ledger from stdout back to the user: one row per node — its
    five printed columns are node id, verdict, session id, cost, and a short
    detail — plus the total cost.

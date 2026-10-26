@@ -491,7 +491,9 @@ implementation asserts the agreement rather than assuming it.
 **Where they can be made to agree is narrower than "always", and the narrow
 version is the one the test pins.** For a **single-run invocation** — `run`,
 `resume`, single-cycle `auto` — the invocation's exit code and that run's status
-agree: exit 2 ↔ `PAUSED`, exit 1 ↔ `FAIL`, exit 0 ↔ `PASS`. That is the
+agree: exit 2 ↔ `PAUSED`, exit 1 ↔ `FAIL`, exit 0 ↔ `PASS` *(amended
+2026-10-26 by [ADR 0046](0046-the-engine-records-remote-changes-and-fails-only-when-the-operator-forbids-them.md):
+exit 1 or 6 ↔ `FAIL`)*. That is the
 invariant, and it is the whole invariant. It does **not** extend to the goal
 loop, for two independent reasons, either of which alone would break a blanket
 claim:
