@@ -38,9 +38,11 @@
   the node's own push `run_commit`, and the run exits 6; one that cannot be
   read leaves the push `not_attributable`, the run is not failed for it, and
   the end line lists the branches and pull requests under not guarded,
-  `attribution unavailable: repository config unreadable` (a check whose own
-  git read fails with the config still readable gives `attribution
-  unavailable: attribution check read failed`). Unguarded runs
+  `attribution unavailable: repository config unreadable` (only when the
+  config could not be read); a check whose own git read fails with the
+  config still readable gives `attribution unavailable: attribution check
+  read failed`, and a `.git/shallow` written during the leg gives
+  `attribution unavailable: shallow boundary changed`. Unguarded runs
   are unchanged. If the leg's start could
   not list the remotes, the branches part is still not compared, as ADR 0046
   already lists.
