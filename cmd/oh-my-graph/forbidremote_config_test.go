@@ -404,7 +404,8 @@ func TestRunGraph_ARewrittenAncestryCannotHideAGuardedPush(t *testing.T) {
 		rewrite func(t *testing.T, dir, base, own string)
 	}{
 		{"git replace", func(t *testing.T, dir, base, own string) {
-			fake := mustGit(t, dir, "commit-tree", base+"^{tree}", "-p", own, "-m", "fake")
+			fake := mustGit(t, dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false",
+				"commit-tree", base+"^{tree}", "-p", own, "-m", "fake")
 			mustGit(t, dir, "replace", "-f", base, fake)
 		}},
 		{".git/info/grafts", func(t *testing.T, dir, base, own string) {
@@ -437,7 +438,8 @@ func TestRunGraph_AShallowBoundaryWrittenDuringTheLegIsNotGuarded(t *testing.T) 
 	dir := remoteRepo(t)
 	run := guardedRealRun(t, dir, func() {
 		_, own := ancestryOf(t, dir)
-		child := mustGit(t, dir, "commit-tree", own+"^{tree}", "-p", own, "-m", "child")
+		child := mustGit(t, dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false",
+			"commit-tree", own+"^{tree}", "-p", own, "-m", "child")
 		lane := mustGit(t, dir, "for-each-ref", "--format=%(refname)", "refs/heads/omg/")
 		mustGit(t, dir, "update-ref", lane, child)
 		appendTo(t, filepath.Join(dir, ".git", "shallow"), child+"\n")
