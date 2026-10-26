@@ -2,6 +2,8 @@ package worktree
 
 import (
 	"context"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 
@@ -38,27 +40,62 @@ func TakeRemoteSnapshot(ctx context.Context, obs RemoteObserver, prs remote.PRLi
 	return snap
 }
 
+// FetchURLs maps each remote a snapshot listed to its raw fetch URL, as `git
+// remote -v` printed it — any credential in it included. A guarded leg keeps
+// its before's in memory only, to read its after through (ADR 0046 §5.1): it
+// is never recorded, printed or put in an error; the snapshot records the
+// redacted URL as always.
+type FetchURLs map[string]string
+
+// TakeGuardedRemoteSnapshot is TakeRemoteSnapshot for a guarded leg, which
+// also returns the raw fetch URL of every remote it listed. through is the
+// leg's before's FetchURLs when taking its after (nil for the before): each
+// remote in it is read with `ls-remote --heads <that URL>` rather than by
+// name, whether it is still configured, removed or re-pointed, its refs
+// recorded under its name and the name in Branches.ReadThroughBeforeURL, so
+// removing or re-pointing a remote cannot hide a push to it. A remote not in
+// through — one added during the leg — is read by name. A read through a URL
+// that fails makes the branches part unavailable, as any remote's failed read
+// does, its reason naming the remote and never the URL.
+func TakeGuardedRemoteSnapshot(ctx context.Context, obs RemoteObserver, prs remote.PRLister, through FetchURLs) (runstate.RemoteSnapshot, FetchURLs) {
+	snap, remotes, _ := takeRemoteSnapshotThrough(ctx, obs, prs, through)
+	urls := FetchURLs{}
+	for _, r := range remotes {
+		urls[r.Name] = r.FetchURL
+	}
+	return snap, urls
+}
+
 // takeRemoteSnapshot is TakeRemoteSnapshot, also returning the repository gh
 // was expected to read (zero when gh was not asked).
 func takeRemoteSnapshot(ctx context.Context, obs RemoteObserver, prs remote.PRLister) (runstate.RemoteSnapshot, ExpectedGHRepo) {
-	snap, remotes, remotesErr := takeGitParts(ctx, obs)
+	snap, _, expected := takeRemoteSnapshotThrough(ctx, obs, prs, nil)
+	return snap, expected
+}
+
+// takeRemoteSnapshotThrough is the snapshot, its git parts read through
+// through's URLs (none: every remote by name), also returning the remotes
+// listed and the repository gh was expected to read.
+func takeRemoteSnapshotThrough(ctx context.Context, obs RemoteObserver, prs remote.PRLister, through FetchURLs) (runstate.RemoteSnapshot, []Remote, ExpectedGHRepo) {
+	snap, remotes, remotesErr := takeGitParts(ctx, obs, through)
 	expected, unknown := expectGHRepo(ctx, obs, prs.RepoEnv(), remotes, remotesErr)
 	if unknown != nil {
 		snap.PullRequests = runstate.PullRequestsSnapshot{Status: runstate.RemotePartUnavailable,
 			Reason: unknown.Reason, Detail: remote.SummarizeReason(unknown.Detail)}
-		return snap, ExpectedGHRepo{}
+		return snap, remotes, ExpectedGHRepo{}
 	}
 	snap.PullRequests = takePullRequests(ctx, prs, expected)
 	if expected.Repo != "" {
 		snap.PullRequests.Repo = expected.Host + "/" + expected.Repo
 		snap.PullRequests.RepoSource = expected.Source
 	}
-	return snap, expected
+	return snap, remotes, expected
 }
 
 // takeGitParts reads the remotes and branches parts, and hands back the
 // remotes, or the error that made that part unavailable, for expectGHRepo.
-func takeGitParts(ctx context.Context, obs RemoteObserver) (runstate.RemoteSnapshot, []Remote, error) {
+// Each remote in through is read through its URL there, the rest by name.
+func takeGitParts(ctx context.Context, obs RemoteObserver, through FetchURLs) (runstate.RemoteSnapshot, []Remote, error) {
 	var snap runstate.RemoteSnapshot
 
 	remotes, err := obs.Remotes(ctx)
@@ -78,15 +115,26 @@ func takeGitParts(ctx context.Context, obs RemoteObserver) (runstate.RemoteSnaps
 
 	var failures []string
 	var refs []runstate.RemoteBranchRef
-	for _, r := range remotes {
-		heads, err := obs.LsRemoteHeads(ctx, r.Name)
+	read := func(name string, heads []RemoteHead, err error) {
 		if err != nil {
-			failures = append(failures, "ls-remote "+r.Name+": "+err.Error())
-			continue
+			failures = append(failures, "ls-remote "+name+": "+err.Error())
+			return
 		}
 		for _, h := range heads {
-			refs = append(refs, runstate.RemoteBranchRef{Remote: r.Name, Branch: h.Branch, SHA: h.SHA})
+			refs = append(refs, runstate.RemoteBranchRef{Remote: name, Branch: h.Branch, SHA: h.SHA})
 		}
+	}
+	readThrough := slices.Sorted(maps.Keys(through))
+	for _, name := range readThrough {
+		heads, err := obs.LsRemoteHeadsURL(ctx, through[name])
+		read(name, heads, err)
+	}
+	for _, r := range remotes {
+		if _, ok := through[r.Name]; ok {
+			continue
+		}
+		heads, err := obs.LsRemoteHeads(ctx, r.Name)
+		read(r.Name, heads, err)
 	}
 	if len(failures) > 0 {
 		snap.Branches = runstate.BranchesSnapshot{Status: runstate.RemotePartUnavailable,
@@ -94,6 +142,11 @@ func takeGitParts(ctx context.Context, obs RemoteObserver) (runstate.RemoteSnaps
 		return snap, remotes, nil
 	}
 	snap.Branches = runstate.BranchesSnapshot{Status: runstate.RemotePartObserved, Refs: refs}
+	if len(readThrough) > 0 {
+		// Read in two passes, so back into remote order.
+		sort.SliceStable(refs, func(i, j int) bool { return refs[i].Remote < refs[j].Remote })
+		snap.Branches.ReadThroughBeforeURL = readThrough
+	}
 	return snap, remotes, nil
 }
 

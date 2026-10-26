@@ -35,11 +35,12 @@ const gitWaitDelay = time.Second
 //
 // Its scope is the git commands the engine itself issues against the
 // invocation repository: worktrees, and the remote snapshot (#410). The
-// snapshot's reads — Remotes, LsRemoteHeads, the local CommitAttributable
-// check and the GHDefaultRemotes config read — go through the same
-// m.gitEnv/gitCmd path that m.git uses, so they inherit the one exec.Command,
-// the env scrub and the timeout, and add only GIT_TERMINAL_PROMPT=0 and an
-// empty GIT_ASKPASS — plus, for Remotes and LsRemoteHeads, GIT_SSH_COMMAND
+// snapshot's reads — Remotes, LsRemoteHeads, LsRemoteHeadsURL, the local
+// CommitAttributable check and the GHDefaultRemotes config read — go through
+// the same m.gitRun/gitCmd path that m.git uses, so they inherit the one
+// exec.Command, the env scrub and the timeout, and add only
+// GIT_TERMINAL_PROMPT=0 and an empty GIT_ASKPASS — plus, for Remotes and the
+// two ls-remote reads, GIT_SSH_COMMAND
 // running ssh in BatchMode unless the user chose an ssh command (see
 // snapshotEnv). That widens ADR 0005's "the git worktree commands behind a
 // node's worktree:" to cover them; it adds no spawner.
@@ -361,25 +362,40 @@ func (m *GitManager) git(ctx context.Context, args ...string) (string, error) {
 }
 
 // gitEnv is git with extra variables appended after the scrub — the remote
-// snapshot's noPromptEnv or snapshotEnv. It is the one place the timeout and
-// the error shape live, so the worktree and the remote-snapshot commands
-// cannot drift apart on either.
+// snapshot's noPromptEnv or snapshotEnv.
 func (m *GitManager) gitEnv(ctx context.Context, extraEnv []string, args ...string) (string, error) {
+	output, err := m.gitRun(ctx, extraEnv, args...)
+	if err != nil {
+		return "", gitFailure(args, err, output)
+	}
+	return output, nil
+}
+
+// gitFailure is the one error shape of a failed git command: its argv, git's
+// error and what it printed. It is the one place that shape lives, so the
+// worktree and the remote-snapshot commands cannot drift apart on it.
+func gitFailure(args []string, err error, output string) error {
+	if output != "" {
+		return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, output)
+	}
+	return fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+}
+
+// gitRun runs one git command under the per-command timeout and returns its
+// trimmed combined output and git's bare error — the exit, the kill, the
+// timeout — naming neither the argv nor the output. It is the one place the
+// timeout lives: gitFailure dresses its error for every command but
+// LsRemoteHeadsURL, which must not echo the URL its argv carries.
+func (m *GitManager) gitRun(ctx context.Context, extraEnv []string, args ...string) (string, error) {
 	cmdCtx, cancel := context.WithTimeout(ctx, m.timeout)
 	defer cancel()
 
 	out, err := m.gitCmd(cmdCtx, extraEnv, args...).CombinedOutput()
 	output := strings.TrimSpace(string(out))
-	if err != nil {
-		if errors.Is(cmdCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-			err = fmt.Errorf("timed out after %s: %w", m.timeout, err)
-		}
-		if output != "" {
-			return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, output)
-		}
-		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+	if err != nil && errors.Is(cmdCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+		err = fmt.Errorf("timed out after %s: %w", m.timeout, err)
 	}
-	return output, nil
+	return output, err
 }
 
 // gitCmd assembles the exact *exec.Cmd for one git invocation: argv, the
@@ -426,7 +442,7 @@ var noPromptEnv = []string{"GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS="}
 // instead of asking on /dev/tty until gitTimeout and reading what is typed.
 const batchSSH = "GIT_SSH_COMMAND=ssh -o BatchMode=yes"
 
-// snapshotEnv is the extra env of Remotes and LsRemoteHeads: noPromptEnv,
+// snapshotEnv is the extra env of Remotes and the ls-remote reads: noPromptEnv,
 // plus batchSSH unless the user chose an ssh command — GIT_SSH_COMMAND or
 // GIT_SSH in the environment the git child receives (the scrubbed environ),
 // or a non-empty core.sshCommand in the invocation repository's config. A
@@ -515,11 +531,43 @@ func (m *GitManager) LsRemoteHeads(ctx context.Context, remote string) ([]Remote
 	if remote == "" || strings.HasPrefix(remote, "-") {
 		return nil, fmt.Errorf("refusing to ls-remote remote %q: not a usable remote name", remote)
 	}
-	out, err := m.gitEnv(ctx, m.snapshotEnv(ctx), "ls-remote", "--heads", remote)
+	args := lsRemoteHeadsArgs(remote)
+	out, err := m.lsRemoteHeads(ctx, args)
 	if err != nil {
-		return nil, err
+		return nil, gitFailure(args, err, out)
 	}
 	return parseLsRemoteHeads(out), nil
+}
+
+// LsRemoteHeadsURL is LsRemoteHeads for a repository named by its URL rather
+// than by a remote's name: `git ls-remote --heads <url>`, on the same env,
+// timeout and WaitDelay. A guarded leg reads each remote its before listed
+// this way, through the fetch URL that before saw, so a remote removed or
+// re-pointed during the leg cannot hide what was pushed to it (ADR 0046
+// §5.1). The URL is the raw one — it may carry a credential — so no error
+// ever names it: a URL starting with "-" is refused, as a name is, without
+// quoting it, and a failed read reports git's exit, never its argv or its
+// output, which may echo the URL.
+func (m *GitManager) LsRemoteHeadsURL(ctx context.Context, url string) ([]RemoteHead, error) {
+	if url == "" || strings.HasPrefix(url, "-") {
+		return nil, errors.New("refusing to ls-remote the before fetch URL: not a usable URL")
+	}
+	out, err := m.lsRemoteHeads(ctx, lsRemoteHeadsArgs(url))
+	if err != nil {
+		return nil, fmt.Errorf("git ls-remote --heads <before fetch URL>: %w", err)
+	}
+	return parseLsRemoteHeads(out), nil
+}
+
+func lsRemoteHeadsArgs(repository string) []string {
+	return []string{"ls-remote", "--heads", repository}
+}
+
+// lsRemoteHeads is the one run behind LsRemoteHeads and LsRemoteHeadsURL:
+// snapshotEnv, under gitRun's timeout. It returns git's output beside its
+// bare error, for each caller to word.
+func (m *GitManager) lsRemoteHeads(ctx context.Context, args []string) (string, error) {
+	return m.gitRun(ctx, m.snapshotEnv(ctx), args...)
 }
 
 // parseLsRemoteHeads reads "<sha>\trefs/heads/<branch>" lines. A line that is

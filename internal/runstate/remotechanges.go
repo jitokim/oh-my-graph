@@ -87,6 +87,13 @@ type BranchesSnapshot struct {
 	Reason string           `json:"reason,omitempty"`
 	// Refs is every advertised branch, sorted by remote then branch.
 	Refs []RemoteBranchRef `json:"refs,omitempty"`
+	// ReadThroughBeforeURL names, on a guarded leg's after snapshot, each
+	// remote whose refs were read through the fetch URL that leg's before
+	// recorded rather than by name (ADR 0046 §5.1), sorted. Such a remote's
+	// refs come from the repository the before read, so they are compared
+	// even when the remote was removed or re-pointed during the leg. Only
+	// names are held, never a URL; additive, and absent everywhere else.
+	ReadThroughBeforeURL []string `json:"read_through_before_url,omitempty"`
 }
 
 // RemoteBranchRef is one branch a remote advertised.
@@ -284,7 +291,10 @@ func (c *RemoteChanges) EndLeg(after RemoteSnapshot, isRunCommit func(sha string
 // sides list with the same fetch URL: an added or removed remote has no refs
 // on one side to compare against, and a changed fetch URL means the refs
 // come from another repository; each such remote gets its own not_compared
-// item, beside the remote entry that already reports it. Pull requests are
+// item, beside the remote entry that already reports it — unless the after
+// read that remote's refs through the before's fetch URL
+// (ReadThroughBeforeURL), which makes them the same repository's refs. Pull
+// requests are
 // compared on their own: gh reads the GitHub repository, not a remote, and
 // two lists that name different repositories are not compared either.
 //
@@ -410,6 +420,10 @@ func diffBranches(before, after RemoteSnapshot, attribute func(string) RemoteAtt
 	oldRemotes, curRemotes := remotesByName(before.Remotes.Configured), remotesByName(after.Remotes.Configured)
 	entries, skipped := []RemoteChangeEntry{}, []RemoteNotCompared{}
 
+	readThrough := map[string]bool{}
+	for _, name := range after.Branches.ReadThroughBeforeURL {
+		readThrough[name] = true
+	}
 	comparedRemote := map[string]bool{}
 	for _, name := range unionKeys(oldRemotes, curRemotes) {
 		o, inOld := oldRemotes[name]
@@ -418,6 +432,8 @@ func diffBranches(before, after RemoteSnapshot, attribute func(string) RemoteAtt
 		case !inOld:
 			skipped = append(skipped, RemoteNotCompared{Part: RemotePartBranches, Remote: name,
 				Reason: "remote added: it has no before refs to compare"})
+		case readThrough[name]:
+			comparedRemote[name] = true
 		case !inCur:
 			skipped = append(skipped, RemoteNotCompared{Part: RemotePartBranches, Remote: name,
 				Reason: "remote removed: it has no after refs to compare"})
@@ -556,6 +572,7 @@ func (c *RemoteChanges) clone() *RemoteChanges {
 func (s RemoteSnapshot) clone() RemoteSnapshot {
 	s.Remotes.Configured = cloneSlice(s.Remotes.Configured)
 	s.Branches.Refs = cloneSlice(s.Branches.Refs)
+	s.Branches.ReadThroughBeforeURL = cloneSlice(s.Branches.ReadThroughBeforeURL)
 	s.PullRequests.Open = cloneSlice(s.PullRequests.Open)
 	return s
 }
