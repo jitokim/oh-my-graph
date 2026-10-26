@@ -300,13 +300,9 @@ remote, so the cost is a re-run, bounded and visible.
 **False negative** (a change outside §2.4's coverage, an `unavailable` part,
 a `branch_moved` or `pr_updated` even when it points at the run's commit, a
 `remote_removed` or `remote_url_changed`, or a new branch or PR whose commit
-fails §5.1's check), and, on a guarded run, a push its *after* cannot read —
-one behind a *before* fetch URL that cannot be read at the *after* (`branches`
-not compared, said in the end line), one that names a URL directly with no
-remote (`git push https://other/x.git …`), or one made after re-pointing a
-remote's `pushurl` to another server, whose servers the guard never reads:
-the run passes, as it does today, so A is never worse. The largest of these
-is #410's own case, a push onto an existing branch (§2.4).
+fails §5.1's check): the run passes, as it does today, so A is never worse.
+The largest of these is #410's own case, a push onto an existing branch
+(§2.4).
 
 **Resume.** Each leg takes a fresh *before* snapshot when it starts
 (*chosen*). That includes a resumed leg after a paused gate (`resumeGateLeg`,
