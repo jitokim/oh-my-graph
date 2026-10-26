@@ -354,8 +354,8 @@ type attributingObserver struct {
 	runCommit *string
 }
 
-func (o attributingObserver) CommitAttributable(_ context.Context, sha, _ string) bool {
-	return sha == *o.runCommit
+func (o attributingObserver) CommitAttributable(_ context.Context, sha, _ string) (bool, error) {
+	return sha == *o.runCommit, nil
 }
 
 // The QA cases against the production GitManager and a local bare origin:

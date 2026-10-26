@@ -133,8 +133,9 @@ type RemoteObserver interface {
 	ResolveFetchURL(ctx context.Context, url string) (string, error)
 	// CommitAttributable is ADR 0046 §5.1's local check: whether sha is a
 	// commit in the invocation repository reachable from one of this run's
-	// own branches and not from baseSHA, the run's base commit.
-	CommitAttributable(ctx context.Context, sha, baseSHA string) bool
+	// own branches and not from baseSHA, the run's base commit. A false with
+	// an error is one the check could not prove: a git read failed.
+	CommitAttributable(ctx context.Context, sha, baseSHA string) (bool, error)
 	// GHDefaultRemotes maps each remote `gh repo set-default` marked to its
 	// remote.<name>.gh-resolved value in the invocation repository's config:
 	// "base" for the remote's own repository, or the OWNER/REPO gh chose

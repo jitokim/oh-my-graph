@@ -264,6 +264,28 @@ func TestRunCommitCheck_AsksTheObserverAgainstTheBase(t *testing.T) {
 	}
 }
 
+// GuardedRunCommitCheck answers as RunCommitCheck does, and says whether any
+// check it answered could not be read.
+func TestGuardedRunCommitCheck_SaysWhenACheckCouldNotBeRead(t *testing.T) {
+	fake := NewFakeRemoteObserver()
+	run, base, other := strings.Repeat("c", 40), strings.Repeat("d", 40), strings.Repeat("e", 40)
+	fake.SetRunCommit(run)
+	check, failed := GuardedRunCommitCheck(context.Background(), fake, base)
+	if !check(run) || check(other) || failed() {
+		t.Fatalf("proven answers: run %v, other %v, failed %v", check(run), check(other), failed())
+	}
+	fake.SetAttributionErr(errors.New("git rev-parse: exit status 128"))
+	if !check(run) || failed() {
+		t.Error("a passing check read as failed")
+	}
+	if check(other) || !failed() {
+		t.Error("a check that could not be read did not say so")
+	}
+	if RunCommitCheck(context.Background(), fake, base)(other) {
+		t.Error("RunCommitCheck passed a check that could not be read")
+	}
+}
+
 // The open-PR part is read beside the git parts, recorded sorted by number,
 // and diffed with the same §5.1 check the branch entries use.
 func TestTakeRemoteSnapshot_PullRequestsFromTheFake(t *testing.T) {

@@ -73,51 +73,84 @@ func appendFile(t *testing.T, path, text string) {
 	}
 }
 
-// pushRunCommit commits on a new local branch and pushes it to origin as
-// feat/run, returning the commit: the node's own push.
-func pushRunCommit(t *testing.T, repo string) string {
+// lane is the run's own worktree over f, on its branch omg/test-run/lane,
+// acquired once.
+func (f remoteFixture) lane(t *testing.T) string {
 	t.Helper()
-	gitIn(t, repo, "checkout", "-q", "-b", "work")
-	sha := commitIn(t, repo, "node work")
-	gitIn(t, repo, "push", "-q", "origin", "HEAD:refs/heads/feat/run")
+	lane, err := f.m.Acquire(context.Background(), "lane")
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	return lane
+}
+
+// pushRunCommit commits on the run's own branch (f.lane) and pushes it to
+// origin's repository as feat/run, returning the commit: the node's own
+// push, which the real §5.1 check attributes.
+func pushRunCommit(t *testing.T, f remoteFixture) string {
+	t.Helper()
+	lane := f.lane(t)
+	sha := commitIn(t, lane, "node work")
+	gitIn(t, lane, "push", "-q", f.origin, "HEAD:refs/heads/feat/run")
 	return sha
 }
 
-// guardedConfigLeg is a guarded leg over f whose node runs during, then the
-// leg's diff, with the run's commit attributed by sha rather than by the
-// local check, which a broken config fails too.
-func guardedConfigLeg(t *testing.T, f remoteFixture, during func() string) (runstate.RemoteDiff, runstate.RemoteSnapshot, string) {
+// guardedLeg is what guardedConfigLeg returns: the leg's diff and after, the
+// run's commit, and whether the leg's attribution is unproven — the after
+// read outside the repository, or a §5.1 check could not be read — the
+// state a guarded run fails closed on.
+type guardedLeg struct {
+	diff      runstate.RemoteDiff
+	after     runstate.RemoteSnapshot
+	runCommit string
+	unproven  bool
+	checkErr  bool
+}
+
+// guardedConfigLeg is a guarded leg over f whose node runs during, its diff
+// attributed by the real §5.1 check against f's base, as the engine's is.
+func guardedConfigLeg(t *testing.T, f remoteFixture, during func() string) guardedLeg {
 	t.Helper()
 	ctx := context.Background()
 	before, pin := TakeGuardedRemoteSnapshot(ctx, f.m, ghRepoPRs(), nil)
 	runCommit := during()
 	after, _ := TakeGuardedRemoteSnapshot(ctx, f.m, ghRepoPRs(), pin)
-	diff := DiffGuardedRemoteSnapshots(before, after, func(sha string) bool { return sha == runCommit })
-	return diff, after, runCommit
+	check, failed := GuardedRunCommitCheck(ctx, f.m, f.base)
+	diff := DiffGuardedRemoteSnapshots(before, after, check)
+	return guardedLeg{diff: diff, after: after, runCommit: runCommit,
+		unproven: pin.AfterReadOutsideRepo() || failed(), checkErr: failed()}
 }
 
 // hasRunCommitBranch reports whether diff holds feat/run's run_commit
 // branch_created.
 func hasRunCommitBranch(diff runstate.RemoteDiff, runCommit string) bool {
+	return hasBranchCreated(diff, runCommit, runstate.AttributionRunCommit)
+}
+
+// hasBranchCreated reports whether diff holds feat/run's branch_created at
+// runCommit, attributed attr.
+func hasBranchCreated(diff runstate.RemoteDiff, runCommit string, attr runstate.RemoteAttribution) bool {
 	want := runstate.RemoteChangeEntry{Kind: runstate.BranchCreated, Remote: "origin", Branch: "feat/run",
-		NewSHA: runCommit, Attribution: runstate.AttributionRunCommit}
+		NewSHA: runCommit, Attribution: attr}
 	return slices.Contains(diff.Entries, want)
 }
 
 // configBreakages are the three ways a node can make the repository's config
 // unreadable: a garbage line, a remote whose url has no value, and no read
-// permission.
+// permission. checkReads is whether the local §5.1 check still reads the
+// repository after it: git rejects a bare url only when it reads remotes.
 var configBreakages = []struct {
-	name   string
-	damage func(t *testing.T, repo string)
+	name       string
+	checkReads bool
+	damage     func(t *testing.T, repo string)
 }{
-	{"garbage line", func(t *testing.T, repo string) {
+	{"garbage line", false, func(t *testing.T, repo string) {
 		appendFile(t, filepath.Join(repo, ".git", "config"), "this is not config\n")
 	}},
-	{"remote with a bare url", func(t *testing.T, repo string) {
+	{"remote with a bare url", true, func(t *testing.T, repo string) {
 		appendFile(t, filepath.Join(repo, ".git", "config"), "[remote \"x\"]\n\turl\n")
 	}},
-	{"chmod 000", func(t *testing.T, repo string) {
+	{"chmod 000", false, func(t *testing.T, repo string) {
 		if os.Getuid() == 0 {
 			t.Skip("root reads a mode 000 file")
 		}
@@ -131,23 +164,35 @@ var configBreakages = []struct {
 
 // A node that pushes its own commit to a new branch and then breaks the
 // repository's config does not hide the push: the before URL is read from
-// outside the repository and the push is compared.
+// outside the repository and the push is compared. The real §5.1 check reads
+// the broken config too: where git still reads it the push is a run_commit;
+// where it cannot, the check fails rather than answering, the entry is
+// not_attributable and the leg's attribution unproven — what a guarded run
+// fails closed on.
 func TestGuardedRemoteLeg_ABrokenRepoConfigCannotHideAPush(t *testing.T) {
 	requireRealGit231(t)
 	for _, tc := range configBreakages {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newRemoteFixture(t)
 			seen := recordCommands(f.m)
-			diff, after, runCommit := guardedConfigLeg(t, f, func() string {
-				sha := pushRunCommit(t, f.repo)
+			leg := guardedConfigLeg(t, f, func() string {
+				sha := pushRunCommit(t, f)
 				tc.damage(t, f.repo)
 				return sha
 			})
-			if !hasRunCommitBranch(diff, runCommit) {
-				t.Fatalf("diff = %+v, want feat/run's run_commit branch_created", diff)
+			want := runstate.AttributionNotAttributable
+			if tc.checkReads {
+				want = runstate.AttributionRunCommit
 			}
-			if !reflect.DeepEqual(after.Branches.ReadThroughBeforeURL, []string{"origin"}) {
-				t.Errorf("branches = %+v, want observed through origin's before URL", after.Branches)
+			if !hasBranchCreated(leg.diff, leg.runCommit, want) {
+				t.Fatalf("diff = %+v, want feat/run's %s branch_created", leg.diff, want)
+			}
+			if !leg.unproven || leg.checkErr == tc.checkReads {
+				t.Errorf("unproven = %v, check failed = %v; want unproven, the check failed = %v",
+					leg.unproven, leg.checkErr, !tc.checkReads)
+			}
+			if !reflect.DeepEqual(leg.after.Branches.ReadThroughBeforeURL, []string{"origin"}) {
+				t.Errorf("branches = %+v, want observed through origin's before URL", leg.after.Branches)
 			}
 			reads := beforeURLReads(seen())
 			if len(reads) != 2 {
@@ -183,19 +228,22 @@ func TestGuardedRemoteLeg_AnInsteadOfCannotRedirectTheRead(t *testing.T) {
 				gitIn(t, f.repo, "config", "include.path", target)
 			}
 			seen := recordCommands(f.m)
-			diff, after, runCommit := guardedConfigLeg(t, f, func() string {
-				sha := pushRunCommit(t, f.repo)
+			leg := guardedConfigLeg(t, f, func() string {
+				sha := pushRunCommit(t, f)
 				appendFile(t, target, "[url \""+decoy+"\"]\n\tinsteadOf = "+f.origin+"\n[omg]\n\ttoken = "+configSecret+"\n")
 				return sha
 			})
 			if got := gitIn(t, f.repo, "remote", "get-url", "origin"); got != decoy {
 				t.Fatalf("the insteadOf did not take: origin reads as %s", got)
 			}
-			if !hasRunCommitBranch(diff, runCommit) {
-				t.Fatalf("diff = %+v, want feat/run's run_commit branch_created", diff)
+			if !hasRunCommitBranch(leg.diff, leg.runCommit) {
+				t.Fatalf("diff = %+v, want feat/run's run_commit branch_created", leg.diff)
 			}
-			if after.Branches.Status != runstate.RemotePartObserved {
-				t.Errorf("branches = %+v, want observed", after.Branches)
+			if !leg.unproven || leg.checkErr {
+				t.Errorf("unproven = %v, check failed = %v; want unproven by the moved config alone", leg.unproven, leg.checkErr)
+			}
+			if leg.after.Branches.Status != runstate.RemotePartObserved {
+				t.Errorf("branches = %+v, want observed", leg.after.Branches)
 			}
 			for _, c := range beforeURLReads(seen()) {
 				if c.dir == f.repo {
@@ -221,9 +269,12 @@ func TestGuardedRemoteLeg_AnUnchangedConfigIsReadInsideTheRepository(t *testing.
 	requireRealGit231(t)
 	f := newRemoteFixture(t)
 	seen := recordCommands(f.m)
-	diff, _, runCommit := guardedConfigLeg(t, f, func() string { return pushRunCommit(t, f.repo) })
-	if !hasRunCommitBranch(diff, runCommit) {
-		t.Fatalf("diff = %+v, want feat/run's run_commit branch_created", diff)
+	leg := guardedConfigLeg(t, f, func() string { return pushRunCommit(t, f) })
+	if !hasRunCommitBranch(leg.diff, leg.runCommit) {
+		t.Fatalf("diff = %+v, want feat/run's run_commit branch_created", leg.diff)
+	}
+	if leg.unproven {
+		t.Error("an unchanged config left the leg's attribution unproven")
 	}
 	reads := beforeURLReads(seen())
 	if len(reads) != 2 {
@@ -246,18 +297,19 @@ func TestGuardedRemoteLeg_AnUnchangedConfigIsReadInsideTheRepository(t *testing.
 func TestGuardedRemoteLeg_AChangedConfigIsReadFromAnEmptyDirectoryOutsideTheRepository(t *testing.T) {
 	requireRealGit231(t)
 	f := newRemoteFixture(t)
+	f.lane(t)
 	gitDir := filepath.Join(f.repo, ".git")
 	f.m.environ = envWithoutSSHChoice("GIT_DIR="+gitDir, "GIT_WORK_TREE="+f.repo, "GIT_COMMON_DIR="+gitDir,
 		"GIT_INDEX_FILE="+filepath.Join(gitDir, "index"), "GIT_OBJECT_DIRECTORY="+filepath.Join(gitDir, "objects"),
 		"GIT_ALTERNATE_OBJECT_DIRECTORIES="+filepath.Join(gitDir, "objects"))
 	seen := recordCommands(f.m)
-	diff, _, runCommit := guardedConfigLeg(t, f, func() string {
-		sha := pushRunCommit(t, f.repo)
+	leg := guardedConfigLeg(t, f, func() string {
+		sha := pushRunCommit(t, f)
 		gitIn(t, f.repo, "config", "omg.changed", "yes")
 		return sha
 	})
-	if !hasRunCommitBranch(diff, runCommit) {
-		t.Fatalf("diff = %+v, want feat/run's run_commit branch_created", diff)
+	if !hasRunCommitBranch(leg.diff, leg.runCommit) {
+		t.Fatalf("diff = %+v, want feat/run's run_commit branch_created", leg.diff)
 	}
 	var outside []seenCmd
 	for _, c := range seen() {
@@ -301,16 +353,16 @@ func TestGuardedRemoteLeg_ARepositoryRemoteOfTheEnginesNameDoesNotCollideOutside
 	requireRealGit231(t)
 	f := newRemoteFixture(t)
 	gitIn(t, f.repo, "remote", "add", beforeSnapshotRemote, f.origin)
-	diff, after, runCommit := guardedConfigLeg(t, f, func() string {
-		sha := pushRunCommit(t, f.repo)
+	leg := guardedConfigLeg(t, f, func() string {
+		sha := pushRunCommit(t, f)
 		gitIn(t, f.repo, "config", "omg.changed", "yes")
 		return sha
 	})
-	if after.Branches.Status != runstate.RemotePartObserved {
-		t.Fatalf("branches = %+v, want observed", after.Branches)
+	if leg.after.Branches.Status != runstate.RemotePartObserved {
+		t.Fatalf("branches = %+v, want observed", leg.after.Branches)
 	}
-	if !hasRunCommitBranch(diff, runCommit) {
-		t.Errorf("diff = %+v, want feat/run's run_commit branch_created", diff)
+	if !hasRunCommitBranch(leg.diff, leg.runCommit) {
+		t.Errorf("diff = %+v, want feat/run's run_commit branch_created", leg.diff)
 	}
 }
 
@@ -338,12 +390,12 @@ func TestGuardedRemoteLeg_ARelativePathOriginIsReadInsideAndOutsideTheRepository
 			if got := pin.urls["origin"]; resolvePath(got) != resolvePath(f.origin) {
 				t.Errorf("before URL = %q, want %s", got, f.origin)
 			}
-			runCommit := pushRunCommit(t, f.repo)
+			runCommit := pushRunCommit(t, f)
 			if changed {
 				gitIn(t, f.repo, "config", "omg.changed", "yes")
 			}
 			after, _ := TakeGuardedRemoteSnapshot(context.Background(), f.m, ghRepoPRs(), pin)
-			diff := DiffGuardedRemoteSnapshots(before, after, func(sha string) bool { return sha == runCommit })
+			diff := DiffGuardedRemoteSnapshots(before, after, RunCommitCheck(context.Background(), f.m, f.base))
 			if !hasRunCommitBranch(diff, runCommit) {
 				t.Errorf("diff = %+v, want feat/run's run_commit branch_created", diff)
 			}
@@ -398,6 +450,9 @@ func TestTakeGuardedRemoteSnapshot_ReadsOutsideTheRepositoryOnlyWhenItsConfigMov
 			TakeGuardedRemoteSnapshot(ctx, obs, ghRepoPRs(), pin)
 			if got := len(obs.OutsideURLCalls()) == 1; got != tc.outside {
 				t.Errorf("outside reads = %v, want outside = %v", obs.OutsideURLCalls(), tc.outside)
+			}
+			if got := pin.AfterReadOutsideRepo(); got != tc.outside {
+				t.Errorf("AfterReadOutsideRepo = %v, want %v", got, tc.outside)
 			}
 			if calls := obs.URLCalls(); len(calls) != 1 {
 				t.Errorf("URL reads = %v, want one", calls)

@@ -58,6 +58,19 @@ type GuardedBefore struct {
 	unresolved map[string]string
 	config     string
 	configRead bool
+	// readOutside is set by the after: it read the before URLs from outside
+	// the repository (readOutsideRepo).
+	readOutside bool
+}
+
+// AfterReadOutsideRepo reports whether the after taken against b read the
+// before URLs from outside the repository, because the repository's config
+// changed since the before, could not be read, or `git remote -v` failed —
+// the config the local §5.1 check reads, in the repository, is then not the
+// before's, or unreadable, so a guarded leg treats a false from that check
+// as unproven. Nil-safe; false until that after is taken.
+func (b *GuardedBefore) AfterReadOutsideRepo() bool {
+	return b != nil && b.readOutside
 }
 
 // readThrough is every remote the before listed, sorted: each is read
@@ -186,6 +199,9 @@ func takeGitParts(ctx context.Context, obs RemoteObserver, through *GuardedBefor
 
 	remotes, err := obs.Remotes(ctx)
 	outside := through.readOutsideRepo(ctx, obs, err)
+	if through != nil {
+		through.readOutside = outside
+	}
 	if err != nil {
 		reason := remote.SummarizeReason(err.Error())
 		snap.Remotes = runstate.RemotesSnapshot{Status: runstate.RemotePartUnavailable, Reason: reason}
@@ -290,9 +306,27 @@ func takePullRequests(ctx context.Context, prs remote.PRLister, expected Expecte
 }
 
 // RunCommitCheck adapts obs's §5.1 check to the shape
-// runstate.RemoteChanges.EndLeg takes, against the run's recorded base.
+// runstate.RemoteChanges.EndLeg takes, against the run's recorded base. A
+// check that could not be read is a false, as it always was.
 func RunCommitCheck(ctx context.Context, obs RemoteObserver, baseSHA string) func(sha string) bool {
-	return func(sha string) bool { return obs.CommitAttributable(ctx, sha, baseSHA) }
+	check, _ := GuardedRunCommitCheck(ctx, obs, baseSHA)
+	return check
+}
+
+// GuardedRunCommitCheck is RunCommitCheck for a guarded leg, with failed
+// beside it: whether any check it answered so far could not be read (a git
+// read failed), so that its false was not proven. The check is asked
+// sequentially, by EndGuardedLeg.
+func GuardedRunCommitCheck(ctx context.Context, obs RemoteObserver, baseSHA string) (check func(sha string) bool, failed func() bool) {
+	readFailed := false
+	check = func(sha string) bool {
+		ok, err := obs.CommitAttributable(ctx, sha, baseSHA)
+		if err != nil {
+			readFailed = true
+		}
+		return ok
+	}
+	return check, func() bool { return readFailed }
 }
 
 // EndGuardedLeg is runstate.RemoteChanges.EndLeg for a guarded leg: it

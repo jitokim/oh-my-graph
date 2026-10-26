@@ -80,8 +80,8 @@ func (f *FakeManager) Calls() []string {
 // FakeRemoteObserver is the scripted RemoteObserver — FakeManager's
 // counterpart for the remote snapshot. It answers from what a test set on it
 // (no git, no network): the remotes list or an error for it, each remote's
-// heads or an error for them, the set of shas CommitAttributable passes, and
-// the remotes marked gh's default.
+// heads or an error for them, the set of shas CommitAttributable passes (or
+// cannot check), and the remotes marked gh's default.
 // Mutating it between two snapshots is how a test scripts a change.
 //
 // A read by URL answers what SetURLHeads scripted for that URL, else what
@@ -104,6 +104,7 @@ type FakeRemoteObserver struct {
 	resolved    map[string]string
 	resolveErr  map[string]error
 	runCommits  map[string]bool
+	attribErr   error
 	attribCalls []string
 	ghDefaults  map[string]string
 	ghDefErr    error
@@ -158,6 +159,15 @@ func (f *FakeRemoteObserver) SetRunCommit(sha string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.runCommits[sha] = true
+}
+
+// SetAttributionErr scripts CommitAttributable to fail with err for every sha
+// SetRunCommit did not name, as a check whose git reads failed does; nil
+// restores the plain false.
+func (f *FakeRemoteObserver) SetAttributionErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.attribErr = err
 }
 
 // Remotes returns the scripted remotes, sorted by name, or the scripted error.
@@ -298,13 +308,17 @@ func (f *FakeRemoteObserver) ResolveFetchURL(_ context.Context, url string) (str
 }
 
 // CommitAttributable passes exactly the shas SetRunCommit named, except the
-// base itself, which §5.1 never counts. It records each sha it was asked
+// base itself, which §5.1 never counts; any other sha fails with the
+// SetAttributionErr error, if one is set. It records each sha it was asked
 // about.
-func (f *FakeRemoteObserver) CommitAttributable(_ context.Context, sha, baseSHA string) bool {
+func (f *FakeRemoteObserver) CommitAttributable(_ context.Context, sha, baseSHA string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.attribCalls = append(f.attribCalls, sha)
-	return baseSHA != "" && sha != baseSHA && f.runCommits[sha]
+	if baseSHA != "" && sha != baseSHA && f.runCommits[sha] {
+		return true, nil
+	}
+	return false, f.attribErr
 }
 
 // AttributionCalls returns every sha CommitAttributable was asked about, in

@@ -941,8 +941,9 @@ func parseLsRemoteHeads(out string) []RemoteHead {
 // CommitAttributable runs ADR 0046 §5.1's check for sha against baseSHA, the
 // run's base commit (run_base_sha), in this order:
 //
-//  1. `git cat-file -e <sha>^{commit}`: sha must be a commit in the invocation
-//     repository's object store, which the run's worktrees share;
+//  1. `git rev-parse --quiet --verify <sha>^{commit}`: sha must be a commit in
+//     the invocation repository's object store, which the run's worktrees
+//     share;
 //  2. `git merge-base --is-ancestor <sha> <base>` must fail with exit 1, so a
 //     commit already in the history the run started from (base itself
 //     included) never counts;
@@ -953,39 +954,59 @@ func parseLsRemoteHeads(out string) []RemoteHead {
 // Every command is local; none reaches the network. Anything that cannot be
 // proven reads as false: a sha or base that is not a full object name (a run
 // with no recorded run_base_sha cannot pass), a manager built without a run
-// id, and any git failure other than merge-base's "not an ancestor". Passing
-// means only that the commit is reachable from the run's branches and not
-// from the base, never that the run moved a ref.
-func (m *GitManager) CommitAttributable(ctx context.Context, sha, baseSHA string) bool {
+// id, and any git failure. Passing means only that the commit is reachable
+// from the run's branches and not from the base, never that the run moved a
+// ref.
+//
+// The error tells a false that was proven — not a commit here (rev-parse's
+// exit 1), already in the base's history, on none of the run's branches —
+// from one that was not: any other git failure, such as a repository config
+// git cannot read, which every one of these commands reads. It names only
+// git's argv and exit, for a guarded leg to fail closed on (§5.1).
+func (m *GitManager) CommitAttributable(ctx context.Context, sha, baseSHA string) (bool, error) {
 	if !isFullSHA(sha) || !isFullSHA(baseSHA) || m.branchPrefix == "omg/" {
-		return false
+		return false, nil
 	}
-	if _, err := m.gitEnv(ctx, noPromptEnv, "cat-file", "-e", sha+"^{commit}"); err != nil {
-		return false
+	if commit, err := m.exitTest(ctx, "rev-parse", "--quiet", "--verify", sha+"^{commit}"); err != nil || !commit {
+		return false, err
 	}
 	if ancestor, err := m.isAncestor(ctx, sha, baseSHA); err != nil || ancestor {
-		return false
+		return false, err
 	}
-	out, err := m.gitEnv(ctx, noPromptEnv, "for-each-ref", "--format=%(refname)", "refs/heads/"+m.branchPrefix+"/")
+	args := []string{"for-each-ref", "--format=%(refname)", "refs/heads/" + m.branchPrefix + "/"}
+	out, err := m.gitRun(ctx, noPromptEnv, args...)
 	if err != nil {
-		return false
+		return false, fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 	}
+	var readErr error
 	for _, ref := range strings.Split(out, "\n") {
 		if !strings.HasPrefix(ref, "refs/heads/"+m.branchPrefix+"/") {
 			continue
 		}
-		if ancestor, err := m.isAncestor(ctx, sha, ref); err == nil && ancestor {
-			return true
+		ancestor, err := m.isAncestor(ctx, sha, ref)
+		if err != nil {
+			readErr = err
+			continue
+		}
+		if ancestor {
+			return true, nil
 		}
 	}
-	return false
+	return false, readErr
 }
 
 // isAncestor runs `git merge-base --is-ancestor a b`. Exit 0 is true and
 // exit 1 is false; any other outcome (a bad object, a timeout) is an error,
 // so a broken check is never read as "not an ancestor".
 func (m *GitManager) isAncestor(ctx context.Context, a, b string) (bool, error) {
-	_, err := m.gitEnv(ctx, noPromptEnv, "merge-base", "--is-ancestor", a, b)
+	return m.exitTest(ctx, "merge-base", "--is-ancestor", a, b)
+}
+
+// exitTest runs a git command whose exit is its answer, with prompting off:
+// exit 0 is true and exit 1 is false; any other outcome is an error naming
+// the argv and git's exit, never its output.
+func (m *GitManager) exitTest(ctx context.Context, args ...string) (bool, error) {
+	_, err := m.gitRun(ctx, noPromptEnv, args...)
 	if err == nil {
 		return true, nil
 	}
@@ -993,7 +1014,7 @@ func (m *GitManager) isAncestor(ctx context.Context, a, b string) (bool, error) 
 	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
 		return false, nil
 	}
-	return false, err
+	return false, fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 }
 
 // ghResolvedKey is the config variable `gh repo set-default` writes on the
