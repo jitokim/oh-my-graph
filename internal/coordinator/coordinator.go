@@ -604,8 +604,10 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 }
 
 // plannerPromptFor renders one planning attempt's base prompt: the planner
-// instruction for the goal, plus the goal loop's continuation section when a
-// previous cycle left work remaining.
+// instruction for the goal, then suffix (forbidRemoteSuffix's sentence, or
+// empty), then the goal loop's continuation section when a previous cycle left
+// work remaining. It is the one place that continuation is fenced, with or
+// without a suffix, so a suffix only ever adds its own text ahead of it.
 //
 // verifyCommand is the --verify-cmd text exactly as the engine will run it,
 // empty when none was supplied. It travels through to plannerPrompt because it
@@ -622,8 +624,9 @@ func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyC
 	if err != nil {
 		return "", err
 	}
-	if remaining == "" || suffix != "" {
-		return plannerPromptForbidding(prompt+suffix, remaining)
+	prompt += suffix
+	if remaining == "" {
+		return prompt, nil
 	}
 	// `remaining` is the assessor's own words — model output quoted into
 	// oh-my-graph's own prompt — so it is fenced with a per-call nonce
