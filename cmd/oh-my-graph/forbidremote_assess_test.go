@@ -96,43 +96,57 @@ func TestRunAuto_TheAssessorIsToldTheGuardTheEndLineNames(t *testing.T) {
 	}
 }
 
-// A guarded run whose repository config was unreadable at the after names
-// branches and pull requests not guarded with the attribution-unavailable
+// A guarded run whose repository config was unreadable at the after, or
+// whose commit check's own read failed with the config still readable, names
+// branches and pull requests not guarded with that attribution-unavailable
 // reason, on its end line and in the block its assessor would read.
 func TestRunGraph_AnUnreadableConfigIsNamedAlikeOnTheEndLineAndToTheAssessor(t *testing.T) {
-	isolateRunHome(t)
-	obs, prs := guardedRemote(t, nil)
-	change := func(o *worktree.FakeRemoteObserver, p *remote.FakePRLister) {
-		pushBranch("feat/x", remoteHumaSHA)(o, p)
-		o.SetRepoConfig("", errors.New("exit status 128"))
-	}
-	out, err := runWithRemoteChange(t, obs, prs, change, "--forbid-remote-changes")
-	if err != nil {
-		t.Fatalf("err = %v (exit %d), want nil", err, exitCodeForError(err))
-	}
-	endLine := lineContaining(t, out, "--forbid-remote-changes: not guarded")
-	want := "--forbid-remote-changes: not guarded: branches (" + worktree.AttributionConfigUnreadable + "); pull_requests (" +
-		worktree.AttributionConfigUnreadable + "); guarded: remotes"
-	if endLine != want {
-		t.Errorf("end line = %q, want %q", endLine, want)
-	}
+	for _, tc := range []struct {
+		name   string
+		during func(o *worktree.FakeRemoteObserver)
+		reason string
+	}{
+		{"config unreadable", func(o *worktree.FakeRemoteObserver) { o.SetRepoConfig("", errors.New("exit status 128")) },
+			worktree.AttributionConfigUnreadable},
+		{"check read failed", func(o *worktree.FakeRemoteObserver) { o.SetAttributionErr(errors.New("signal: killed")) },
+			worktree.AttributionCheckReadFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateRunHome(t)
+			obs, prs := guardedRemote(t, nil)
+			change := func(o *worktree.FakeRemoteObserver, p *remote.FakePRLister) {
+				pushBranch("feat/x", remoteHumaSHA)(o, p)
+				tc.during(o)
+			}
+			out, err := runWithRemoteChange(t, obs, prs, change, "--forbid-remote-changes")
+			if err != nil {
+				t.Fatalf("err = %v (exit %d), want nil", err, exitCodeForError(err))
+			}
+			endLine := lineContaining(t, out, "--forbid-remote-changes: not guarded")
+			want := "--forbid-remote-changes: not guarded: branches (" + tc.reason + "); pull_requests (" +
+				tc.reason + "); guarded: remotes"
+			if endLine != want {
+				t.Errorf("end line = %q, want %q", endLine, want)
+			}
 
-	evidence, err := cycleEvidence(soleRunID(t), coordinator.Plan{Graph: &graph.Graph{Nodes: []graph.Node{{ID: "work"}}}}, true)
-	if err != nil {
-		t.Fatalf("cycleEvidence: %v", err)
+			evidence, err := cycleEvidence(soleRunID(t), coordinator.Plan{Graph: &graph.Graph{Nodes: []graph.Node{{ID: "work"}}}}, true)
+			if err != nil {
+				t.Fatalf("cycleEvidence: %v", err)
+			}
+			if evidence.NoRunBranches {
+				t.Error("a `run` has run branches: NoRunBranches = true")
+			}
+			fake := runner.NewFakeRunner(nil)
+			fake.KeyFn = func(runner.NodeInvocation) string { return "assess" }
+			fake.SetOutcome("assess", runner.NodeOutcome{Result: cycleAssessMet})
+			if _, err := coordinator.New(fake).Assess(context.Background(), "ship it", evidence); err != nil {
+				t.Fatalf("Assess: %v", err)
+			}
+			prompt := fake.Invocations()[0].Prompt
+			if want := "\n  not guarded: branches (" + tc.reason + "); pull_requests (" + tc.reason + ")\n"; !strings.Contains(prompt, want) {
+				t.Errorf("assessor prompt lacks %q:\n%s", want, prompt)
+			}
+			assertSameGuard(t, endLine, prompt)
+		})
 	}
-	if evidence.NoRunBranches {
-		t.Error("a `run` has run branches: NoRunBranches = true")
-	}
-	fake := runner.NewFakeRunner(nil)
-	fake.KeyFn = func(runner.NodeInvocation) string { return "assess" }
-	fake.SetOutcome("assess", runner.NodeOutcome{Result: cycleAssessMet})
-	if _, err := coordinator.New(fake).Assess(context.Background(), "ship it", evidence); err != nil {
-		t.Fatalf("Assess: %v", err)
-	}
-	prompt := fake.Invocations()[0].Prompt
-	if want := "\n  not guarded: branches (" + worktree.AttributionConfigUnreadable + "); pull_requests (" + worktree.AttributionConfigUnreadable + ")\n"; !strings.Contains(prompt, want) {
-		t.Errorf("assessor prompt lacks %q:\n%s", want, prompt)
-	}
-	assertSameGuard(t, endLine, prompt)
 }

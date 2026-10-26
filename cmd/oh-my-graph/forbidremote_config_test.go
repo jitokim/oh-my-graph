@@ -31,6 +31,7 @@ import (
 // operator reads them, so a change to worktree's constants shows here.
 const (
 	configUnreadableReason = "attribution unavailable: repository config unreadable"
+	checkReadFailedReason  = "attribution unavailable: attribution check read failed"
 	shallowChangedReason   = "attribution unavailable: shallow boundary changed"
 )
 
@@ -590,10 +591,10 @@ func TestRunGraph_ARelativePathOriginIsReadByAGuardedAfter(t *testing.T) {
 // the repository's config: a new branch at a commit the check did not
 // attribute passes the run (exit 0), changed, unreadable or with `git remote
 // -v` failing. Where the check could not run — the config unreadable at the
-// after, a check's own git read failed, or the shallow boundary moved — the
-// end line and the record name the branches and pull requests not guarded
-// with why; everywhere else, and on an unguarded run, no such reason is
-// given.
+// after, a check's own git read failed with the config still readable, or the
+// shallow boundary moved — the end line and the record name the branches and
+// pull requests not guarded with why; everywhere else, and on an unguarded
+// run, no such reason is given.
 func TestRunGraph_AGuardedLegNeverFailsOnAnUnattributedPushWhateverTheConfig(t *testing.T) {
 	const foreign = "branch_created origin/feat/x at 444444444444"
 	// byNameUnseen: unguarded, the after reads by name, so with the remotes
@@ -607,12 +608,16 @@ func TestRunGraph_AGuardedLegNeverFailsOnAnUnattributedPushWhateverTheConfig(t *
 		{"config unchanged", func(*worktree.FakeRemoteObserver) {}, "", false},
 		{"config changed", func(obs *worktree.FakeRemoteObserver) { obs.SetRepoConfig("changed", nil) }, "", false},
 		{"config unreadable", func(obs *worktree.FakeRemoteObserver) { obs.SetRepoConfig("", errors.New("exit status 128")) },
-			worktree.AttributionConfigUnreadable, false},
+			configUnreadableReason, false},
 		{"git remote -v fails", func(obs *worktree.FakeRemoteObserver) { obs.SetRemotes(nil, errors.New("exit status 128")) }, "", true},
-		{"the commit check fails", func(obs *worktree.FakeRemoteObserver) { obs.SetAttributionErr(errors.New("exit status 128")) },
-			worktree.AttributionConfigUnreadable, false},
+		{"the commit check fails", func(obs *worktree.FakeRemoteObserver) { obs.SetAttributionErr(errors.New("signal: killed")) },
+			checkReadFailedReason, false},
+		{"the commit check and the config read fail", func(obs *worktree.FakeRemoteObserver) {
+			obs.SetAttributionErr(errors.New("exit status 128"))
+			obs.SetRepoConfig("", errors.New("exit status 128"))
+		}, configUnreadableReason, false},
 		{"the shallow boundary moved", func(obs *worktree.FakeRemoteObserver) { obs.SetShallow("moved", nil) },
-			worktree.AttributionShallowChanged, false},
+			shallowChangedReason, false},
 	} {
 		for _, guarded := range []bool{true, false} {
 			name := tc.name + map[bool]string{true: "/guarded", false: "/unguarded"}[guarded]
@@ -633,7 +638,7 @@ func TestRunGraph_AGuardedLegNeverFailsOnAnUnattributedPushWhateverTheConfig(t *
 				}
 				changes := lastLegChanges(t, remoteRunSnapshot(t, soleRunID(t)))
 				for _, part := range []runstate.RemotePart{runstate.RemotePartBranches, runstate.RemotePartPullRequests} {
-					for _, reason := range []string{worktree.AttributionConfigUnreadable, worktree.AttributionShallowChanged} {
+					for _, reason := range []string{configUnreadableReason, checkReadFailedReason, shallowChangedReason} {
 						noted := slices.Contains(changes.NotCompared, runstate.RemoteNotCompared{Part: part, Reason: reason})
 						if want := guarded && reason == tc.reason; noted != want {
 							t.Errorf("%s not compared with %q = %v, want %v: %+v", part, reason, noted, want, changes.NotCompared)

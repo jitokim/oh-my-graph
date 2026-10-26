@@ -70,14 +70,17 @@ type GuardedBefore struct {
 // guarded when its §5.1 check could not run (AttributionUnavailable).
 const (
 	AttributionConfigUnreadable = "attribution unavailable: repository config unreadable"
+	AttributionCheckReadFailed  = "attribution unavailable: attribution check read failed"
 	AttributionShallowChanged   = "attribution unavailable: shallow boundary changed"
 )
 
 // AttributionUnavailable is why the leg's §5.1 check, run after the after
 // taken against b, could not attribute a commit, or "" when it could. The
 // check reads the repository and its config: when that config could not be
-// read at the after, or checkFailed — a check's own git read failed, not a
-// proven false — it is AttributionConfigUnreadable. When the repository's
+// read at the after — its RepoConfigFingerprint failed — it is
+// AttributionConfigUnreadable; when it could, but checkFailed — a check's own
+// git read failed, such as a timeout, not a proven false — it is
+// AttributionCheckReadFailed. When the repository's
 // shallow file is not what it was at the before — its digest differs, a
 // file absent then exists now, or either read failed — it is
 // AttributionShallowChanged: a shallow boundary a node wrote hides its
@@ -92,8 +95,11 @@ func (b *GuardedBefore) AttributionUnavailable(obs RemoteObserver, checkFailed b
 	if b == nil {
 		return ""
 	}
-	if checkFailed || b.configUnreadable {
+	if b.configUnreadable {
 		return AttributionConfigUnreadable
+	}
+	if checkFailed {
+		return AttributionCheckReadFailed
 	}
 	if !b.shallowRead {
 		return AttributionShallowChanged

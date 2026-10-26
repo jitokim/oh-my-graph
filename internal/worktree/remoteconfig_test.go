@@ -432,18 +432,24 @@ func TestTakeGuardedRemoteSnapshot_AnUnresolvedLocalPathMakesBranchesUnavailable
 
 // The fake's scripted digest drives where the after reads: unchanged inside,
 // changed or unreadable outside, and a failed `git remote -v` outside too.
-// Only an unreadable config makes the leg's attribution unavailable.
+// Only an unreadable config makes the leg's attribution unavailable with the
+// config unreadable; a commit check whose own read fails, the config still
+// readable, makes it unavailable with the check's read failed.
 func TestTakeGuardedRemoteSnapshot_ReadsOutsideTheRepositoryOnlyWhenItsConfigMoved(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		change      func(obs *FakeRemoteObserver)
 		outside     bool
 		unavailable string
+		// checkFailed is the reason when the commit check's own read fails.
+		checkFailed string
 	}{
-		{"unchanged", func(*FakeRemoteObserver) {}, false, ""},
-		{"changed", func(obs *FakeRemoteObserver) { obs.SetRepoConfig("other", nil) }, true, ""},
-		{"unreadable", func(obs *FakeRemoteObserver) { obs.SetRepoConfig("", errors.New("exit status 128")) }, true, AttributionConfigUnreadable},
-		{"remote -v fails", func(obs *FakeRemoteObserver) { obs.SetRemotes(nil, errors.New("exit status 128")) }, true, ""},
+		{"unchanged", func(*FakeRemoteObserver) {}, false, "", AttributionCheckReadFailed},
+		{"changed", func(obs *FakeRemoteObserver) { obs.SetRepoConfig("other", nil) }, true, "", AttributionCheckReadFailed},
+		{"unreadable", func(obs *FakeRemoteObserver) { obs.SetRepoConfig("", errors.New("exit status 128")) }, true,
+			AttributionConfigUnreadable, AttributionConfigUnreadable},
+		{"remote -v fails", func(obs *FakeRemoteObserver) { obs.SetRemotes(nil, errors.New("exit status 128")) }, true, "",
+			AttributionCheckReadFailed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -458,6 +464,14 @@ func TestTakeGuardedRemoteSnapshot_ReadsOutsideTheRepositoryOnlyWhenItsConfigMov
 			}
 			if got := pin.AttributionUnavailable(obs, false); got != tc.unavailable {
 				t.Errorf("AttributionUnavailable = %q, want %q", got, tc.unavailable)
+			}
+			obs.SetAttributionErr(errors.New("signal: killed"))
+			check, failed := GuardedRunCommitCheck(ctx, obs, strings.Repeat("d", 40))
+			if check(strings.Repeat("e", 40)) || !failed() {
+				t.Fatal("the scripted check read did not fail")
+			}
+			if got := pin.AttributionUnavailable(obs, failed()); got != tc.checkFailed {
+				t.Errorf("AttributionUnavailable after a failed check read = %q, want %q", got, tc.checkFailed)
 			}
 			if calls := obs.URLCalls(); len(calls) != 1 {
 				t.Errorf("URL reads = %v, want one", calls)

@@ -118,7 +118,14 @@ func RunBranchPart(part runstate.RemotePart) bool {
 // IsAttributionUnavailable reports whether nc is a part the leg compared but
 // could not attribute in (NoteAttributionUnavailable).
 func IsAttributionUnavailable(nc runstate.RemoteNotCompared) bool {
-	return nc.Remote == "" && (nc.Reason == AttributionConfigUnreadable || nc.Reason == AttributionShallowChanged)
+	if nc.Remote != "" {
+		return false
+	}
+	switch nc.Reason {
+	case AttributionConfigUnreadable, AttributionCheckReadFailed, AttributionShallowChanged:
+		return true
+	}
+	return false
 }
 
 // RemotePartReason is part's reason in s, and whether s observed it.

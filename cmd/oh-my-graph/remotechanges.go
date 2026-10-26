@@ -144,11 +144,12 @@ func (l *remoteLeg) end(runCtx context.Context) (interrupted bool) {
 	// and record a run commit not_attributable.
 	//
 	// On a guarded `run` leg whose check could not run — the repository's
-	// config unreadable, or its shallow boundary moved — the branches and
-	// pull-request parts are recorded not compared with why, so the guard
-	// never claims them; the entries keep what the check answered, and only
-	// an attributable one fails the leg (ADR 0046 §5.1). An auto leg names
-	// those parts not guarded already (autoNoRunBranches).
+	// config unreadable, a check's own git read failed, or its shallow
+	// boundary moved — the branches and pull-request parts are recorded not
+	// compared with why, so the guard never claims them; the entries keep
+	// what the check answered, and only an attributable one fails the leg
+	// (ADR 0046 §5.1). An auto leg names those parts not guarded already
+	// (autoNoRunBranches).
 	if l.guarded {
 		isRunCommit, checkFailed := worktree.GuardedRunCommitCheck(context.Background(), l.obs, l.baseSHA)
 		worktree.EndGuardedLeg(&l.changes, after, isRunCommit)
