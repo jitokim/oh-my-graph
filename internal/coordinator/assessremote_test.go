@@ -84,7 +84,7 @@ func TestAssessMaterial_RemoteChangesBlockShowsNotComparedWithReasons(t *testing
 		"  compared: remotes\n",
 		"  not compared: branches, pull_requests — the engine could not see these, so no entry from them means unknown, not \"no changes\"",
 		"  guarded: remotes\n",
-		"  not guarded: branches, pull_requests\n",
+		"  not guarded: branches (not compared: its reason is quoted below); pull_requests (not compared: its reason is quoted below)\n",
 	} {
 		if !strings.Contains(outside, want) {
 			t.Errorf("engine lines lack %q:\n%s", want, outside)

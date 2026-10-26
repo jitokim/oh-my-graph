@@ -24,6 +24,14 @@ const forbiddenBranchNamed = "new remote state observed during the run, and --fo
 // in cycle order.
 func runGuardedGoal(t *testing.T, pushCycle int, assess1, assess2 string, extra ...string) (string, error, []string) {
 	t.Helper()
+	out, err, ids, _ := runGuardedGoalFake(t, pushCycle, assess1, assess2, extra...)
+	return out, err, ids
+}
+
+// runGuardedGoalFake is runGuardedGoal, also returning the fake runner, so a
+// test can read the prompts the planner and the assessor were given.
+func runGuardedGoalFake(t *testing.T, pushCycle int, assess1, assess2 string, extra ...string) (string, error, []string, *runner.FakeRunner) {
+	t.Helper()
 	isolateRunHome(t)
 	inBuildDir(t, "package.json")
 	obs, prs := guardedRemote(t, nil)
@@ -55,7 +63,7 @@ func runGuardedGoal(t *testing.T, pushCycle int, assess1, assess2 string, extra 
 	for _, snap := range goalSnapshots(t) {
 		ids = append(ids, snap.RunID)
 	}
-	return out, err, ids
+	return out, err, ids, fake
 }
 
 // The final cycle's forbidden change exits 6 whatever the assessor said,

@@ -81,11 +81,9 @@ func beginRemoteLeg(ctx context.Context, runID string, recorder *runstate.Snapsh
 }
 
 // autoNoRunBranches is the reason a guarded auto leg names its branches and
-// pull requests not guarded: its planned nodes run without engine worktrees
-// (validatePlannedNodeWorktree), so no commit of theirs is on the run's own
-// branches and every new branch or pull request reads not_attributable —
-// only a new remote can fail it.
-const autoNoRunBranches = "auto: no run branches"
+// pull requests not guarded (worktree.AutoNoRunBranches): its planned nodes
+// run without engine worktrees (validatePlannedNodeWorktree).
+const autoNoRunBranches = worktree.AutoNoRunBranches
 
 // withoutRunBranches marks the leg as an auto run's, whose planned nodes
 // create no run branch: its guard notices then never claim the branches or
@@ -95,10 +93,10 @@ func (l *remoteLeg) withoutRunBranches(auto bool) *remoteLeg {
 	return l
 }
 
-// runBranchPart reports whether part's guard rests on the run's own branches,
-// as a new branch's or pull request's attribution does (ADR 0046 §5.1).
+// runBranchPart reports whether part's guard rests on the run's own branches
+// (worktree.RunBranchPart).
 func runBranchPart(part runstate.RemotePart) bool {
-	return part == runstate.RemotePartBranches || part == runstate.RemotePartPullRequests
+	return worktree.RunBranchPart(part)
 }
 
 // snapshot reads the remote state: by remote name on an unguarded leg, as
@@ -393,92 +391,38 @@ func (l *remoteLeg) printLaunchNotice(w io.Writer) {
 // with autoNoRunBranches, and what was not compared says so in its reason.
 // A part whose attribution was unavailable (worktree.NoteAttributionUnavailable)
 // is named with that reason the same way: it was compared, but not guarded.
+// The rule is worktree.GuardOfLeg's, which the goal assessor's block renders
+// too, so the operator and the assessor are told the same thing.
 func printGuardSummary(w io.Writer, c *runstate.RemoteChanges, noRunBranches bool) {
 	n := len(c.Legs)
-	if n == 0 || c.Legs[n-1].Changes == nil {
+	if n == 0 {
 		return
 	}
-	leg := c.Legs[n-1]
-	d := leg.Changes
-	plain := noRunBranches
-	for _, nc := range d.NotCompared {
-		plain = plain || attributionUnavailable(nc)
+	g, ok := worktree.GuardOfLeg(c.Legs[n-1], noRunBranches)
+	if !ok || len(g.NotGuarded) == 0 {
+		return
 	}
-	var unguarded []string
-	partial := map[runstate.RemotePart]bool{}
+	unguarded := make([]string, len(g.NotGuarded))
 	prReason := ""
-	notCompared := func(reason string) string {
-		if plain {
-			return "not compared: " + reason
+	for i, ng := range g.NotGuarded {
+		unguarded[i] = ng.Describe(g.Plain)
+		if ng.Part == runstate.RemotePartPullRequests && ng.Remote == "" && ng.Cause != worktree.NotGuardedNoRunBranches {
+			prReason = ng.Reason
 		}
-		return reason
-	}
-	for _, nc := range d.NotCompared {
-		partial[nc.Part] = true
-		if nc.Remote != "" {
-			unguarded = append(unguarded, string(nc.Part)+" of "+nc.Remote+" ("+notCompared(nc.Reason)+")")
-			continue
-		}
-		if attributionUnavailable(nc) {
-			unguarded = append(unguarded, string(nc.Part)+" ("+nc.Reason+")")
-			if nc.Part == runstate.RemotePartPullRequests {
-				prReason = nc.Reason
-			}
-			continue
-		}
-		reason := nc.Reason
-		// A part unavailable on both sides for the one reason the launch
-		// named is said with that reason, so the notice reads the same twice.
-		if leg.After != nil {
-			before, beforeOK := remotePartReason(leg.Before, nc.Part)
-			after, afterOK := remotePartReason(*leg.After, nc.Part)
-			if !beforeOK && !afterOK && before == after && before != "" {
-				reason = before
-			}
-		}
-		unguarded = append(unguarded, string(nc.Part)+" ("+notCompared(reason)+")")
-		if nc.Part == runstate.RemotePartPullRequests {
-			prReason = reason
-		}
-	}
-	var guarded []runstate.RemotePart
-	for _, part := range d.Observed {
-		switch {
-		case noRunBranches && runBranchPart(part):
-			unguarded = append(unguarded, string(part)+" ("+autoNoRunBranches+")")
-		case !partial[part]:
-			guarded = append(guarded, part)
-		}
-	}
-	if len(unguarded) == 0 {
-		return
 	}
 	header := "--forbid-remote-changes: not guarded (not compared): "
-	if plain {
+	if g.Plain {
 		header = "--forbid-remote-changes: not guarded: "
 	}
-	fmt.Fprintln(w, fence.SanitizeTerminalLine(header+strings.Join(unguarded, "; ")+"; guarded: "+joinParts(guarded)))
+	fmt.Fprintln(w, fence.SanitizeTerminalLine(header+strings.Join(unguarded, "; ")+"; guarded: "+joinParts(g.Guarded)))
 	if prReason != "" {
 		fmt.Fprintln(w, fence.SanitizeTerminalLine(prNotGuarded+prReason))
 	}
 }
 
-// attributionUnavailable reports whether nc is a part the leg compared but
-// could not attribute in (worktree.AttributionUnavailable).
-func attributionUnavailable(nc runstate.RemoteNotCompared) bool {
-	return nc.Remote == "" && (nc.Reason == worktree.AttributionConfigUnreadable || nc.Reason == worktree.AttributionShallowChanged)
-}
-
 // remotePartReason is part's reason in s, and whether s observed it.
 func remotePartReason(s runstate.RemoteSnapshot, part runstate.RemotePart) (string, bool) {
-	switch part {
-	case runstate.RemotePartRemotes:
-		return s.Remotes.Reason, s.Remotes.Status == runstate.RemotePartObserved
-	case runstate.RemotePartBranches:
-		return s.Branches.Reason, s.Branches.Status == runstate.RemotePartObserved
-	default:
-		return s.PullRequests.Reason, s.PullRequests.Status == runstate.RemotePartObserved
-	}
+	return worktree.RemotePartReason(s, part)
 }
 
 // joinParts names parts in order, "none" for no part.

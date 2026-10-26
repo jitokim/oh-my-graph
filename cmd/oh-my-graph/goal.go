@@ -273,6 +273,10 @@ func cycleEvidence(runID string, plan coordinator.Plan, runPassed bool) (coordin
 		// from before the record existed, which the block says in one line.
 		RemoteChanges:       snap.RemoteChanges,
 		ForbidRemoteChanges: snap.ForbidRemoteChanges,
+		// An auto run's planned nodes create no run branch, by the test the
+		// leg's own withoutRunBranches makes, so the block names the parts
+		// not guarded as the end line does.
+		NoRunBranches: len(snap.ToolPolicies) > 0,
 	}
 	// A sink is a node no other node depends on; the assessor budgets those first (#408).
 	dependedOn := make(map[string]bool)
