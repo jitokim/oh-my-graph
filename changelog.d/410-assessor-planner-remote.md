@@ -31,10 +31,12 @@
   config changed or cannot be read, those reads run from an empty directory
   outside the repository, so an `insteadOf` or a broken `.git/config` cannot
   redirect them. The commit check is not moved outside: it still reads that
-  config, so a broken one can leave the node's own push `not_attributable`,
-  and a guarded `run` leg then fails closed — a `not_attributable` new branch
-  or PR fails it too — so that push exits 6; an `auto` leg, with no run
-  branches, does not. Unguarded runs are unchanged. If the leg's start could
+  config. One that changed but still reads, such as an `insteadOf`, leaves
+  the node's own push `run_commit`, and the run exits 6; one that cannot be
+  read leaves the push `not_attributable`, the run is not failed for it, and
+  the end line lists the branches and pull requests under not guarded,
+  `attribution unavailable: repository config unreadable`. Unguarded runs
+  are unchanged. If the leg's start could
   not list the remotes, the branches part is still not compared, as ADR 0046
   already lists.
   ([#410](https://github.com/jitokim/oh-my-graph/issues/410))

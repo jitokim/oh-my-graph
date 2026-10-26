@@ -632,16 +632,31 @@ has no open issue behind it.
   added during the leg has no start fetch URL: once `git remote -v` fails at
   the end, its branches are not read, and the remotes part, where it would
   have shown, is reported "not guarded".
-  <br>**A broken config fails a guarded `run` closed.** The check behind
-  `run_commit` reads the repository's config too, so a node that breaks it
-  can make the check fail on its own commit. When the end snapshot found the
-  config changed or unreadable, or `git remote -v` failing, or a check's git
-  read failed, a guarded `run` leg also fails on a new branch or PR labelled
-  `not_attributable` — a human's push of a commit the run did not make
-  included. The check is not moved outside the repository but fails closed
-  instead, so a node's own push that a broken config left `not_attributable`
-  fails the guarded run with exit 6. The record keeps the label; the exit-6 line says `not proven not
-  this run's`.
+  <br>**A broken config leaves a guarded `run` leg's branches and pull
+  requests not guarded.** The check behind `run_commit` reads the
+  repository's config too, so a node that makes it unreadable (a garbage
+  line, no read permission) can make the check fail on its own commit. When
+  the end snapshot could not read the config, or a check's git read failed,
+  that leg's push is recorded `not_attributable` and does not fail the run:
+  a broken config alone exits 0 when every node passed. The end line names
+  the branches and pull requests not guarded, `branches (attribution
+  unavailable: repository config unreadable); pull_requests (…)`, never as
+  guarded, and the record keeps the reason as a `not compared` item. A
+  config that changed but can still be read, such as an `insteadOf`, does
+  not do this: the check reads it, and a node's own push behind it still
+  fails the guarded run with exit 6.
+  <br>**A shallow boundary written during the leg does the same.** A node
+  that writes `.git/shallow` can hide its commit's parents from the check,
+  and no git setting turns that file off. A guarded `run` leg compares the
+  file in the common git dir with what its start saw; when it changed, the
+  end line names the branches and pull requests not guarded with
+  `attribution unavailable: shallow boundary changed`, and the run is not
+  failed for it. A repository already shallow at the start, and unchanged,
+  is checked as any other.
+  <br>**Replace refs and grafts are ignored by the check.** The check runs
+  git with `GIT_NO_REPLACE_OBJECTS=1` and `GIT_GRAFT_FILE=/dev/null`, so a
+  node cannot use `git replace` or `.git/info/grafts` to make its own commit
+  read as already in the base's history.
   <br>**A changed repository config leaves only the global config.** That
   outside read uses no repository config, so a credential helper set
   only in the repository is not used there: a remote that needs it fails to

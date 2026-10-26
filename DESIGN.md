@@ -1254,16 +1254,7 @@ engine reads the leg's own entries — never the between-legs set — and fails
 the leg if any is **forbidden**, and only these are:
 
 - `branch_created` or `pr_opened` labelled `run_commit`;
-- `remote_added` (no sha, and new by definition);
-- on a `run` leg whose commit check could not be trusted, `branch_created` or
-  `pr_opened` labelled `not_attributable` too. The check reads the
-  repository's config, so a node that broke it can make the check fail on
-  its own commit; the guard fails closed when the *after* found that config
-  changed or unreadable or `git remote -v` failing (the reads it then moves
-  outside the repository, below), or when a check's own git read failed. The
-  record keeps `not_attributable`; the error line adds `not proven not this
-  run's: …`, naming no config value or URL. An `auto` leg has no run branches
-  to attribute to, so this never applies there.
+- `remote_added` (no sha, and new by definition).
 
 Nothing else is ever forbidden: `branch_moved` and `pr_updated` whatever their
 label, `remote_removed`, `remote_url_changed`, `branch_deleted`,
@@ -1271,6 +1262,27 @@ label, `remote_removed`, `remote_url_changed`, `branch_deleted`,
 without the flag. So a push of the run's own commits onto a branch that
 already existed, `main` included, is reported and never fails the run
 (docs/LIMITATIONS.md).
+
+*Where the commit check could not run, the leg says so.* The check reads the
+repository and its config, so a node that breaks that config can make the
+check fail on its own commit, and one that writes `.git/shallow` can hide
+its commit's parents from it. On a guarded `run` leg whose *after* could not
+read the repository's config, or whose check's own git read failed — not a
+proven false — the leg's observed `branches` and `pull_requests` parts get a
+`not_compared` item with the reason `attribution unavailable: repository
+config unreadable`; when the shallow file in the common git dir is not what
+the *before* pinned (its SHA-256, kept in memory only), the reason is
+`attribution unavailable: shallow boundary changed`. The entries keep the
+label the check answered, nothing more is forbidden, and a leg whose nodes
+all passed exits 0; the end line (below) names those parts not guarded with
+the reason and never as guarded. A config that changed but stays readable
+(an `insteadOf`, say) is read by the check as usual, so a node's own push
+behind it is still `run_commit` and exits 6. The check's `rev-parse`,
+`merge-base` and `for-each-ref` run with `GIT_NO_REPLACE_OBJECTS=1` and
+`GIT_GRAFT_FILE=/dev/null`, so neither `refs/replace` nor
+`.git/info/grafts` can make a node's commit read as an ancestor of the
+base. An `auto` leg names those parts not guarded already, with `auto: no
+run branches`.
 
 A forbidden entry ends the leg with `RemoteChangeForbiddenError`, **exit 6**,
 printed on stderr like exit 1: `oh-my-graph: new remote state observed during
@@ -1312,6 +1324,14 @@ part lost only at the *after* snapshot, or an interrupted *after*, included:
 ```
 --forbid-remote-changes: not guarded (not compared): pull_requests (not authenticated); guarded: remotes, branches
 PR part not guarded: not authenticated
+```
+
+A leg whose attribution was unavailable says so on the same line, with the
+plain header:
+
+```
+--forbid-remote-changes: not guarded: branches (attribution unavailable: repository config unreadable); pull_requests (attribution unavailable: repository config unreadable); guarded: remotes
+PR part not guarded: attribution unavailable: repository config unreadable
 ```
 
 The `PR part not guarded: <reason>` line appears only when `pull_requests` is

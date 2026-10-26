@@ -72,7 +72,11 @@ read (no usable `gh`, say) is named at launch and again in the summary, `PR
 part not guarded: <reason>`, and is not guarded; the run still starts. A node
 that changes or breaks the repository's own config does not redirect the end
 read: that read then goes through each remote's start URL from an empty
-directory outside the repository. The flag
+directory outside the repository. A node that makes that config unreadable,
+or writes `.git/shallow`, leaves its own push unattributed: the run is not
+failed for it, and the summary names the branches and pull requests not
+guarded, `attribution unavailable: repository config unreadable` or
+`attribution unavailable: shallow boundary changed`. The flag
 is recorded in `state.json` (schema 5), so `resume` guards every later leg and
 has no flag to turn it off. A leg that pauses while holding a forbidden change
 exits 6 too, its pause withdrawn: continue it with `resume --retry-failed`. Both print a live per-node feed as the graph executes, then
