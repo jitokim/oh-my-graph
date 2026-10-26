@@ -63,6 +63,10 @@ type remoteLeg struct {
 	noRunBranches bool
 	guardedBefore *worktree.GuardedBefore
 	changes       runstate.RemoteChanges
+	// unproven is set by a guarded leg's end when its §5.1 check may not have
+	// read the before's config: the after read outside the repository, whose
+	// config changed or could not be read, or a check's git read failed.
+	unproven bool
 }
 
 // beginRemoteLeg takes the leg's before snapshot and records it. prior is the
@@ -144,11 +148,12 @@ func (l *remoteLeg) end(runCtx context.Context) (interrupted bool) {
 	// The commit check is local and bounded: it runs on a context of its
 	// own, so an interrupt that lands after the read above cannot fail it
 	// and record a run commit not_attributable.
-	isRunCommit := worktree.RunCommitCheck(context.Background(), l.obs, l.baseSHA)
 	if l.guarded {
+		isRunCommit, checkFailed := worktree.GuardedRunCommitCheck(context.Background(), l.obs, l.baseSHA)
 		worktree.EndGuardedLeg(&l.changes, after, isRunCommit)
+		l.unproven = !interrupted && (l.guardedBefore.AfterReadOutsideRepo() || checkFailed())
 	} else {
-		l.changes.EndLeg(after, isRunCommit)
+		l.changes.EndLeg(after, worktree.RunCommitCheck(context.Background(), l.obs, l.baseSHA))
 	}
 	l.record()
 	return interrupted
@@ -195,8 +200,9 @@ func (l *remoteLeg) finish(runCtx context.Context, hold *finishHold, schedErr er
 		runErr = runCtx.Err()
 		l.failLeg(hold, "interrupted")
 	case !interrupted && l.guarded:
-		if forbidden := forbiddenRemoteEntries(l.changes); len(forbidden) > 0 {
-			runErr = &RemoteChangeForbiddenError{Entries: forbidden, Run: schedErr}
+		unproven := l.unproven && !l.noRunBranches
+		if forbidden := forbiddenRemoteEntries(l.changes, unproven); len(forbidden) > 0 {
+			runErr = &RemoteChangeForbiddenError{Entries: forbidden, Run: schedErr, Unproven: unproven}
 			if pausedOrPassed(schedErr) {
 				l.failLeg(hold, "failed")
 			}
@@ -224,16 +230,17 @@ func (l *remoteLeg) failLeg(hold *finishHold, how string) {
 }
 
 // forbiddenRemoteEntries is the last leg's own forbidden entries (ADR 0046
-// §5.1), in record order. Only the leg's diff is read: a between-legs entry
-// happened while no leg ran and is never forbidden.
-func forbiddenRemoteEntries(c runstate.RemoteChanges) []runstate.RemoteChangeEntry {
+// §5.1), in record order, with unproven as remoteEntryForbidden takes it.
+// Only the leg's diff is read: a between-legs entry happened while no leg
+// ran and is never forbidden.
+func forbiddenRemoteEntries(c runstate.RemoteChanges, unproven bool) []runstate.RemoteChangeEntry {
 	n := len(c.Legs)
 	if n == 0 || c.Legs[n-1].Changes == nil {
 		return nil
 	}
 	var forbidden []runstate.RemoteChangeEntry
 	for _, e := range c.Legs[n-1].Changes.Entries {
-		if remoteEntryForbidden(e) {
+		if remoteEntryForbidden(e, unproven) {
 			forbidden = append(forbidden, e)
 		}
 	}
@@ -243,10 +250,16 @@ func forbiddenRemoteEntries(c runstate.RemoteChanges) []runstate.RemoteChangeEnt
 // remoteEntryForbidden is §5.1's list, and nothing else is ever forbidden:
 // a new branch or pull request at a commit this run made, or a new remote.
 // branch_moved and pr_updated are reported only, whatever their label.
-func remoteEntryForbidden(e runstate.RemoteChangeEntry) bool {
+//
+// With unproven the first case fails closed: on a guarded `run` leg whose check
+// could not be trusted (remoteLeg.unproven) — a node that broke or rewrote
+// the repository's config can make the check fail on its own commit — a new
+// branch or pull request the check did not attribute is forbidden too. The
+// record still says not_attributable: that is what the check answered.
+func remoteEntryForbidden(e runstate.RemoteChangeEntry, unproven bool) bool {
 	switch e.Kind {
 	case runstate.BranchCreated, runstate.PROpened:
-		return e.Attribution == runstate.AttributionRunCommit
+		return e.Attribution == runstate.AttributionRunCommit || unproven
 	case runstate.RemoteAdded:
 		return true
 	default:
@@ -260,16 +273,27 @@ func remoteEntryForbidden(e runstate.RemoteChangeEntry) bool {
 // returned beside it — nil when every node passed, a node failure that is
 // reported with it, or the pause it withdrew. It deliberately has no Unwrap:
 // a withdrawn pause must not read as one to exitCodeForError or the pause
-// hint.
+// hint. Unproven is the leg's unproven commit check, which forbade its
+// not_attributable new branches and pull requests: each says why.
 type RemoteChangeForbiddenError struct {
-	Entries []runstate.RemoteChangeEntry
-	Run     error
+	Entries  []runstate.RemoteChangeEntry
+	Run      error
+	Unproven bool
 }
+
+// unprovenAttribution is why a not_attributable new branch or pull request
+// is forbidden on a leg whose commit check could not be trusted. It names no
+// config value and no URL.
+const unprovenAttribution = "not proven not this run's: the repository's config changed or could not be read during the leg, or the commit check failed"
 
 func (e *RemoteChangeForbiddenError) Error() string {
 	entries := make([]string, len(e.Entries))
 	for i, entry := range e.Entries {
-		entries[i] = fence.SanitizeTerminalLine(describeRemoteEntry(entry)) + " (" + attributionLabel(entry.Attribution) + ")"
+		label := attributionLabel(entry.Attribution)
+		if e.Unproven && entry.Attribution != runstate.AttributionRunCommit && entry.Kind != runstate.RemoteAdded {
+			label += "; " + unprovenAttribution
+		}
+		entries[i] = fence.SanitizeTerminalLine(describeRemoteEntry(entry)) + " (" + label + ")"
 	}
 	msg := "new remote state observed during the run, and --forbid-remote-changes was set: " + strings.Join(entries, "; ")
 	var paused *schedule.PausedError

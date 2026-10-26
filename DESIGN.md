@@ -1254,7 +1254,16 @@ engine reads the leg's own entries — never the between-legs set — and fails
 the leg if any is **forbidden**, and only these are:
 
 - `branch_created` or `pr_opened` labelled `run_commit`;
-- `remote_added` (no sha, and new by definition).
+- `remote_added` (no sha, and new by definition);
+- on a `run` leg whose commit check could not be trusted, `branch_created` or
+  `pr_opened` labelled `not_attributable` too. The check reads the
+  repository's config, so a node that broke it can make the check fail on
+  its own commit; the guard fails closed when the *after* found that config
+  changed or unreadable or `git remote -v` failing (the reads it then moves
+  outside the repository, below), or when a check's own git read failed. The
+  record keeps `not_attributable`; the error line adds `not proven not this
+  run's: …`, naming no config value or URL. An `auto` leg has no run branches
+  to attribute to, so this never applies there.
 
 Nothing else is ever forbidden: `branch_moved` and `pr_updated` whatever their
 label, `remote_removed`, `remote_url_changed`, `branch_deleted`,

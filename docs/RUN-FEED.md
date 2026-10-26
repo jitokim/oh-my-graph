@@ -440,7 +440,13 @@ so every leg of the run is guarded. On a guarded run, a leg whose own
 `attribution` is `run_commit`, or a `remote_added`; never any other kind and
 never a `between_legs` entry — exits 6 and closes with `run_finished` outcome
 `"failed"`, a pause its nodes reached withdrawn from `state.json` as for a
-Ctrl-C during the after snapshot. Such a run derives `FAIL` even with every
+Ctrl-C during the after snapshot. On a `run` leg whose commit check could not
+be trusted — the repository's config changed or could not be read by the
+leg's after, `git remote -v` failed there, or a check's own git read failed —
+a `branch_created` or `pr_opened` recorded `not_attributable` is forbidden
+too: the record keeps the check's `not_attributable`, no field is added, and
+only the exit-6 error line says why (`not proven not this run's: …`), naming
+no config value or URL. Such a run derives `FAIL` even with every
 node `PASS`: on a guarded run a closed leg whose outcome is `"failed"` reads
 `FAIL` before the node count is looked at. An unguarded run derives exactly
 what it did before the flag existed. **A snapshot carrying the flag is stamped `schema:

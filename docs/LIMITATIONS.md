@@ -550,7 +550,7 @@ has no open issue behind it.
   the ledger table). Without the flag it changes no verdict and no exit code:
   a push the goal forbade still exits 0. With it (`run` or `auto`, carried by
   `resume`), a new branch or pull request at a commit this run made, or a new
-  remote, fails the run with exit 6 — and nothing else does:
+  remote, fails the run with exit 6 — and no other kind of change does:
   <br>**A push onto an existing branch never fails the run.** Pushing the
   run's own commits onto a branch that already existed at the leg's start,
   `main` included, is `branch_moved`; updating an open PR is `pr_updated`.
@@ -632,6 +632,14 @@ has no open issue behind it.
   added during the leg has no start fetch URL: once `git remote -v` fails at
   the end, its branches are not read, and the remotes part, where it would
   have shown, is reported "not guarded".
+  <br>**A broken config fails a guarded `run` closed.** The check behind
+  `run_commit` reads the repository's config too, so a node that breaks it
+  can make the check fail on its own commit. When the end snapshot found the
+  config changed or unreadable, or `git remote -v` failing, or a check's git
+  read failed, a guarded `run` leg also fails on a new branch or PR labelled
+  `not_attributable` — a human's push of a commit the run did not make
+  included. The record keeps the label; the exit-6 line says `not proven not
+  this run's`.
   <br>**A changed repository config leaves only the global config.** That
   outside read uses no repository config, so a credential helper set
   only in the repository is not used there: a remote that needs it fails to

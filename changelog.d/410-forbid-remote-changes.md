@@ -34,6 +34,11 @@
   2.31 or later, else the branches read as not guarded), so removing or
   re-pointing a remote cannot hide a push; a remote added during the leg is read by name, and a start URL that
   cannot be read leaves the branches part not compared, which the end line
-  says. In a goal loop a guarded failure is a failed cycle. Without the
+  says. When the repository's config changed or could not be read by then,
+  or a commit check's own git read failed, a guarded `run` leg fails closed:
+  a new branch or PR labelled `not_attributable` fails it too, its exit-6
+  line saying `not proven not this run's`, since a node that broke the
+  config can make the check fail on its own commit. In a goal loop a
+  guarded failure is a failed cycle. Without the
   flag nothing else changes.
   ([#410](https://github.com/jitokim/oh-my-graph/issues/410))

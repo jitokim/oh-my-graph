@@ -198,7 +198,7 @@ func TestRunGraph_AGuardedRunNeverFailsOnAnEntryThatIsNotForbidden(t *testing.T)
 		{
 			// §8.15: a sha absent from the object store, and a PR whose head
 			// is on no run branch — the fake's not-a-run-commit answer for
-			// both, as cat-file -e or the ancestry check gives it.
+			// both, as rev-parse --verify or the ancestry check gives it.
 			name: "an unrelated branch and PR",
 			change: func(obs *worktree.FakeRemoteObserver, prs *remote.FakePRLister) {
 				pushBranch("human", remoteHumaSHA)(obs, prs)
@@ -553,19 +553,26 @@ func TestExitCodeForError_RemoteChangeForbiddenIs6WhateverItCarries(t *testing.T
 }
 
 // remoteEntryForbidden is §5.1's list exactly: every kind, both attributions.
+// With the leg's commit check unproven, a new branch or pull request is
+// forbidden whatever its attribution, and nothing else changes.
 func TestRemoteEntryForbidden_IsTheADRsListAndNothingElse(t *testing.T) {
 	forbidden := map[runstate.RemoteChangeKind]map[runstate.RemoteAttribution]bool{
 		runstate.BranchCreated: {runstate.AttributionRunCommit: true},
 		runstate.PROpened:      {runstate.AttributionRunCommit: true},
 		runstate.RemoteAdded:   {runstate.AttributionRunCommit: true, runstate.AttributionNotAttributable: true},
 	}
+	unprovenForbidden := map[runstate.RemoteChangeKind]bool{runstate.BranchCreated: true, runstate.PROpened: true}
 	for _, kind := range []runstate.RemoteChangeKind{
 		runstate.RemoteAdded, runstate.RemoteRemoved, runstate.RemoteURLChanged,
 		runstate.BranchCreated, runstate.BranchMoved, runstate.BranchDeleted,
 		runstate.PROpened, runstate.PRUpdated, runstate.PRNoLongerOpen,
 	} {
 		for _, attr := range []runstate.RemoteAttribution{runstate.AttributionRunCommit, runstate.AttributionNotAttributable} {
-			got := remoteEntryForbidden(runstate.RemoteChangeEntry{Kind: kind, Attribution: attr})
+			e := runstate.RemoteChangeEntry{Kind: kind, Attribution: attr}
+			if got, want := remoteEntryForbidden(e, true), forbidden[kind][attr] || unprovenForbidden[kind]; got != want {
+				t.Errorf("unproven %s/%s forbidden = %v, want %v", kind, attr, got, want)
+			}
+			got := remoteEntryForbidden(e, false)
 			if want := forbidden[kind][attr]; got != want {
 				t.Errorf("%s/%s forbidden = %v, want %v", kind, attr, got, want)
 			}

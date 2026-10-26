@@ -347,20 +347,9 @@ func TestRunGraph_AGuardedLegNeverWritesTheRawURL(t *testing.T) {
 	}
 }
 
-// attributingObserver is the real GitManager with §5.1's check answered for
-// one sha, so a test need not build the run's own branches.
-type attributingObserver struct {
-	worktree.RemoteObserver
-	runCommit *string
-}
-
-func (o attributingObserver) CommitAttributable(_ context.Context, sha, _ string) (bool, error) {
-	return sha == *o.runCommit, nil
-}
-
 // The QA cases against the production GitManager and a local bare origin:
-// the node commits, pushes to a new branch, then removes or re-points
-// origin. Guarded, the leg exits 6; unguarded, it passes and reports only
+// the node commits on its run branch, pushes to a new branch, then removes or
+// re-points origin; the push is attributed by the real §5.1 check. Guarded, the leg exits 6; unguarded, it passes and reports only
 // what it saw by name.
 func TestRunGraph_TheBeforeURLReadAgainstARealRepository(t *testing.T) {
 	for _, tc := range []struct {
@@ -379,21 +368,13 @@ func TestRunGraph_TheBeforeURLReadAgainstARealRepository(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				isolateRunHome(t)
 				dir := remoteRepo(t)
-				var runCommit string
-				prevObs, prevBase := remoteObserverFor, runBaseCommit
-				t.Cleanup(func() { remoteObserverFor, runBaseCommit = prevObs, prevBase })
-				remoteObserverFor = func(runID string) worktree.RemoteObserver {
-					return attributingObserver{RemoteObserver: productionRemoteObserverFor(runID), runCommit: &runCommit}
-				}
-				runBaseCommit = launchCommitOfWorkingDir
-
-				nodeRunner := hookRunner{FakeRunner: passingWork(), before: func(runner.NodeInvocation) {
-					launchCommitWork(t, dir, "work.md")
-					runCommit = mustGit(t, dir, "rev-parse", "HEAD")
-					mustGit(t, dir, "push", "-q", "origin", "HEAD:refs/heads/feat/x")
+				useRealRemoteObserver(t)
+				origin := originPath(t, dir)
+				nodeRunner := hookRunner{FakeRunner: passingWork(), before: func(spec runner.NodeInvocation) {
+					commitAndPushFromLane(t, spec, origin)
 					mustGit(t, dir, tc.hide...)
 				}}
-				path := writeGraphFile(t, "name: remote\nnodes:\n  - { id: work, prompt: work }\n")
+				path := writeGraphFile(t, laneGraph)
 				args := []string{path}
 				if guarded {
 					args = append(args, "--forbid-remote-changes")
