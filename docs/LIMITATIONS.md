@@ -611,6 +611,13 @@ has no open issue behind it.
   included, and a failed `git remote -v` makes both git parts so. An unavailable
   part is never compared, so a change behind it goes unseen; the record
   prints a `not compared:` line naming it rather than "none observed".
+  <br>**Pushes the guard never reads.** A guarded leg reads its end snapshot
+  through the fetch URL each remote had at the leg's start, so removing or
+  re-pointing a remote does not hide a push to it. It still cannot see a push
+  behind a start URL that cannot be read at the end (the branches part is not
+  compared, and the end line says so), a push that names a URL directly with
+  no remote (`git push https://other/x.git …`), or a push made after changing
+  a remote's `pushurl` to another server: the guard never reads those servers.
   <br>**The network, on every run.** The snapshot runs `ls-remote` per
   remote at the start and at the end of each leg, each bounded by the git
   timeout (30 s), so an unreachable remote can add up to 30 s per remote at

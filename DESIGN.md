@@ -1194,7 +1194,8 @@ runs a real gh.
 new `updatedAt` or a renamed head branch alone gives no entry) and
 `pr_no_longer_open` (closed or merged; only a PR open at the *before* can
 show). Branch refs are compared only for a
-remote both sides list with the same fetch URL; an added, removed or
+remote both sides list with the same fetch URL, or one a guarded *after*
+read through its *before* URL (see the guard, below); an added, removed or
 re-pointed remote gets a `not_compared` item for its branches instead. A
 part unavailable on either side gives a `not_compared` item with the reason,
 so "no change" and "could not see" never read the same. A PR part not
@@ -1303,9 +1304,15 @@ PR part not guarded: not authenticated
 The `PR part not guarded: <reason>` line appears only when `pull_requests` is
 among those parts, so an operator who reads only the end of the output still
 sees it; `<reason>` is the part's reason (gh's own `detail` stays in
-`state.json`). A remote added during the leg, whose branches alone were not
-compared, has its own `not compared:` line and does not count the branches
-part as unguarded. A resumed leg prints its own launch notice from its own
+`state.json`). A remote whose branches alone were not compared is named too,
+as `branches of <remote> (<reason>)`, and `guarded:` then leaves out
+`branches`. A guarded leg's *after* reads each remote present at the leg's
+*before* through the raw fetch URL recorded at that *before* — kept in memory
+only; `state.json` keeps the redacted URL and lists those remotes' names in
+`branches.read_through_before_url` — so removing or re-pointing a remote
+cannot hide a push (a re-pointed remote's new repository is named `not
+compared`); a remote added during the leg is read by name, and a *before* URL
+that cannot be read leaves `branches` not compared, which the end line says. A resumed leg prints its own launch notice from its own
 *before*. An unguarded run prints neither notice.
 
 **Storage.** `state.json` carries `run_base_sha` and `remote_changes`
