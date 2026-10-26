@@ -393,7 +393,22 @@ func GuardedRunCommitCheck(ctx context.Context, obs RemoteObserver, baseSHA stri
 // records after the same way, then replaces the leg's diff with
 // DiffGuardedRemoteSnapshots's, so branches read through the before URLs are
 // compared even when the after could not list the remotes.
+//
+// Those diffs ask about the same shas, and only the last is kept, so each
+// sha's answer is kept for this call: isRunCommit is asked once per sha, and
+// a read that failed is one whose false the kept diff uses.
 func EndGuardedLeg(c *runstate.RemoteChanges, after runstate.RemoteSnapshot, isRunCommit func(sha string) bool) bool {
+	if asked := isRunCommit; asked != nil {
+		answered := map[string]bool{}
+		isRunCommit = func(sha string) bool {
+			ok, seen := answered[sha]
+			if !seen {
+				ok = asked(sha)
+				answered[sha] = ok
+			}
+			return ok
+		}
+	}
 	if !c.EndLeg(after, isRunCommit) {
 		return false
 	}

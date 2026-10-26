@@ -286,6 +286,77 @@ func TestGuardedRunCommitCheck_SaysWhenACheckCouldNotBeRead(t *testing.T) {
 	}
 }
 
+// failingNthCheck is a FakeRemoteObserver whose CommitAttributable fails
+// with err on the nth time it is asked about sha, and answers as the fake
+// does otherwise.
+type failingNthCheck struct {
+	*FakeRemoteObserver
+	sha string
+	nth int
+	err error
+	n   int
+}
+
+func (f *failingNthCheck) CommitAttributable(ctx context.Context, sha, baseSHA string) (bool, error) {
+	ok, err := f.FakeRemoteObserver.CommitAttributable(ctx, sha, baseSHA)
+	if sha == f.sha {
+		if f.n++; f.n == f.nth {
+			return false, f.err
+		}
+	}
+	return ok, err
+}
+
+// A guarded leg whose after could not list the remotes diffs its snapshots
+// more than once, and only the last diff is kept. Within one EndGuardedLeg
+// each sha is checked once, so a failure in what was a discarded check — the
+// second check of the PR's head — can no longer make the attribution
+// unavailable.
+func TestEndGuardedLeg_ChecksEachSHAOnce(t *testing.T) {
+	ctx := context.Background()
+	run, base := strings.Repeat("c", 40), strings.Repeat("d", 40)
+	origin := []runstate.RemoteConfig{{Name: "origin", FetchURL: testCredentialURL, PushURL: testCredentialURL}}
+	before := runstate.RemoteSnapshot{
+		Remotes:      runstate.RemotesSnapshot{Status: runstate.RemotePartObserved, Configured: origin},
+		Branches:     runstate.BranchesSnapshot{Status: runstate.RemotePartObserved},
+		PullRequests: runstate.PullRequestsSnapshot{Status: runstate.RemotePartObserved},
+	}
+	after := runstate.RemoteSnapshot{
+		Remotes: runstate.RemotesSnapshot{Status: runstate.RemotePartUnavailable, Reason: "fatal: bad config"},
+		Branches: runstate.BranchesSnapshot{Status: runstate.RemotePartObserved, ReadThroughBeforeURL: []string{"origin"},
+			Refs: []runstate.RemoteBranchRef{{Remote: "origin", Branch: "feat/run", SHA: run}}},
+		PullRequests: runstate.PullRequestsSnapshot{Status: runstate.RemotePartObserved,
+			Open: []runstate.OpenPullRequest{{Number: 1, HeadRefName: "feat/run", HeadRefOid: run}}},
+	}
+
+	fake := NewFakeRemoteObserver()
+	fake.SetRemotes([]Remote{{Name: "origin", FetchURL: testCredentialURL, PushURL: testCredentialURL}}, nil)
+	fake.SetRunCommit(run)
+	_, pin := TakeGuardedRemoteSnapshot(ctx, fake, ghRepoPRs(), nil)
+	obs := &failingNthCheck{FakeRemoteObserver: fake, sha: run, nth: 2, err: context.DeadlineExceeded}
+
+	var c runstate.RemoteChanges
+	c.BeginLeg(before)
+	check, failed := GuardedRunCommitCheck(ctx, obs, base)
+	if !EndGuardedLeg(&c, after, check) {
+		t.Fatal("EndGuardedLeg recorded nothing")
+	}
+	if calls := fake.AttributionCalls(); !reflect.DeepEqual(calls, []string{run}) {
+		t.Errorf("attribution calls = %v, want %s once", calls, run)
+	}
+	if got := pin.AttributionUnavailable(obs, failed()); got != "" {
+		t.Errorf("AttributionUnavailable = %q, want none", got)
+	}
+	for _, e := range c.Legs[0].Changes.Entries {
+		if e.Attribution != runstate.AttributionRunCommit {
+			t.Errorf("entry %+v, want run_commit", e)
+		}
+	}
+	if n := len(c.Legs[0].Changes.Entries); n != 2 {
+		t.Errorf("entries = %+v, want the branch and the PR", c.Legs[0].Changes.Entries)
+	}
+}
+
 // The open-PR part is read beside the git parts, recorded sorted by number,
 // and diffed with the same §5.1 check the branch entries use.
 func TestTakeRemoteSnapshot_PullRequestsFromTheFake(t *testing.T) {
