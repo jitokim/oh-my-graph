@@ -84,7 +84,7 @@ A snapshot holds three parts:
 2. **Remote branch refs.** `git ls-remote --heads <remote>` for each configured
    remote: branch name and sha; amended 2026-10-26: in a guarded run the after
    snapshot reads each remote present at the leg's before by the fetch URL
-   recorded at that before.
+   recorded at that before (through a config-env remote, never argv).
 3. **Open pull requests.** `gh pr list --state open --limit 1000 --json
    number,headRefName,headRefOid`, run in the invocation repository, so the
    list is the PRs whose base is this repository's GitHub repo. Only when `gh`

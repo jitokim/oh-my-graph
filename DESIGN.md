@@ -1309,7 +1309,10 @@ as `branches of <remote> (<reason>)`, and `guarded:` then leaves out
 `branches`. A guarded leg's *after* reads each remote present at the leg's
 *before* through the raw fetch URL recorded at that *before* — kept in memory
 only; `state.json` keeps the redacted URL and lists those remotes' names in
-`branches.read_through_before_url` — so removing or re-pointing a remote
+`branches.read_through_before_url`; the URL reaches git through `GIT_CONFIG_*`
+env as a temporary remote, never on the argv of the git process the engine
+starts, which needs git 2.31 or later, else the branches read as not
+guarded — so removing or re-pointing a remote
 cannot hide a push (a re-pointed remote's new repository is named `not
 compared`); a remote added during the leg is read by name, and a *before* URL
 that cannot be read leaves `branches` not compared, which the end line says. A resumed leg prints its own launch notice from its own

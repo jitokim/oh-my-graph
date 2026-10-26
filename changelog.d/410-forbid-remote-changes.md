@@ -29,8 +29,10 @@
   it compared; the end line names every part, and every remote's branches,
   it did not compare. A guarded leg reads its end snapshot through the fetch
   URL each remote had at the leg's start (kept in memory only; `state.json`
-  keeps the redacted URL), so removing or re-pointing a remote cannot hide a
-  push; a remote added during the leg is read by name, and a start URL that
+  keeps the redacted URL; the URL reaches git through `GIT_CONFIG_*` env,
+  never on the argv of the git process the engine starts, which needs git
+  2.31 or later, else the branches read as not guarded), so removing or
+  re-pointing a remote cannot hide a push; a remote added during the leg is read by name, and a start URL that
   cannot be read leaves the branches part not compared, which the end line
   says. In a goal loop a guarded failure is a failed cycle. Without the
   flag nothing else changes.

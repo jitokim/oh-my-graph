@@ -618,6 +618,16 @@ has no open issue behind it.
   compared, and the end line says so), a push that names a URL directly with
   no remote (`git push https://other/x.git …`), or a push made after changing
   a remote's `pushurl` to another server: the guard never reads those servers.
+  <br>**Git older than 2.31 leaves the branches unguarded.** The guarded end
+  read passes the start URL through `GIT_CONFIG_*` env, which git reads only
+  from 2.31; with an older git, every remote's branches read as not guarded in
+  a guarded run.
+  <br>**A credential in a remote URL can still show on git's own helper's
+  argv.** The engine keeps the URL off the argv of the git process it starts,
+  but git itself starts its http(s) helper (`git-remote-https`) with the URL
+  on that helper's argv, where other users on the same machine can read it.
+  That is git's behaviour and happens without the guard too; use a credential
+  helper or SSH instead of a credential in the URL.
   <br>**The network, on every run.** The snapshot runs `ls-remote` per
   remote at the start and at the end of each leg, each bounded by the git
   timeout (30 s), so an unreachable remote can add up to 30 s per remote at
