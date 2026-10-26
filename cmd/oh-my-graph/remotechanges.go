@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/remote"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
@@ -415,11 +416,11 @@ func cloneRemoteChanges(c runstate.RemoteChanges) runstate.RemoteChanges {
 	}
 }
 
-// The two attribution labels (ADR 0046 §2.2), word for word. Every entry is
-// "observed": the snapshot sees state, not who changed it.
+// The two attribution labels (ADR 0046 §2.2), word for word: the
+// coordinator's, which the goal assessor's block renders too.
 const (
-	labelRunCommit       = "observed during the run; points at a commit this run made"
-	labelNotAttributable = "observed, not attributable"
+	labelRunCommit       = coordinator.RemoteLabelRunCommit
+	labelNotAttributable = coordinator.RemoteLabelNotAttributable
 )
 
 // printRemoteChanges prints the last leg's remote change record: the change
@@ -499,51 +500,10 @@ func describePRPart(prs runstate.PullRequestsSnapshot) string {
 }
 
 func attributionLabel(a runstate.RemoteAttribution) string {
-	if a == runstate.AttributionRunCommit {
-		return labelRunCommit
-	}
-	return labelNotAttributable
+	return coordinator.RemoteAttributionLabel(a)
 }
 
 // describeRemoteEntry is one entry's kind and what it changed.
 func describeRemoteEntry(e runstate.RemoteChangeEntry) string {
-	ref := e.Remote + "/" + e.Branch
-	switch e.Kind {
-	case runstate.RemoteAdded:
-		return fmt.Sprintf("%s %s %s", e.Kind, e.Remote, describeURLs(e.NewFetchURL, e.NewPushURL))
-	case runstate.RemoteRemoved:
-		return fmt.Sprintf("%s %s (was %s)", e.Kind, e.Remote, describeURLs(e.OldFetchURL, e.OldPushURL))
-	case runstate.RemoteURLChanged:
-		return fmt.Sprintf("%s %s %s -> %s", e.Kind, e.Remote, describeURLs(e.OldFetchURL, e.OldPushURL), describeURLs(e.NewFetchURL, e.NewPushURL))
-	case runstate.BranchCreated:
-		return fmt.Sprintf("%s %s at %s", e.Kind, ref, shortSHA(e.NewSHA))
-	case runstate.BranchMoved:
-		return fmt.Sprintf("%s %s %s -> %s", e.Kind, ref, shortSHA(e.OldSHA), shortSHA(e.NewSHA))
-	case runstate.BranchDeleted:
-		return fmt.Sprintf("%s %s (was %s)", e.Kind, ref, shortSHA(e.OldSHA))
-	case runstate.PROpened:
-		return fmt.Sprintf("%s #%d %s at %s", e.Kind, e.PRNumber, e.HeadRefName, shortSHA(e.NewSHA))
-	case runstate.PRUpdated:
-		return fmt.Sprintf("%s #%d %s %s -> %s", e.Kind, e.PRNumber, e.HeadRefName, shortSHA(e.OldSHA), shortSHA(e.NewSHA))
-	case runstate.PRNoLongerOpen:
-		return fmt.Sprintf("%s #%d %s (was %s)", e.Kind, e.PRNumber, e.HeadRefName, shortSHA(e.OldSHA))
-	default:
-		return fmt.Sprintf("%s %s", e.Kind, e.Remote)
-	}
-}
-
-// describeURLs names a remote's fetch URL, and its push URL only when that
-// differs.
-func describeURLs(fetch, push string) string {
-	if push == "" || push == fetch {
-		return fetch
-	}
-	return fetch + " (push " + push + ")"
-}
-
-func shortSHA(sha string) string {
-	if len(sha) > 12 {
-		return sha[:12]
-	}
-	return sha
+	return coordinator.DescribeRemoteEntry(e)
 }

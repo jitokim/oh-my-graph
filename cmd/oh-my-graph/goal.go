@@ -260,6 +260,11 @@ func cycleEvidence(runID string, plan coordinator.Plan, runPassed bool) (coordin
 		RunCostUSD:     plan.CostUSD,
 		RunCostUnknown: plan.CostUnknown,
 		Usage:          plan.Usage,
+		// The run's remote change record and its guard flag, for the
+		// ENGINE-OBSERVED remote changes block (ADR 0046 §3.1); nil on a run
+		// from before the record existed, which the block says in one line.
+		RemoteChanges:       snap.RemoteChanges,
+		ForbidRemoteChanges: snap.ForbidRemoteChanges,
 	}
 	// A sink is a node no other node depends on; the assessor budgets those first (#408).
 	dependedOn := make(map[string]bool)

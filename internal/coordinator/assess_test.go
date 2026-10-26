@@ -566,7 +566,8 @@ func TestAssess_TwoLongArtifactsAroundShortOneShareTheBudget(t *testing.T) {
 	if strings.Contains(captured.Prompt, "material cap reached") {
 		t.Error("no artifact should be omitted: the budget holds an excerpt of each")
 	}
-	artifactBytes := strings.Count(material, "w") + len("SHORT-ARTIFACT") + 2*len(fence.ExcerptMarker)
+	artifacts := material[strings.Index(material, "--- artifact of node"):]
+	artifactBytes := strings.Count(artifacts, "w") + len("SHORT-ARTIFACT") + 2*len(fence.ExcerptMarker)
 	if artifactBytes > maxAssessArtifactMaterial {
 		t.Errorf("artifact material totals %d bytes, over the %d cap", artifactBytes, maxAssessArtifactMaterial)
 	}
