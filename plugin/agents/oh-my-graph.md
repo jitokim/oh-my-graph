@@ -72,7 +72,8 @@ refused to start for want of build evidence, and `5` `auto`'s `--verify-cmd`
 was already red on the starting tree (baseline red — no model call, no run
 directory), and `6` a run started with `--forbid-remote-changes` observed a
 forbidden remote change — a new branch or pull request at a commit the run
-made, or a new remote — and reads `FAIL` even if every node passed. On exit 2, surface the printed resume hint and offer
+made, or a new remote; in `auto` only a new remote, added by the final cycle's
+run — and reads `FAIL` even if every node passed. On exit 2, surface the printed resume hint and offer
 `oh-my-graph resume <run-id> --approve <gate-id>` (or `--reject`). On exit 3,
 see the rule immediately below. On exit 5, show the user the quoted output; do
 not retry until the tree, the command, or its `--verify-timeout` is fixed —

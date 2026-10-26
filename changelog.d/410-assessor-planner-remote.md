@@ -16,14 +16,21 @@
   (first, repair and later cycles) gains one sentence: the operator forbade
   remote changes and the engine observes the remote itself, so no planned
   node pushes, adds a remote, or opens or edits a pull request. Without the
-  flag the planner prompt is byte-identical.
+  flag the planner prompt is byte-identical. A guarded `auto` now exits 6,
+  its last line naming the change, when its final cycle's run made a
+  forbidden one, and its guard lines list branches and pull requests under
+  not guarded (`auto: no run branches`), since a planned node's own push is
+  never attributable.
   ([#410](https://github.com/jitokim/oh-my-graph/issues/410))
 - **A guarded leg still compares branches when its end snapshot cannot list
   the remotes.** A node that pushed and then broke `git remote -v` (a
   corrupted `.git/config`) used to leave the branches part not compared and
   its push unseen; a `--forbid-remote-changes` leg now reads each remote it
   had at the start through that start's fetch URL, so the push is recorded
-  and the run exits 6, while the remotes part stays not compared. Unguarded
+  and the run exits 6, while the remotes part stays not compared. Once the
+  repository's own config changed or cannot be read, those reads run from an
+  empty directory outside the repository, so an `insteadOf` or a broken
+  `.git/config` cannot redirect them. Unguarded
   runs are unchanged. If git cannot read the repository at all, the branches
   part is still not compared, as ADR 0046 already lists.
   ([#410](https://github.com/jitokim/oh-my-graph/issues/410))

@@ -69,7 +69,10 @@ existed (`main` included), an updated pull request, and anything changed
 between legs are reported only
 ([LIMITATIONS](LIMITATIONS.md#known-limitations)). A part the engine could not
 read (no usable `gh`, say) is named at launch and again in the summary, `PR
-part not guarded: <reason>`, and is not guarded; the run still starts. The flag
+part not guarded: <reason>`, and is not guarded; the run still starts. A node
+that changes or breaks the repository's own config does not redirect the end
+read: that read then goes through each remote's start URL from an empty
+directory outside the repository. The flag
 is recorded in `state.json` (schema 5), so `resume` guards every later leg and
 has no flag to turn it off. A leg that pauses while holding a forbidden change
 exits 6 too, its pause withdrawn: continue it with `resume --retry-failed`. Both print a live per-node feed as the graph executes, then
@@ -361,7 +364,9 @@ What `auto` can exit with:
 | `6` | `--forbid-remote-changes` was set and the run observed a forbidden remote change: a new branch or pull request at a commit this run made, or a new remote |
 
 Exits 3 and 5 make no model call and leave no run directory. Exit 6 has a run
-directory, and the run reads `FAIL` (`run` and `resume` exit 6 the same way).
+directory, and the run reads `FAIL` (`run` and `resume` exit 6 the same way);
+`auto` exits 6 only when its final cycle's run added a remote, the only change
+that fails a guarded `auto` run ([LIMITATIONS](LIMITATIONS.md#known-limitations)).
 Exit `4` is not `auto`'s: only `runs list --exit-in-flight` returns it.
 
 ## Zero-config: auto mode (the headline)

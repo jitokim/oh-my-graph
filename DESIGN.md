@@ -1282,7 +1282,11 @@ count is looked at (ADR 0023 §2.6 as amended: exit 1 or 6 ↔ `FAIL`). An
 unguarded run's statuses are unchanged by the flag's existence: its node
 count still answers first (ADR 0046 §8.4). In a goal loop a guarded
 failure is a failed cycle: the assessor gets `RunPassed=false` and the loop
-goes on to its next cycle, as after any failed run.
+goes on to its next cycle, as after any failed run. `auto` exits 6 only when
+the final cycle's run made a forbidden change, its last line naming it as
+`run` does; one made only in a non-final cycle is that failed cycle and
+nothing more, so the final cycle alone decides the exit code and message,
+which do not mention it.
 
 *An unavailable part is not guarded.* The run still starts; the verdict uses
 only the parts compared. A guarded leg whose *before* snapshot could not read
@@ -1314,7 +1318,10 @@ env as a temporary remote, never on the argv of the git process the engine
 starts, which needs git 2.31 or later, else the branches read as not
 guarded — so removing or re-pointing a remote
 cannot hide a push (a re-pointed remote's new repository is named `not
-compared`); a remote added during the leg is read by name, and a *before* URL
+compared`); when the repository's own config changed since the *before*, or
+cannot be read, or `git remote -v` fails, those reads run from an empty
+temporary directory outside the repository, with only global and env config;
+a remote added during the leg is read by name, and a *before* URL
 that cannot be read leaves `branches` not compared, which the end line says. A resumed leg prints its own launch notice from its own
 *before*. An unguarded run prints neither notice.
 
