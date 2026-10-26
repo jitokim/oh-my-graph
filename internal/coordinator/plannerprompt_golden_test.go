@@ -156,6 +156,14 @@ func TestPlannerPromptGoldens_ForbidRemoteChanges(t *testing.T) {
 	checkPlannerGolden(t, "first-forbid-remote", first.Prompt)
 }
 
+// ADR 0046 §5.2: the cycle-2 continuation prompt with --forbid-remote-changes,
+// so the sentence's place in it — where the first-cycle golden puts it, before
+// the continuation section — is a reviewed golden diff too.
+func TestPlannerPromptGoldens_ForbidRemoteChangesContinuation(t *testing.T) {
+	_, _, continuation := plannerPrompts(t, WithForbidRemoteChanges())
+	checkPlannerGolden(t, "continuation-forbid-remote", continuation.Prompt)
+}
+
 // ADR 0046 §5.2: the sentence reaches the first attempt, its repair and a
 // continuation exactly once each, before the continuation section; without
 // the option it reaches none of them.

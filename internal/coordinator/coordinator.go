@@ -617,13 +617,13 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 // reason: it is the menu this base shows, and every attempt built from the
 // base is judged against it. startCommit travels the same way, so every cycle
 // and every repair measures scope from the same commit (WithStartCommit).
-func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyCommand string, offered []ReuseEntry, startCommit string) (string, error) {
+func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyCommand string, offered []ReuseEntry, startCommit string, suffix string) (string, error) {
 	prompt, err := plannerPrompt(goal, inputKeys, verifyCommand, offered, startCommit)
 	if err != nil {
 		return "", err
 	}
-	if remaining == "" {
-		return prompt, nil
+	if remaining == "" || suffix != "" {
+		return plannerPromptForbidding(prompt+suffix, remaining)
 	}
 	// `remaining` is the assessor's own words — model output quoted into
 	// oh-my-graph's own prompt — so it is fenced with a per-call nonce

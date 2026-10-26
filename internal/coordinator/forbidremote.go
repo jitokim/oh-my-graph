@@ -26,19 +26,25 @@ The operator forbade remote changes for this run and the engine observes the
 remote itself, so no planned node pushes, adds a remote, or opens or edits a
 pull request.`
 
-// plannerPromptForbidding is plannerPromptFor with, when forbidRemoteChanges
-// is set, plannerForbidRemoteChangesSentence after the rules and the start
-// commit and before any continuation section, which is fenced exactly as
-// plannerPromptFor fences it. Unset, it returns what plannerPromptFor does.
-func plannerPromptForbidding(goal string, inputKeys []string, remaining string, verifyCommand string, offered []ReuseEntry, startCommit string, forbidRemoteChanges bool) (string, error) {
+// forbidRemoteSuffix is the suffix plannerPromptFor takes: the forbid-remote
+// sentence when forbidRemoteChanges is set, and empty otherwise, so an unset
+// run's planner prompt is byte-identical to one built without the option.
+// plannerPromptFor puts it after the rules and the start commit and before any
+// continuation section, so a first attempt and a continuation carry it in the
+// same place.
+func forbidRemoteSuffix(forbidRemoteChanges bool) string {
 	if !forbidRemoteChanges {
-		return plannerPromptFor(goal, inputKeys, remaining, verifyCommand, offered, startCommit)
+		return ""
 	}
-	prompt, err := plannerPromptFor(goal, inputKeys, "", verifyCommand, offered, startCommit)
-	if err != nil {
-		return "", err
-	}
-	prompt += plannerForbidRemoteChangesSentence
+	return plannerForbidRemoteChangesSentence
+}
+
+// plannerPromptForbidding finishes a plannerPromptFor prompt that already ends
+// in its suffix: it returns it unchanged when no work remains, and otherwise
+// appends the continuation section, so under --forbid-remote-changes the
+// sentence sits before `remaining`, which is fenced exactly as plannerPromptFor
+// fences it without a suffix.
+func plannerPromptForbidding(prompt string, remaining string) (string, error) {
 	if remaining == "" {
 		return prompt, nil
 	}
