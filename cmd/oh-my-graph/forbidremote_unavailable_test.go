@@ -202,3 +202,102 @@ func TestResume_AGuardedLegStartingWithoutThePRPartSaysSoTwice(t *testing.T) {
 	assertSaidAtLaunchAndInSummary(t, out, "PR part not guarded: not authenticated")
 	assertRunReads(t, "run-1", runstatus.Pass, runfeed.OutcomePassed)
 }
+
+// A remote's own branches not compared are named in the summary, and the
+// branches part is never claimed as guarded while any remote's piece of it
+// was not compared: the remote removed after the node pushed to it (the QA
+// case), and a part compared for one remote but not another.
+func TestRunGraph_AGuardedRunNamesEachRemoteWhoseBranchesWereNotCompared(t *testing.T) {
+	origin := worktree.Remote{Name: "origin", FetchURL: "https://example.com/o.git", PushURL: "https://example.com/o.git"}
+	for _, tc := range []struct {
+		name     string
+		before   []worktree.Remote
+		change   remoteChange
+		unguard  string
+		wantExit int
+	}{
+		{
+			name:   "the sole remote removed after a push",
+			before: []worktree.Remote{origin},
+			change: func(o *worktree.FakeRemoteObserver, p *remote.FakePRLister) {
+				pushBranch("feat/x", remoteRunSHA)(o, p)
+				o.SetRemotes(nil, nil)
+			},
+			unguard: "branches of origin (remote removed: it has no after refs to compare)",
+		},
+		{
+			name:   "one of two remotes removed",
+			before: []worktree.Remote{origin, remoteUpstream},
+			change: func(o *worktree.FakeRemoteObserver, _ *remote.FakePRLister) {
+				o.SetRemotes([]worktree.Remote{origin}, nil)
+			},
+			unguard: "branches of upstream (remote removed: it has no after refs to compare)",
+		},
+		{
+			name:    "a remote added beside origin",
+			before:  []worktree.Remote{origin},
+			change:  addUpstream,
+			unguard: "branches of upstream (remote added: it has no before refs to compare)",
+			// remote_added is itself forbidden; the summary still names the
+			// new remote's branches as not guarded.
+			wantExit: 6,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateRunHome(t)
+			obs, prs := guardedRemote(t, nil)
+			obs.SetRemotes(tc.before, nil)
+			out, err := runWithRemoteChange(t, obs, prs, tc.change, "--forbid-remote-changes")
+			if got := exitCodeForError(err); got != tc.wantExit {
+				t.Fatalf("err = %v (exit %d), want exit %d", err, got, tc.wantExit)
+			}
+			if strings.Contains(out, "unavailable at this leg's start") {
+				t.Errorf("every part was read at launch; no launch notice:\n%s", out)
+			}
+			summary := "--forbid-remote-changes: not guarded (not compared): " + tc.unguard + "; guarded: remotes, pull_requests\n"
+			if !strings.HasSuffix(out, summary) {
+				t.Errorf("summary = want suffix\n%s\ngot\n%s", summary, out)
+			}
+			if strings.Contains(out, "PR part not guarded") {
+				t.Errorf("the PR part was compared; no PR notice:\n%s", out)
+			}
+		})
+	}
+}
+
+// A part-level gap and a remote's own gap are both named, and only the part
+// compared for every remote is guarded.
+func TestRunGraph_AGuardedRunNamesAPartAndARemotesBranchesTogether(t *testing.T) {
+	isolateRunHome(t)
+	obs, prs := guardedRemote(t, nil)
+	obs.SetRemotes([]worktree.Remote{{Name: "origin", FetchURL: "https://example.com/o.git", PushURL: "https://example.com/o.git"}, remoteUpstream}, nil)
+	lost := func(o *worktree.FakeRemoteObserver, p *remote.FakePRLister) {
+		o.SetRemotes([]worktree.Remote{{Name: "origin", FetchURL: "https://example.com/o.git", PushURL: "https://example.com/o.git"}}, nil)
+		p.Set(remote.UnavailablePRs(remote.ReasonTimeout, ""))
+	}
+	out, err := runWithRemoteChange(t, obs, prs, lost, "--forbid-remote-changes")
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	summary := "--forbid-remote-changes: not guarded (not compared): branches of upstream (remote removed: it has no after refs to compare); pull_requests (unavailable after: timeout); guarded: remotes\n" +
+		"PR part not guarded: unavailable after: timeout\n"
+	if !strings.HasSuffix(out, summary) {
+		t.Errorf("summary = want suffix\n%s\ngot\n%s", summary, out)
+	}
+}
+
+// An unguarded run with a remote removed prints no guard notice: only the
+// record's own not_compared line says it.
+func TestRunGraph_AnUnguardedRunWithARemoteRemovedPrintsNoGuardNotice(t *testing.T) {
+	isolateRunHome(t)
+	obs, prs := guardedRemote(t, nil)
+	out, err := runWithRemoteChange(t, obs, prs, func(o *worktree.FakeRemoteObserver, _ *remote.FakePRLister) { o.SetRemotes(nil, nil) })
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	for _, never := range []string{"not guarded", "--forbid-remote-changes"} {
+		if strings.Contains(out, never) {
+			t.Errorf("an unguarded run printed %q:\n%s", never, out)
+		}
+	}
+}

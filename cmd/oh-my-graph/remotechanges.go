@@ -308,9 +308,11 @@ func (l *remoteLeg) printLaunchNotice(w io.Writer) {
 
 // printGuardSummary repeats, beside a guarded leg's change record, which of
 // its parts were not compared and so not guarded, with why (ADR 0046 §5.2),
-// so an operator who reads only the end of the output still sees it. A part
-// compared for only some remotes (one added during the leg) was compared, and
-// its own not_compared line above says the rest.
+// so an operator who reads only the end of the output still sees it. Every
+// piece not compared is named, a remote's own branches (one added or removed
+// during the leg) as "branches of <remote>", and "guarded" names only the
+// parts compared for every remote: a part any remote's piece of which was not
+// compared is never claimed as guarded.
 func printGuardSummary(w io.Writer, c *runstate.RemoteChanges) {
 	n := len(c.Legs)
 	if n == 0 || c.Legs[n-1].Changes == nil {
@@ -319,9 +321,12 @@ func printGuardSummary(w io.Writer, c *runstate.RemoteChanges) {
 	leg := c.Legs[n-1]
 	d := leg.Changes
 	var unguarded []string
+	partial := map[runstate.RemotePart]bool{}
 	prReason := ""
 	for _, nc := range d.NotCompared {
 		if nc.Remote != "" {
+			partial[nc.Part] = true
+			unguarded = append(unguarded, string(nc.Part)+" of "+nc.Remote+" ("+nc.Reason+")")
 			continue
 		}
 		reason := nc.Reason
@@ -342,7 +347,13 @@ func printGuardSummary(w io.Writer, c *runstate.RemoteChanges) {
 	if len(unguarded) == 0 {
 		return
 	}
-	fmt.Fprintln(w, fence.SanitizeTerminalLine("--forbid-remote-changes: not guarded (not compared): "+strings.Join(unguarded, "; ")+"; guarded: "+joinParts(d.Observed)))
+	var guarded []runstate.RemotePart
+	for _, part := range d.Observed {
+		if !partial[part] {
+			guarded = append(guarded, part)
+		}
+	}
+	fmt.Fprintln(w, fence.SanitizeTerminalLine("--forbid-remote-changes: not guarded (not compared): "+strings.Join(unguarded, "; ")+"; guarded: "+joinParts(guarded)))
 	if prReason != "" {
 		fmt.Fprintln(w, fence.SanitizeTerminalLine(prNotGuarded+prReason))
 	}
