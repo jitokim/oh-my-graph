@@ -137,3 +137,47 @@ func TestRunAuto_AForbiddenRemoteChangeInASingleCycleStillExits6(t *testing.T) {
 		t.Errorf("err = %v, want %q", err, forbiddenBranchNamed)
 	}
 }
+
+// autoGuardLine is a guarded auto leg's guard line, at launch and at the end
+// alike: its planned nodes run without engine worktrees, so no new branch or
+// pull request can be attributed to the run and only remotes are guarded.
+const autoGuardLine = "--forbid-remote-changes: not guarded: branches (auto: no run branches); pull_requests (auto: no run branches); guarded: remotes"
+
+// A guarded auto run that read every part still names branches and pull
+// requests not guarded, once at launch (followed by its blank line) and once
+// beside the change record, and claims only remotes as guarded.
+func TestRunAuto_AGuardedRunNamesBranchesAndPullRequestsNotGuarded(t *testing.T) {
+	out, err, _ := runGuardedGoal(t, 0, cycleAssessMet, cycleAssessMet, "--forbid-remote-changes")
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if got := strings.Count(out, autoGuardLine+"\n"); got != 2 {
+		t.Fatalf("guard line seen %d times, want 2 (launch and end):\n%s", got, out)
+	}
+	launch := strings.Index(out, autoGuardLine)
+	end := strings.LastIndex(out, autoGuardLine)
+	if !strings.HasPrefix(out[launch+len(autoGuardLine):], "\n\n") {
+		t.Errorf("the launch line must be followed by its blank line:\n%s", out)
+	}
+	for _, line := range []string{lineContaining(t, out[:end], "not guarded"), lineContaining(t, out[end:], "not guarded")} {
+		if _, guarded, _ := strings.Cut(line, "; guarded: "); guarded != "remotes" {
+			t.Errorf("guarded part of %q = %q, want only remotes", line, guarded)
+		}
+	}
+	if strings.Contains(out, "PR part not guarded") {
+		t.Errorf("every part was read; no PR-unavailable notice may print:\n%s", out)
+	}
+}
+
+// Unguarded, the same auto run prints no guard line at all.
+func TestRunAuto_AnUnguardedRunPrintsNoGuardLine(t *testing.T) {
+	out, err, _ := runGuardedGoal(t, 0, cycleAssessMet, cycleAssessMet)
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	for _, never := range []string{"not guarded", "--forbid-remote-changes"} {
+		if strings.Contains(out, never) {
+			t.Errorf("an unguarded auto run must not print %q:\n%s", never, out)
+		}
+	}
+}

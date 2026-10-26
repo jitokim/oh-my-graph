@@ -60,6 +60,7 @@ type remoteLeg struct {
 	recorder      *runstate.SnapshotRecorder
 	baseSHA       string
 	guarded       bool
+	noRunBranches bool
 	guardedBefore *worktree.GuardedBefore
 	changes       runstate.RemoteChanges
 }
@@ -77,6 +78,27 @@ func beginRemoteLeg(ctx context.Context, runID string, recorder *runstate.Snapsh
 	l.changes.BeginLeg(l.snapshot(ctx))
 	l.record()
 	return l
+}
+
+// autoNoRunBranches is the reason a guarded auto leg names its branches and
+// pull requests not guarded: its planned nodes run without engine worktrees
+// (validatePlannedNodeWorktree), so no commit of theirs is on the run's own
+// branches and every new branch or pull request reads not_attributable —
+// only a new remote can fail it.
+const autoNoRunBranches = "auto: no run branches"
+
+// withoutRunBranches marks the leg as an auto run's, whose planned nodes
+// create no run branch: its guard notices then never claim the branches or
+// pull-request parts as guarded. Unset — every `run` — they read as before.
+func (l *remoteLeg) withoutRunBranches(auto bool) *remoteLeg {
+	l.noRunBranches = auto
+	return l
+}
+
+// runBranchPart reports whether part's guard rests on the run's own branches,
+// as a new branch's or pull request's attribution does (ADR 0046 §5.1).
+func runBranchPart(part runstate.RemotePart) bool {
+	return part == runstate.RemotePartBranches || part == runstate.RemotePartPullRequests
 }
 
 // snapshot reads the remote state: by remote name on an unguarded leg, as
@@ -290,7 +312,7 @@ func (l *remoteLeg) record() {
 func (l *remoteLeg) print(w io.Writer) {
 	printRemoteChanges(w, &l.changes)
 	if l.guarded {
-		printGuardSummary(w, &l.changes)
+		printGuardSummary(w, &l.changes, l.noRunBranches)
 	}
 }
 
@@ -301,7 +323,10 @@ const prNotGuarded = "PR part not guarded: "
 // printLaunchNotice names, on a guarded leg, each part its before snapshot
 // could not read (ADR 0046 §5.2): the leg still runs, and its verdict uses
 // only the parts observed, since an unavailable part yields no entries. An
-// unguarded leg, or a guarded one that read every part, prints nothing.
+// unguarded leg, or a guarded one that read every part, prints nothing. An
+// auto leg (noRunBranches) always prints: its branches and pull requests are
+// not guarded whatever was read, so each part not guarded carries its own
+// reason, an unavailable one prefixed as such.
 func (l *remoteLeg) printLaunchNotice(w io.Writer) {
 	n := len(l.changes.Legs)
 	if !l.guarded || n == 0 {
@@ -313,6 +338,10 @@ func (l *remoteLeg) printLaunchNotice(w io.Writer) {
 	prReason := ""
 	for _, part := range []runstate.RemotePart{runstate.RemotePartRemotes, runstate.RemotePartBranches, runstate.RemotePartPullRequests} {
 		reason, observed := remotePartReason(before, part)
+		if observed && l.noRunBranches && runBranchPart(part) {
+			unavailable = append(unavailable, string(part)+" ("+autoNoRunBranches+")")
+			continue
+		}
 		if observed {
 			guarded = append(guarded, part)
 			continue
@@ -320,7 +349,11 @@ func (l *remoteLeg) printLaunchNotice(w io.Writer) {
 		if reason == "" {
 			reason = "no reason recorded"
 		}
-		unavailable = append(unavailable, string(part)+" ("+reason+")")
+		if l.noRunBranches {
+			unavailable = append(unavailable, string(part)+" (unavailable at this leg's start: "+reason+")")
+		} else {
+			unavailable = append(unavailable, string(part)+" ("+reason+")")
+		}
 		if part == runstate.RemotePartPullRequests {
 			prReason = reason
 		}
@@ -328,7 +361,11 @@ func (l *remoteLeg) printLaunchNotice(w io.Writer) {
 	if len(unavailable) == 0 {
 		return
 	}
-	fmt.Fprintln(w, fence.SanitizeTerminalLine("--forbid-remote-changes: not guarded (unavailable at this leg's start): "+strings.Join(unavailable, "; ")+"; guarded: "+joinParts(guarded)))
+	header := "--forbid-remote-changes: not guarded (unavailable at this leg's start): "
+	if l.noRunBranches {
+		header = "--forbid-remote-changes: not guarded: "
+	}
+	fmt.Fprintln(w, fence.SanitizeTerminalLine(header+strings.Join(unavailable, "; ")+"; guarded: "+joinParts(guarded)))
 	if prReason != "" {
 		fmt.Fprintln(w, fence.SanitizeTerminalLine(prNotGuarded+prReason))
 	}
@@ -341,8 +378,10 @@ func (l *remoteLeg) printLaunchNotice(w io.Writer) {
 // piece not compared is named, a remote's own branches (one added or removed
 // during the leg) as "branches of <remote>", and "guarded" names only the
 // parts compared for every remote: a part any remote's piece of which was not
-// compared is never claimed as guarded.
-func printGuardSummary(w io.Writer, c *runstate.RemoteChanges) {
+// compared is never claimed as guarded. On an auto leg (noRunBranches) the
+// branches and pull-request parts are never claimed either: each is named
+// with autoNoRunBranches, and what was not compared says so in its reason.
+func printGuardSummary(w io.Writer, c *runstate.RemoteChanges, noRunBranches bool) {
 	n := len(c.Legs)
 	if n == 0 || c.Legs[n-1].Changes == nil {
 		return
@@ -352,10 +391,16 @@ func printGuardSummary(w io.Writer, c *runstate.RemoteChanges) {
 	var unguarded []string
 	partial := map[runstate.RemotePart]bool{}
 	prReason := ""
+	notCompared := func(reason string) string {
+		if noRunBranches {
+			return "not compared: " + reason
+		}
+		return reason
+	}
 	for _, nc := range d.NotCompared {
 		if nc.Remote != "" {
 			partial[nc.Part] = true
-			unguarded = append(unguarded, string(nc.Part)+" of "+nc.Remote+" ("+nc.Reason+")")
+			unguarded = append(unguarded, string(nc.Part)+" of "+nc.Remote+" ("+notCompared(nc.Reason)+")")
 			continue
 		}
 		reason := nc.Reason
@@ -368,21 +413,28 @@ func printGuardSummary(w io.Writer, c *runstate.RemoteChanges) {
 				reason = before
 			}
 		}
-		unguarded = append(unguarded, string(nc.Part)+" ("+reason+")")
+		unguarded = append(unguarded, string(nc.Part)+" ("+notCompared(reason)+")")
 		if nc.Part == runstate.RemotePartPullRequests {
 			prReason = reason
+		}
+	}
+	var guarded []runstate.RemotePart
+	for _, part := range d.Observed {
+		switch {
+		case noRunBranches && runBranchPart(part):
+			unguarded = append(unguarded, string(part)+" ("+autoNoRunBranches+")")
+		case !partial[part]:
+			guarded = append(guarded, part)
 		}
 	}
 	if len(unguarded) == 0 {
 		return
 	}
-	var guarded []runstate.RemotePart
-	for _, part := range d.Observed {
-		if !partial[part] {
-			guarded = append(guarded, part)
-		}
+	header := "--forbid-remote-changes: not guarded (not compared): "
+	if noRunBranches {
+		header = "--forbid-remote-changes: not guarded: "
 	}
-	fmt.Fprintln(w, fence.SanitizeTerminalLine("--forbid-remote-changes: not guarded (not compared): "+strings.Join(unguarded, "; ")+"; guarded: "+joinParts(guarded)))
+	fmt.Fprintln(w, fence.SanitizeTerminalLine(header+strings.Join(unguarded, "; ")+"; guarded: "+joinParts(guarded)))
 	if prReason != "" {
 		fmt.Fprintln(w, fence.SanitizeTerminalLine(prNotGuarded+prReason))
 	}
