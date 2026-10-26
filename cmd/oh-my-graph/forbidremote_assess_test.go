@@ -99,7 +99,9 @@ func TestRunAuto_TheAssessorIsToldTheGuardTheEndLineNames(t *testing.T) {
 // A guarded run whose repository config was unreadable at the after, or
 // whose commit check's own read failed with the config still readable, names
 // branches and pull requests not guarded with that attribution-unavailable
-// reason, on its end line and in the block its assessor would read.
+// reason, on its end line and in the block its assessor would read. The
+// block still names them compared and quotes their entries: the engine saw
+// them, it only could not attribute in them.
 func TestRunGraph_AnUnreadableConfigIsNamedAlikeOnTheEndLineAndToTheAssessor(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -145,6 +147,15 @@ func TestRunGraph_AnUnreadableConfigIsNamedAlikeOnTheEndLineAndToTheAssessor(t *
 			prompt := fake.Invocations()[0].Prompt
 			if want := "\n  not guarded: branches (" + tc.reason + "); pull_requests (" + tc.reason + ")\n"; !strings.Contains(prompt, want) {
 				t.Errorf("assessor prompt lacks %q:\n%s", want, prompt)
+			}
+			if got := lineContaining(t, prompt, "  compared: "); got != "  compared: remotes, branches, pull_requests" {
+				t.Errorf("compared line = %q, want %q:\n%s", got, "  compared: remotes, branches, pull_requests", prompt)
+			}
+			if strings.Contains(prompt, "  not compared: ") {
+				t.Errorf("assessor prompt names a part not compared:\n%s", prompt)
+			}
+			if !strings.Contains(prompt, "\n  leg 1: branch_created origin/feat/x at ") {
+				t.Errorf("assessor prompt does not quote the pushed branch's entry:\n%s", prompt)
 			}
 			assertSameGuard(t, endLine, prompt)
 		})

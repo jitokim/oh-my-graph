@@ -934,7 +934,9 @@ var remoteParts = []runstate.RemotePart{runstate.RemotePartRemotes, runstate.Rem
 // why — worktree.GuardOfLeg's rule for each leg, the one the CLI's end line
 // renders (noRunBranches is an auto run's). A part not compared is
 // named there whatever the caps leave out, so the block never reads as "no
-// changes" where the engine could not see.
+// changes" where the engine could not see. A part whose attribution was
+// unavailable (worktree.IsAttributionUnavailable) was seen and compared, and
+// its entries are quoted: only its guard judgement names the reason.
 //
 // Everything that carries repository or gh text — a remote or branch name, a
 // URL, a PR's head ref, a not-compared reason — goes inside a nonce fence as
@@ -963,6 +965,11 @@ func writeRemoteChangesBlock(b *strings.Builder, c *runstate.RemoteChanges, guar
 	for _, src := range sources {
 		seen := map[runstate.RemotePart]bool{}
 		for _, nc := range src.diff.NotCompared {
+			if src.ownLeg && worktree.IsAttributionUnavailable(nc) {
+				// Compared, only not attributable: GuardOfLeg names it
+				// not guarded, with its reason, below.
+				continue
+			}
 			notCompared[nc.Part] = true
 			seen[nc.Part] = true
 			part := string(nc.Part)
