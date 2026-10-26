@@ -1263,6 +1263,30 @@ without the flag. So a push of the run's own commits onto a branch that
 already existed, `main` included, is reported and never fails the run
 (docs/LIMITATIONS.md).
 
+*Where the commit check could not run, the leg says so.* The check reads the
+repository and its config, so a node that breaks that config can make the
+check fail on its own commit, and one that writes `.git/shallow` can hide
+its commit's parents from it. On a guarded `run` leg whose *after* could not
+read the repository's config, or whose check's own git read failed — not a
+proven false — the leg's observed `branches` and `pull_requests` parts get a
+`not_compared` item with the reason `attribution unavailable: repository
+config unreadable` when the config fingerprint read failed, or `attribution
+unavailable: attribution check read failed` for any other failure of the
+check's own git read (a timeout, say); when the shallow file in the common
+git dir is not what the *before* pinned (its SHA-256, kept in memory only),
+the reason is `attribution unavailable: shallow boundary changed`. The
+config reason wins when both reads failed. The entries keep the
+label the check answered, nothing more is forbidden, and a leg whose nodes
+all passed exits 0; the end line (below) names those parts not guarded with
+the reason and never as guarded. A config that changed but stays readable
+(an `insteadOf`, say) is read by the check as usual, so a node's own push
+behind it is still `run_commit` and exits 6. The check's `rev-parse`,
+`merge-base` and `for-each-ref` run with `GIT_NO_REPLACE_OBJECTS=1` and
+`GIT_GRAFT_FILE=/dev/null`, so neither `refs/replace` nor
+`.git/info/grafts` can make a node's commit read as an ancestor of the
+base. An `auto` leg names those parts not guarded already, with `auto: no
+run branches`.
+
 A forbidden entry ends the leg with `RemoteChangeForbiddenError`, **exit 6**,
 printed on stderr like exit 1: `oh-my-graph: new remote state observed during
 the run, and --forbid-remote-changes was set: <entry> (<label>); …`. It is
@@ -1282,7 +1306,11 @@ count is looked at (ADR 0023 §2.6 as amended: exit 1 or 6 ↔ `FAIL`). An
 unguarded run's statuses are unchanged by the flag's existence: its node
 count still answers first (ADR 0046 §8.4). In a goal loop a guarded
 failure is a failed cycle: the assessor gets `RunPassed=false` and the loop
-goes on to its next cycle, as after any failed run.
+goes on to its next cycle, as after any failed run. `auto` exits 6 only when
+the final cycle's run made a forbidden change, its last line naming it as
+`run` does; one made only in a non-final cycle is that failed cycle and
+nothing more, so the final cycle alone decides the exit code and message,
+which do not mention it.
 
 *An unavailable part is not guarded.* The run still starts; the verdict uses
 only the parts compared. A guarded leg whose *before* snapshot could not read
@@ -1301,6 +1329,14 @@ part lost only at the *after* snapshot, or an interrupted *after*, included:
 PR part not guarded: not authenticated
 ```
 
+A leg whose attribution was unavailable says so on the same line, with the
+plain header:
+
+```
+--forbid-remote-changes: not guarded: branches (attribution unavailable: repository config unreadable); pull_requests (attribution unavailable: repository config unreadable); guarded: remotes
+PR part not guarded: attribution unavailable: repository config unreadable
+```
+
 The `PR part not guarded: <reason>` line appears only when `pull_requests` is
 among those parts, so an operator who reads only the end of the output still
 sees it; `<reason>` is the part's reason (gh's own `detail` stays in
@@ -1314,7 +1350,10 @@ env as a temporary remote, never on the argv of the git process the engine
 starts, which needs git 2.31 or later, else the branches read as not
 guarded — so removing or re-pointing a remote
 cannot hide a push (a re-pointed remote's new repository is named `not
-compared`); a remote added during the leg is read by name, and a *before* URL
+compared`); when the repository's own config changed since the *before*, or
+cannot be read, or `git remote -v` fails, those reads run from an empty
+temporary directory outside the repository, with only global and env config;
+a remote added during the leg is read by name, and a *before* URL
 that cannot be read leaves `branches` not compared, which the end line says. A resumed leg prints its own launch notice from its own
 *before*. An unguarded run prints neither notice.
 
@@ -4286,6 +4325,17 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   Fixed markers would be forgeable by the very material they fence: an
   injected artifact could close its own block and speak from apparent
   outside it.
+  Right after the run-outcome line comes an `ENGINE-OBSERVED remote changes`
+  block (ADR 0046 §3.1, guarded run or not), built from the run's remote
+  change record: the entry counts and which parts were compared or guarded
+  outside the fence, every entry and not-compared reason (repository and `gh`
+  text) inside a nonce fence, each line cut to 300 bytes; with no record it is
+  one line saying the remote state is unknown, not "no changes". The block
+  names its guarded and not-guarded parts with the CLI end line's own rule
+  and reasons (`worktree.GuardOfLeg`): a guarded `auto` run reads `guarded:
+  remotes` and `branches` and `pull_requests` not guarded, `auto: no run
+  branches`, and an `attribution unavailable: …` reason reads word for word
+  as on the end line.
   **A node with a `verification` record gets an engine verification block**
   (#332; `cycleEvidence` copies the record into
   `coordinator.NodeVerification`, so the coordinator still does not import

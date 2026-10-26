@@ -697,6 +697,10 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 	// The commit read above, before the interview; held by the coordinator so
 	// every cycle of the goal loop measures scope from it (#414).
 	options = append(options, coordinator.WithStartCommit(startCommit))
+	// The planner hint of --forbid-remote-changes, on the coordinator so every
+	// cycle's prompt carries it (ADR 0046 §5.2); the snapshot is still what
+	// enforces the flag.
+	options = append(options, remoteChangesOptions(flags.forbidRemoteChanges)...)
 	coord := coordinator.New(nodeRunner, options...)
 	return planAndExecute(ctx, os.Stdout, coord, nodeRunner, flags.commonRunFlags, flags.goal,
 		goalCycleOptions{maxCycles: flags.maxCycles, maxGoalBudgetUSD: flags.maxGoalBudgetUSD}, flags.planOnly, nil,
@@ -1298,7 +1302,10 @@ func executeGraph(ctx context.Context, runID string, g *graph.Graph, nodeRunner 
 	// The leg's remote record brackets the scheduler (ADR 0046 §2.1). A remote
 	// it cannot read never stops the leg; only a guarded run's forbidden entry
 	// changes its exit (§5.1).
-	remote := beginRemoteLeg(ctx, runID, recorder, baseSHA, nil, flags.forbidRemoteChanges)
+	// An auto run's planned nodes create no run branch, so its guard notices
+	// never claim the branches or pull requests (the tool ceiling is the
+	// auto discriminator, as for serializedVerify above).
+	remote := beginRemoteLeg(ctx, runID, recorder, baseSHA, nil, flags.forbidRemoteChanges).withoutRunBranches(len(toolPolicies) > 0)
 	// An interrupt during the before snapshot ends the leg here, as one before
 	// any node started: the scheduler is never entered, the after snapshot is
 	// recorded interrupted and the record printed as on the normal path, so

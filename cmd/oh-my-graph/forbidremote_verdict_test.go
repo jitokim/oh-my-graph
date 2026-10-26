@@ -198,7 +198,7 @@ func TestRunGraph_AGuardedRunNeverFailsOnAnEntryThatIsNotForbidden(t *testing.T)
 		{
 			// §8.15: a sha absent from the object store, and a PR whose head
 			// is on no run branch — the fake's not-a-run-commit answer for
-			// both, as cat-file -e or the ancestry check gives it.
+			// both, as rev-parse --verify or the ancestry check gives it.
 			name: "an unrelated branch and PR",
 			change: func(obs *worktree.FakeRemoteObserver, prs *remote.FakePRLister) {
 				pushBranch("human", remoteHumaSHA)(obs, prs)

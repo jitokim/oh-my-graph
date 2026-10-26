@@ -550,7 +550,7 @@ has no open issue behind it.
   the ledger table). Without the flag it changes no verdict and no exit code:
   a push the goal forbade still exits 0. With it (`run` or `auto`, carried by
   `resume`), a new branch or pull request at a commit this run made, or a new
-  remote, fails the run with exit 6 — and nothing else does:
+  remote, fails the run with exit 6 — and no other kind of change does:
   <br>**A push onto an existing branch never fails the run.** Pushing the
   run's own commits onto a branch that already existed at the leg's start,
   `main` included, is `branch_moved`; updating an open PR is `pr_updated`.
@@ -584,6 +584,12 @@ has no open issue behind it.
   on a branch it renamed, or with no `worktree:` on the invocation
   repository's own branch, is labelled `not_attributable`, so its new branch
   or PR does not fail a guarded run.
+  <br>**In `auto`, only a new remote can fail a guarded run.** A planned node
+  runs without an engine worktree, so a commit it makes is on no
+  `omg/<run-id>/` branch and its own push is never attributable: a branch or
+  PR it creates is `not_attributable`, and only `remote_added` can fail a
+  guarded `auto` run. Its guard lines name both parts not guarded, with the
+  reason `auto: no run branches`. This holds until a follow-up decision.
   <br>**Anything outside configured remotes, remote branch heads and open
   pull requests' head shas:** tags, releases, PR and issue comments, labels,
   reviews and CI state. A PR is `pr_updated` only when its head sha moves.
@@ -618,6 +624,48 @@ has no open issue behind it.
   compared, and the end line says so), a push that names a URL directly with
   no remote (`git push https://other/x.git …`), or a push made after changing
   a remote's `pushurl` to another server: the guard never reads those servers.
+  <br>**A remote added and pushed to before `.git/config` breaks.** When the
+  repository's config changed or cannot be read at the end, a guarded leg
+  reads each start fetch URL from an empty directory outside the repository,
+  so breaking `.git/config` or adding an `insteadOf` there does not hide or
+  redirect a push to a remote the leg started with. Only a remote a node
+  added during the leg has no start fetch URL: once `git remote -v` fails at
+  the end, its branches are not read, and the remotes part, where it would
+  have shown, is reported "not guarded".
+  <br>**A broken config leaves a guarded `run` leg's branches and pull
+  requests not guarded.** The check behind `run_commit` reads the
+  repository's config too, so a node that makes it unreadable (a garbage
+  line, no read permission) can make the check fail on its own commit. When
+  the end snapshot could not read the config, or a check's git read failed,
+  that leg's push is recorded `not_attributable` and does not fail the run:
+  a broken config alone exits 0 when every node passed. The end line names
+  the branches and pull requests not guarded, `branches (attribution
+  unavailable: repository config unreadable); pull_requests (…)` when the
+  config could not be read, or `attribution unavailable: attribution check
+  read failed` when the config still reads but the check's own git read
+  failed (a timeout, say), never as guarded, and the record keeps the reason
+  as a `not compared` item. A
+  config that changed but can still be read, such as an `insteadOf`, does
+  not do this: the check reads it, and a node's own push behind it still
+  fails the guarded run with exit 6.
+  <br>**A shallow boundary written during the leg does the same.** A node
+  that writes `.git/shallow` can hide its commit's parents from the check,
+  and no git setting turns that file off. A guarded `run` leg compares the
+  file in the common git dir with what its start saw; when it changed, the
+  end line names the branches and pull requests not guarded with
+  `attribution unavailable: shallow boundary changed`, and the run is not
+  failed for it. A repository already shallow at the start, and unchanged,
+  is checked as any other.
+  <br>**Replace refs and grafts are ignored by the check.** The check runs
+  git with `GIT_NO_REPLACE_OBJECTS=1` and `GIT_GRAFT_FILE=/dev/null`, so a
+  node cannot use `git replace` or `.git/info/grafts` to make its own commit
+  read as already in the base's history.
+  <br>**A changed repository config leaves only the global config.** That
+  outside read uses no repository config, so a credential helper set
+  only in the repository is not used there: a remote that needs it fails to
+  authenticate, and its branches show as not guarded. A node that changes
+  the global config (`~/.gitconfig`) is outside this guard: the change is not
+  detected, and every read applies it.
   <br>**Git older than 2.31 leaves the branches unguarded.** The guarded end
   read passes the start URL through `GIT_CONFIG_*` env, which git reads only
   from 2.31; with an older git, every remote's branches read as not guarded in

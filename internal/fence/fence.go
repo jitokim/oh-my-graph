@@ -11,9 +11,11 @@
 //
 // Seven callers share Nonce (six call sites call it directly; internal/interview
 // reaches it through its mintNonce seam): assess.go's engine-recorded material —
-// node details, artifact excerpts and the previous cycle's `remaining` — which is
-// raw model output by design (ADR 0011 §2), plus coordinator.go's continuation
-// quote of that same `remaining` into the next cycle's planner prompt,
+// node details, artifact excerpts, the ENGINE-OBSERVED remote changes block (ADR
+// 0046 §3.1) and the previous cycle's `remaining` — which is raw model output by
+// design (ADR 0011 §2), plus coordinator.go's continuation quote of that same
+// `remaining` into the next cycle's planner prompt, after the
+// --forbid-remote-changes sentence when there is one (ADR 0046 §5.2),
 // reusemenu.go's reuse menu, whose summaries are repository-authored prose the
 // planner reads unreviewed on the committed path (ADR 0038 §9.2), repair.go's
 // quote of the validator's refusals into a re-plan prompt, retryfeedback.go's

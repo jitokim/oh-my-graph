@@ -2,12 +2,14 @@ package main
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/jitokim/oh-my-graph/internal/remote"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
+	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/runstatus"
 	"github.com/jitokim/oh-my-graph/internal/worktree"
 )
@@ -284,4 +286,68 @@ func TestRunGraph_AnUnguardedRunWithARemoteRemovedPrintsNoGuardNotice(t *testing
 			t.Errorf("an unguarded run printed %q:\n%s", never, out)
 		}
 	}
+}
+
+// pushThenBreakRemotes is a node that pushes the run's own commit to a new
+// branch and then corrupts .git/config, so `git remote -v` fails at the after.
+func pushThenBreakRemotes(obs *worktree.FakeRemoteObserver, prs *remote.FakePRLister) {
+	pushBranch("feat/x", remoteRunSHA)(obs, prs)
+	obs.SetRemotes(nil, errors.New("fatal: bad config line 1 in file .git/config"))
+}
+
+// A guarded after that cannot list the remotes still reads origin through its
+// before fetch URL: the push is a run_commit branch_created and fails the run
+// with exit 6, while the remotes part is said not guarded. Unguarded, the
+// branches part is unavailable as it always was, and the run passes.
+func TestRunGraph_AGuardedRunComparesBranchesThroughTheBeforeURLsWhenTheRemotesCannotBeListed(t *testing.T) {
+	t.Run("guarded", func(t *testing.T) {
+		isolateRunHome(t)
+		obs, prs := guardedRemote(t, nil)
+		out, err := runWithRemoteChange(t, obs, prs, pushThenBreakRemotes, "--forbid-remote-changes")
+		var forbidden *RemoteChangeForbiddenError
+		if !errors.As(err, &forbidden) || exitCodeForError(err) != 6 {
+			t.Fatalf("err = %v (exit %d), want a *RemoteChangeForbiddenError and exit 6", err, exitCodeForError(err))
+		}
+		named := "branch_created origin/feat/x at 333333333333 (observed during the run; points at a commit this run made)"
+		if !strings.Contains(err.Error(), named) {
+			t.Errorf("message does not name %q:\n%s", named, err)
+		}
+		runID := soleRunID(t)
+		snap := remoteRunSnapshot(t, runID)
+		lastLegChanges(t, snap)
+		after := snap.RemoteChanges.Legs[len(snap.RemoteChanges.Legs)-1].After
+		if after.Remotes.Status != runstate.RemotePartUnavailable || after.Branches.Status != runstate.RemotePartObserved {
+			t.Errorf("after = remotes %+v, branches %+v; want remotes unavailable, branches observed", after.Remotes, after.Branches)
+		}
+		summary := lineContaining(t, out, "not guarded (not compared)")
+		if !strings.Contains(summary, "remotes (") || strings.Contains(summary, "branches (") || !strings.Contains(summary, "guarded: branches") {
+			t.Errorf("summary line %q: want remotes not guarded and branches guarded", summary)
+		}
+		assertAllNodesPassed(t, runID, "work")
+		assertRunReads(t, runID, runstatus.Fail, runfeed.OutcomeFailed)
+	})
+	t.Run("unguarded", func(t *testing.T) {
+		isolateRunHome(t)
+		obs, prs := guardedRemote(t, nil)
+		_, err := runWithRemoteChange(t, obs, prs, pushThenBreakRemotes)
+		if err != nil || exitCodeForError(err) != 0 {
+			t.Fatalf("err = %v (exit %d), want nil and exit 0", err, exitCodeForError(err))
+		}
+		runID := soleRunID(t)
+		snap := remoteRunSnapshot(t, runID)
+		changes := lastLegChanges(t, snap)
+		after := snap.RemoteChanges.Legs[len(snap.RemoteChanges.Legs)-1].After
+		want := runstate.BranchesSnapshot{Status: runstate.RemotePartUnavailable,
+			Reason: "the remotes part is unavailable: fatal: bad config line 1 in file .git/config"}
+		if !reflect.DeepEqual(after.Branches, want) {
+			t.Errorf("after branches = %+v, want %+v", after.Branches, want)
+		}
+		if len(changes.Entries) != 0 {
+			t.Errorf("entries = %+v, want none: no git part was compared", changes.Entries)
+		}
+		if calls := obs.URLCalls(); len(calls) != 0 {
+			t.Errorf("an unguarded run read through URLs %v", calls)
+		}
+		assertRunReads(t, runID, runstatus.Pass, runfeed.OutcomePassed)
+	})
 }

@@ -221,9 +221,29 @@ func TestGitManager_CommitAttributable(t *testing.T) {
 		{"a manager with no run id", NewGitManager(repo, "", ""), runCommit, base, false},
 	}
 	for _, tc := range cases {
-		if got := tc.m.CommitAttributable(ctx, tc.sha, tc.base); got != tc.want {
-			t.Errorf("%s: CommitAttributable = %v, want %v", tc.name, got, tc.want)
+		if got, err := tc.m.CommitAttributable(ctx, tc.sha, tc.base); got != tc.want || err != nil {
+			t.Errorf("%s: CommitAttributable = %v, %v; want %v, proven", tc.name, got, err, tc.want)
 		}
+	}
+
+	// A config git cannot read fails every read of the check: the false is
+	// then an error, never a proven "not the run's", and the error quotes
+	// nothing of the config.
+	config := filepath.Join(repo, ".git", "config")
+	f, err := os.OpenFile(config, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("[omg]\n\ttoken = omg-config-token-9876\nthis is not config\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	got, err := m.CommitAttributable(ctx, runCommit, base)
+	if got || err == nil {
+		t.Fatalf("CommitAttributable under a broken config = %v, %v; want false with an error", got, err)
+	}
+	if strings.Contains(err.Error(), "omg-config-token-9876") {
+		t.Errorf("the error quotes the config: %v", err)
 	}
 }
 

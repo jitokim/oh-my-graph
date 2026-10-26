@@ -102,7 +102,9 @@ a cycle.
 
 Add `--forbid-remote-changes` to a `run` or `auto` whose goal must not touch
 the remote: a new branch or pull request at a commit the run made, or a new
-remote, then fails the run with exit 6. A push onto an existing branch is
+remote, then fails the run with exit 6. In `auto` only a new remote does,
+since a planned node's own push is never attributable, and `auto` exits 6 only
+when its final cycle's run added it. A push onto an existing branch is
 reported, not failed ([docs/LIMITATIONS.md](../docs/LIMITATIONS.md)).
 
 ## Prerequisite: `oh-my-graph` on `$PATH`

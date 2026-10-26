@@ -25,8 +25,9 @@ not retry until the tree, the command, or its `--verify-timeout` is fixed.
 
 With `--forbid-remote-changes`, a run that observes a new branch or pull
 request at a commit it made, or a new remote, fails with exit 6 and reads
-`FAIL`. Show the user the forbidden entries it names; do not undo the push
-yourself.
+`FAIL`. In `auto` only a new remote does (a planned node's own push is never
+attributable), and `auto` exits 6 only when its final cycle's run added it.
+Show the user the forbidden entries it names; do not undo the push yourself.
 
 Nodes run on the user's saved Claude login. oh-my-graph's other runtime is
 selected by a global `--runtime codex` placed BEFORE the subcommand, which this

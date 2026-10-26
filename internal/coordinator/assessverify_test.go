@@ -431,8 +431,8 @@ func TestAssessMaterial_VerifyCommandCannotWriteItsOwnLines(t *testing.T) {
 			t.Errorf("the command wrote its own line %q:\n%s", line, material)
 		}
 	}
-	if got := strings.Count(material, "\nENGINE-OBSERVED"); got != 1 {
-		t.Errorf("%d lines start ENGINE-OBSERVED, want exactly 1:\n%s", got, material)
+	if got := strings.Count(material, "\nENGINE-OBSERVED verification"); got != 1 {
+		t.Errorf("%d lines start ENGINE-OBSERVED verification, want exactly 1:\n%s", got, material)
 	}
 	if got := countEngineFences(material, verifyNonce); got != 2 {
 		t.Errorf("%d nonce-bearing fences, want 2 (node results only; no output, no artifact):\n%s", got, material)

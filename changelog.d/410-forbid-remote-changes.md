@@ -34,6 +34,18 @@
   2.31 or later, else the branches read as not guarded), so removing or
   re-pointing a remote cannot hide a push; a remote added during the leg is read by name, and a start URL that
   cannot be read leaves the branches part not compared, which the end line
-  says. In a goal loop a guarded failure is a failed cycle. Without the
+  says. A node that makes the repository's config unreadable can make the
+  commit check fail on its own commit, and one that writes `.git/shallow`
+  can hide its commit's parents from it: when a guarded `run` leg's end
+  could not read the config, a check's own git read failed, or the shallow
+  file changed during the leg, the push is recorded `not_attributable` and
+  does not fail the run, and the end line names the branches and pull
+  requests not guarded, `attribution unavailable: repository config
+  unreadable` (only when the config could not be read), `attribution
+  unavailable: attribution check read failed` (any other failure of the
+  check's own git read, a timeout say) or `attribution unavailable: shallow
+  boundary changed`, a reason the record keeps. The check ignores replace refs and grafts
+  (`GIT_NO_REPLACE_OBJECTS=1`, `GIT_GRAFT_FILE=/dev/null`). In a goal loop a
+  guarded failure is a failed cycle. Without the
   flag nothing else changes.
   ([#410](https://github.com/jitokim/oh-my-graph/issues/410))

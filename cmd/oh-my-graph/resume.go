@@ -828,7 +828,9 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// A resumed leg takes its own before snapshot (ADR 0046 §3.1): what
 	// changed while the run was stopped is recorded between the legs and
 	// never attributed.
-	remote := beginRemoteLeg(ctx, runID, recorder, snap.RunBaseSHA, snap.RemoteChanges, snap.ForbidRemoteChanges)
+	// A resumed auto leg names its branches and pull requests not guarded,
+	// as its first leg did (snap.ToolPolicies is the auto discriminator).
+	remote := beginRemoteLeg(ctx, runID, recorder, snap.RunBaseSHA, snap.RemoteChanges, snap.ForbidRemoteChanges).withoutRunBranches(len(snap.ToolPolicies) > 0)
 	// An interrupt during the before snapshot ends the leg before any node
 	// starts, its record printed, as in executeGraph, and before this leg's
 	// gate decisions and carried records are written, so the run is still

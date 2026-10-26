@@ -147,3 +147,40 @@ func TestPlannerPromptGoldens_VerifyCommand(t *testing.T) {
 	first, _, _ := plannerPrompts(t, WithVerifyCommand(VerifyCommand{Command: goldenVerifyCommand}))
 	checkPlannerGolden(t, "first-verify-cmd", first.Prompt)
 }
+
+// ADR 0046 §8 test 11: the first-cycle prompt with --forbid-remote-changes, so
+// the one planner sentence (§5.2) is a reviewed golden diff. Without the
+// option every other golden here is the prompt unchanged.
+func TestPlannerPromptGoldens_ForbidRemoteChanges(t *testing.T) {
+	first, _, _ := plannerPrompts(t, WithForbidRemoteChanges())
+	checkPlannerGolden(t, "first-forbid-remote", first.Prompt)
+}
+
+// ADR 0046 §5.2: the cycle-2 continuation prompt with --forbid-remote-changes,
+// so the sentence's place in it — where the first-cycle golden puts it, before
+// the continuation section — is a reviewed golden diff too.
+func TestPlannerPromptGoldens_ForbidRemoteChangesContinuation(t *testing.T) {
+	_, _, continuation := plannerPrompts(t, WithForbidRemoteChanges())
+	checkPlannerGolden(t, "continuation-forbid-remote", continuation.Prompt)
+}
+
+// ADR 0046 §5.2: the sentence reaches the first attempt, its repair and a
+// continuation exactly once each, before the continuation section; without
+// the option it reaches none of them.
+func TestPlannerPrompt_ForbidRemoteChangesSentence(t *testing.T) {
+	first, repair, continuation := plannerPrompts(t, WithForbidRemoteChanges())
+	for name, call := range map[string]runner.NodeInvocation{"first": first, "repair": repair, "continuation": continuation} {
+		if n := strings.Count(call.Prompt, plannerForbidRemoteChangesSentence); n != 1 {
+			t.Errorf("%s prompt carries the forbid-remote sentence %d times, want 1", name, n)
+		}
+	}
+	if s, c := strings.Index(continuation.Prompt, plannerForbidRemoteChangesSentence), strings.Index(continuation.Prompt, goldenRemaining); s < 0 || c < 0 || s > c {
+		t.Errorf("continuation: sentence at %d, remaining at %d; want the sentence before the continuation section", s, c)
+	}
+	first, repair, continuation = plannerPrompts(t)
+	for name, call := range map[string]runner.NodeInvocation{"first": first, "repair": repair, "continuation": continuation} {
+		if strings.Contains(call.Prompt, "forbade remote changes") {
+			t.Errorf("%s prompt names forbidden remote changes without the option", name)
+		}
+	}
+}

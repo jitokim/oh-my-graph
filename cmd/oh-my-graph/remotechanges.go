@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/fence"
 	"github.com/jitokim/oh-my-graph/internal/remote"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
@@ -47,19 +48,21 @@ var runBaseCommit = launchCommitOfWorkingDir
 // (ADR 0046 §5.1).
 //
 // A guarded leg reads its after through the fetch URLs its own before saw
-// (beforeURLs), so a node that removes or re-points a remote after pushing to
-// it cannot hide the push. Those URLs are raw — a credential in one is kept —
-// and live only here: never in state.json, the run feed, the terminal or an
-// error. A resumed leg takes its own before, so it never reads the redacted
-// URLs a snapshot saved.
+// (guardedBefore, beside the before's repository-config digest), so a node
+// that removes or re-points a remote after pushing to it cannot hide the
+// push. Those URLs are raw — a credential in one is kept — and live only
+// here: never in state.json, the run feed, the terminal or an error. A
+// resumed leg takes its own before, so it never reads the redacted URLs a
+// snapshot saved.
 type remoteLeg struct {
-	obs        worktree.RemoteObserver
-	prs        remote.PRLister
-	recorder   *runstate.SnapshotRecorder
-	baseSHA    string
-	guarded    bool
-	beforeURLs worktree.FetchURLs
-	changes    runstate.RemoteChanges
+	obs           worktree.RemoteObserver
+	prs           remote.PRLister
+	recorder      *runstate.SnapshotRecorder
+	baseSHA       string
+	guarded       bool
+	noRunBranches bool
+	guardedBefore *worktree.GuardedBefore
+	changes       runstate.RemoteChanges
 }
 
 // beginRemoteLeg takes the leg's before snapshot and records it. prior is the
@@ -77,6 +80,25 @@ func beginRemoteLeg(ctx context.Context, runID string, recorder *runstate.Snapsh
 	return l
 }
 
+// autoNoRunBranches is the reason a guarded auto leg names its branches and
+// pull requests not guarded (worktree.AutoNoRunBranches): its planned nodes
+// run without engine worktrees (validatePlannedNodeWorktree).
+const autoNoRunBranches = worktree.AutoNoRunBranches
+
+// withoutRunBranches marks the leg as an auto run's, whose planned nodes
+// create no run branch: its guard notices then never claim the branches or
+// pull-request parts as guarded. Unset — every `run` — they read as before.
+func (l *remoteLeg) withoutRunBranches(auto bool) *remoteLeg {
+	l.noRunBranches = auto
+	return l
+}
+
+// runBranchPart reports whether part's guard rests on the run's own branches
+// (worktree.RunBranchPart).
+func runBranchPart(part runstate.RemotePart) bool {
+	return worktree.RunBranchPart(part)
+}
+
 // snapshot reads the remote state: by remote name on an unguarded leg, as
 // always; on a guarded one the before keeps each remote's raw fetch URL and
 // the after reads the before's remotes through them.
@@ -84,9 +106,9 @@ func (l *remoteLeg) snapshot(ctx context.Context) runstate.RemoteSnapshot {
 	if !l.guarded {
 		return worktree.TakeRemoteSnapshot(ctx, l.obs, l.prs)
 	}
-	snap, urls := worktree.TakeGuardedRemoteSnapshot(ctx, l.obs, l.prs, l.beforeURLs)
-	if l.beforeURLs == nil {
-		l.beforeURLs = urls
+	snap, before := worktree.TakeGuardedRemoteSnapshot(ctx, l.obs, l.prs, l.guardedBefore)
+	if l.guardedBefore == nil {
+		l.guardedBefore = before
 	}
 	return snap
 }
@@ -120,7 +142,23 @@ func (l *remoteLeg) end(runCtx context.Context) (interrupted bool) {
 	// The commit check is local and bounded: it runs on a context of its
 	// own, so an interrupt that lands after the read above cannot fail it
 	// and record a run commit not_attributable.
-	l.changes.EndLeg(after, worktree.RunCommitCheck(context.Background(), l.obs, l.baseSHA))
+	//
+	// On a guarded `run` leg whose check could not run — the repository's
+	// config unreadable, a check's own git read failed, or its shallow
+	// boundary moved — the branches and pull-request parts are recorded not
+	// compared with why, so the guard never claims them; the entries keep
+	// what the check answered, and only an attributable one fails the leg
+	// (ADR 0046 §5.1). An auto leg names those parts not guarded already
+	// (autoNoRunBranches).
+	if l.guarded {
+		isRunCommit, checkFailed := worktree.GuardedRunCommitCheck(context.Background(), l.obs, l.baseSHA)
+		worktree.EndGuardedLeg(&l.changes, after, isRunCommit)
+		if !interrupted && !l.noRunBranches {
+			worktree.NoteAttributionUnavailable(&l.changes, l.guardedBefore.AttributionUnavailable(l.obs, checkFailed()))
+		}
+	} else {
+		l.changes.EndLeg(after, worktree.RunCommitCheck(context.Background(), l.obs, l.baseSHA))
+	}
 	l.record()
 	return interrupted
 }
@@ -283,7 +321,7 @@ func (l *remoteLeg) record() {
 func (l *remoteLeg) print(w io.Writer) {
 	printRemoteChanges(w, &l.changes)
 	if l.guarded {
-		printGuardSummary(w, &l.changes)
+		printGuardSummary(w, &l.changes, l.noRunBranches)
 	}
 }
 
@@ -294,7 +332,10 @@ const prNotGuarded = "PR part not guarded: "
 // printLaunchNotice names, on a guarded leg, each part its before snapshot
 // could not read (ADR 0046 §5.2): the leg still runs, and its verdict uses
 // only the parts observed, since an unavailable part yields no entries. An
-// unguarded leg, or a guarded one that read every part, prints nothing.
+// unguarded leg, or a guarded one that read every part, prints nothing. An
+// auto leg (noRunBranches) always prints: its branches and pull requests are
+// not guarded whatever was read, so each part not guarded carries its own
+// reason, an unavailable one prefixed as such.
 func (l *remoteLeg) printLaunchNotice(w io.Writer) {
 	n := len(l.changes.Legs)
 	if !l.guarded || n == 0 {
@@ -306,6 +347,10 @@ func (l *remoteLeg) printLaunchNotice(w io.Writer) {
 	prReason := ""
 	for _, part := range []runstate.RemotePart{runstate.RemotePartRemotes, runstate.RemotePartBranches, runstate.RemotePartPullRequests} {
 		reason, observed := remotePartReason(before, part)
+		if observed && l.noRunBranches && runBranchPart(part) {
+			unavailable = append(unavailable, string(part)+" ("+autoNoRunBranches+")")
+			continue
+		}
 		if observed {
 			guarded = append(guarded, part)
 			continue
@@ -313,7 +358,11 @@ func (l *remoteLeg) printLaunchNotice(w io.Writer) {
 		if reason == "" {
 			reason = "no reason recorded"
 		}
-		unavailable = append(unavailable, string(part)+" ("+reason+")")
+		if l.noRunBranches {
+			unavailable = append(unavailable, string(part)+" (unavailable at this leg's start: "+reason+")")
+		} else {
+			unavailable = append(unavailable, string(part)+" ("+reason+")")
+		}
 		if part == runstate.RemotePartPullRequests {
 			prReason = reason
 		}
@@ -321,7 +370,11 @@ func (l *remoteLeg) printLaunchNotice(w io.Writer) {
 	if len(unavailable) == 0 {
 		return
 	}
-	fmt.Fprintln(w, fence.SanitizeTerminalLine("--forbid-remote-changes: not guarded (unavailable at this leg's start): "+strings.Join(unavailable, "; ")+"; guarded: "+joinParts(guarded)))
+	header := "--forbid-remote-changes: not guarded (unavailable at this leg's start): "
+	if l.noRunBranches {
+		header = "--forbid-remote-changes: not guarded: "
+	}
+	fmt.Fprintln(w, fence.SanitizeTerminalLine(header+strings.Join(unavailable, "; ")+"; guarded: "+joinParts(guarded)))
 	if prReason != "" {
 		fmt.Fprintln(w, fence.SanitizeTerminalLine(prNotGuarded+prReason))
 	}
@@ -334,48 +387,35 @@ func (l *remoteLeg) printLaunchNotice(w io.Writer) {
 // piece not compared is named, a remote's own branches (one added or removed
 // during the leg) as "branches of <remote>", and "guarded" names only the
 // parts compared for every remote: a part any remote's piece of which was not
-// compared is never claimed as guarded.
-func printGuardSummary(w io.Writer, c *runstate.RemoteChanges) {
+// compared is never claimed as guarded. On an auto leg (noRunBranches) the
+// branches and pull-request parts are never claimed either: each is named
+// with autoNoRunBranches, and what was not compared says so in its reason.
+// A part whose attribution was unavailable (worktree.NoteAttributionUnavailable)
+// is named with that reason the same way: it was compared, but not guarded.
+// The rule is worktree.GuardOfLeg's, which the goal assessor's block renders
+// too, so the operator and the assessor are told the same thing.
+func printGuardSummary(w io.Writer, c *runstate.RemoteChanges, noRunBranches bool) {
 	n := len(c.Legs)
-	if n == 0 || c.Legs[n-1].Changes == nil {
+	if n == 0 {
 		return
 	}
-	leg := c.Legs[n-1]
-	d := leg.Changes
-	var unguarded []string
-	partial := map[runstate.RemotePart]bool{}
+	g, ok := worktree.GuardOfLeg(c.Legs[n-1], noRunBranches)
+	if !ok || len(g.NotGuarded) == 0 {
+		return
+	}
+	unguarded := make([]string, len(g.NotGuarded))
 	prReason := ""
-	for _, nc := range d.NotCompared {
-		if nc.Remote != "" {
-			partial[nc.Part] = true
-			unguarded = append(unguarded, string(nc.Part)+" of "+nc.Remote+" ("+nc.Reason+")")
-			continue
-		}
-		reason := nc.Reason
-		// A part unavailable on both sides for the one reason the launch
-		// named is said with that reason, so the notice reads the same twice.
-		if leg.After != nil {
-			before, beforeOK := remotePartReason(leg.Before, nc.Part)
-			after, afterOK := remotePartReason(*leg.After, nc.Part)
-			if !beforeOK && !afterOK && before == after && before != "" {
-				reason = before
-			}
-		}
-		unguarded = append(unguarded, string(nc.Part)+" ("+reason+")")
-		if nc.Part == runstate.RemotePartPullRequests {
-			prReason = reason
+	for i, ng := range g.NotGuarded {
+		unguarded[i] = ng.Describe(g.Plain)
+		if ng.Part == runstate.RemotePartPullRequests && ng.Remote == "" && ng.Cause != worktree.NotGuardedNoRunBranches {
+			prReason = ng.Reason
 		}
 	}
-	if len(unguarded) == 0 {
-		return
+	header := "--forbid-remote-changes: not guarded (not compared): "
+	if g.Plain {
+		header = "--forbid-remote-changes: not guarded: "
 	}
-	var guarded []runstate.RemotePart
-	for _, part := range d.Observed {
-		if !partial[part] {
-			guarded = append(guarded, part)
-		}
-	}
-	fmt.Fprintln(w, fence.SanitizeTerminalLine("--forbid-remote-changes: not guarded (not compared): "+strings.Join(unguarded, "; ")+"; guarded: "+joinParts(guarded)))
+	fmt.Fprintln(w, fence.SanitizeTerminalLine(header+strings.Join(unguarded, "; ")+"; guarded: "+joinParts(g.Guarded)))
 	if prReason != "" {
 		fmt.Fprintln(w, fence.SanitizeTerminalLine(prNotGuarded+prReason))
 	}
@@ -383,14 +423,7 @@ func printGuardSummary(w io.Writer, c *runstate.RemoteChanges) {
 
 // remotePartReason is part's reason in s, and whether s observed it.
 func remotePartReason(s runstate.RemoteSnapshot, part runstate.RemotePart) (string, bool) {
-	switch part {
-	case runstate.RemotePartRemotes:
-		return s.Remotes.Reason, s.Remotes.Status == runstate.RemotePartObserved
-	case runstate.RemotePartBranches:
-		return s.Branches.Reason, s.Branches.Status == runstate.RemotePartObserved
-	default:
-		return s.PullRequests.Reason, s.PullRequests.Status == runstate.RemotePartObserved
-	}
+	return worktree.RemotePartReason(s, part)
 }
 
 // joinParts names parts in order, "none" for no part.
@@ -415,11 +448,11 @@ func cloneRemoteChanges(c runstate.RemoteChanges) runstate.RemoteChanges {
 	}
 }
 
-// The two attribution labels (ADR 0046 §2.2), word for word. Every entry is
-// "observed": the snapshot sees state, not who changed it.
+// The two attribution labels (ADR 0046 §2.2), word for word: the
+// coordinator's, which the goal assessor's block renders too.
 const (
-	labelRunCommit       = "observed during the run; points at a commit this run made"
-	labelNotAttributable = "observed, not attributable"
+	labelRunCommit       = coordinator.RemoteLabelRunCommit
+	labelNotAttributable = coordinator.RemoteLabelNotAttributable
 )
 
 // printRemoteChanges prints the last leg's remote change record: the change
@@ -499,51 +532,10 @@ func describePRPart(prs runstate.PullRequestsSnapshot) string {
 }
 
 func attributionLabel(a runstate.RemoteAttribution) string {
-	if a == runstate.AttributionRunCommit {
-		return labelRunCommit
-	}
-	return labelNotAttributable
+	return coordinator.RemoteAttributionLabel(a)
 }
 
 // describeRemoteEntry is one entry's kind and what it changed.
 func describeRemoteEntry(e runstate.RemoteChangeEntry) string {
-	ref := e.Remote + "/" + e.Branch
-	switch e.Kind {
-	case runstate.RemoteAdded:
-		return fmt.Sprintf("%s %s %s", e.Kind, e.Remote, describeURLs(e.NewFetchURL, e.NewPushURL))
-	case runstate.RemoteRemoved:
-		return fmt.Sprintf("%s %s (was %s)", e.Kind, e.Remote, describeURLs(e.OldFetchURL, e.OldPushURL))
-	case runstate.RemoteURLChanged:
-		return fmt.Sprintf("%s %s %s -> %s", e.Kind, e.Remote, describeURLs(e.OldFetchURL, e.OldPushURL), describeURLs(e.NewFetchURL, e.NewPushURL))
-	case runstate.BranchCreated:
-		return fmt.Sprintf("%s %s at %s", e.Kind, ref, shortSHA(e.NewSHA))
-	case runstate.BranchMoved:
-		return fmt.Sprintf("%s %s %s -> %s", e.Kind, ref, shortSHA(e.OldSHA), shortSHA(e.NewSHA))
-	case runstate.BranchDeleted:
-		return fmt.Sprintf("%s %s (was %s)", e.Kind, ref, shortSHA(e.OldSHA))
-	case runstate.PROpened:
-		return fmt.Sprintf("%s #%d %s at %s", e.Kind, e.PRNumber, e.HeadRefName, shortSHA(e.NewSHA))
-	case runstate.PRUpdated:
-		return fmt.Sprintf("%s #%d %s %s -> %s", e.Kind, e.PRNumber, e.HeadRefName, shortSHA(e.OldSHA), shortSHA(e.NewSHA))
-	case runstate.PRNoLongerOpen:
-		return fmt.Sprintf("%s #%d %s (was %s)", e.Kind, e.PRNumber, e.HeadRefName, shortSHA(e.OldSHA))
-	default:
-		return fmt.Sprintf("%s %s", e.Kind, e.Remote)
-	}
-}
-
-// describeURLs names a remote's fetch URL, and its push URL only when that
-// differs.
-func describeURLs(fetch, push string) string {
-	if push == "" || push == fetch {
-		return fetch
-	}
-	return fetch + " (push " + push + ")"
-}
-
-func shortSHA(sha string) string {
-	if len(sha) > 12 {
-		return sha[:12]
-	}
-	return sha
+	return coordinator.DescribeRemoteEntry(e)
 }

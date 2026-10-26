@@ -323,10 +323,10 @@ type Coordinator struct {
 	// WithoutReuse: no scan, no menu in the planner prompt, and reuse:
 	// refused by its disposition case exactly as when nothing is admitted.
 	reuseOff bool
-	// startCommit is the commit the goal started from, set via
-	// WithStartCommit. Empty means unknown, and the planner prompt is then
-	// byte-identical to one built without the option.
-	startCommit string
+	// startCommit (WithStartCommit) is the commit the goal started from. Empty
+	// means unknown: the prompt is byte-identical to one built without it.
+	startCommit         string
+	forbidRemoteChanges bool // ADR 0046 §5.2 — see WithForbidRemoteChanges (forbidremote.go)
 }
 
 // Option configures a Coordinator at construction.
@@ -604,8 +604,10 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 }
 
 // plannerPromptFor renders one planning attempt's base prompt: the planner
-// instruction for the goal, plus the goal loop's continuation section when a
-// previous cycle left work remaining.
+// instruction for the goal, then suffix (forbidRemoteSuffix's sentence, or
+// empty), then the goal loop's continuation section when a previous cycle left
+// work remaining. It is the one place that continuation is fenced, with or
+// without a suffix, so a suffix only ever adds its own text ahead of it.
 //
 // verifyCommand is the --verify-cmd text exactly as the engine will run it,
 // empty when none was supplied. It travels through to plannerPrompt because it
@@ -617,11 +619,12 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 // reason: it is the menu this base shows, and every attempt built from the
 // base is judged against it. startCommit travels the same way, so every cycle
 // and every repair measures scope from the same commit (WithStartCommit).
-func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyCommand string, offered []ReuseEntry, startCommit string) (string, error) {
+func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyCommand string, offered []ReuseEntry, startCommit string, suffix string) (string, error) {
 	prompt, err := plannerPrompt(goal, inputKeys, verifyCommand, offered, startCommit)
 	if err != nil {
 		return "", err
 	}
+	prompt += suffix
 	if remaining == "" {
 		return prompt, nil
 	}

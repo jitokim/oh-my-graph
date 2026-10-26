@@ -440,9 +440,20 @@ so every leg of the run is guarded. On a guarded run, a leg whose own
 `attribution` is `run_commit`, or a `remote_added`; never any other kind and
 never a `between_legs` entry — exits 6 and closes with `run_finished` outcome
 `"failed"`, a pause its nodes reached withdrawn from `state.json` as for a
-Ctrl-C during the after snapshot. Such a run derives `FAIL` even with every
-node `PASS`: on a guarded run a closed leg whose outcome is `"failed"` reads
-`FAIL` before the node count is looked at. An unguarded run derives exactly
+Ctrl-C during the after snapshot. On a `run` leg whose commit check could not
+run — the repository's config could not be read by the leg's after, or a
+check's own git read failed — the leg's `changes` add a `not_compared` item
+for each of `branches` and `pull_requests` in `observed`, reason `attribution
+unavailable: repository config unreadable` when the config could not be
+read, or `attribution unavailable: attribution check read failed` for any
+other failure of the check's own git read (a timeout, say); when the shallow
+file in the common git dir changed during the leg, the reason is
+`attribution unavailable: shallow boundary changed`. The entries keep the
+attribution the check answered, nothing more is forbidden, and the run's end
+line names those parts not guarded with the reason; no field is added. A run a forbidden
+entry failed derives `FAIL` even with every node `PASS`: on a guarded run a
+closed leg whose outcome is `"failed"` reads `FAIL` before the node count is
+looked at. An unguarded run derives exactly
 what it did before the flag existed. **A snapshot carrying the flag is stamped `schema:
 5`**, the second conditional stamp, conventions or not: the flag alone would be
 additive, and an older binary would drop it and finish the run unguarded, so
