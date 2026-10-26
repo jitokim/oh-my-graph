@@ -323,14 +323,10 @@ type Coordinator struct {
 	// WithoutReuse: no scan, no menu in the planner prompt, and reuse:
 	// refused by its disposition case exactly as when nothing is admitted.
 	reuseOff bool
-	// startCommit is the commit the goal started from, set via
-	// WithStartCommit. Empty means unknown, and the planner prompt is then
-	// byte-identical to one built without the option.
-	startCommit string
-	// forbidRemoteChanges is the operator's --forbid-remote-changes, set via
-	// WithForbidRemoteChanges. False renders the planner prompt byte-identical
-	// to one built without the option.
-	forbidRemoteChanges bool
+	// startCommit (WithStartCommit) is the commit the goal started from. Empty
+	// means unknown: the prompt is byte-identical to one built without it.
+	startCommit         string
+	forbidRemoteChanges bool // ADR 0046 §5.2 — see WithForbidRemoteChanges (forbidremote.go)
 }
 
 // Option configures a Coordinator at construction.
@@ -411,17 +407,6 @@ func WithoutReuse() Option {
 // planner prompt is byte-identical to one built without this option.
 func WithStartCommit(sha string) Option {
 	return func(c *Coordinator) { c.startCommit = sha }
-}
-
-// WithForbidRemoteChanges tells every planning call that the operator forbade
-// remote changes (--forbid-remote-changes, ADR 0046 §5.2): the planner prompt
-// gains plannerForbidRemoteChangesSentence, in each cycle's prompt and each
-// repair's, since both are built from the same base. It is a hint and nothing
-// else: the engine's own remote snapshot is the enforcement, so no planned
-// node is asked to check the remote either. Unset, the planner prompt is
-// byte-identical to one built without this option.
-func WithForbidRemoteChanges() Option {
-	return func(c *Coordinator) { c.forbidRemoteChanges = true }
 }
 
 // WithLoadedUserConfig states that this run's planned nodes load the
@@ -631,16 +616,11 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 // than the one that was refused. offered travels for the same
 // reason: it is the menu this base shows, and every attempt built from the
 // base is judged against it. startCommit travels the same way, so every cycle
-// and every repair measures scope from the same commit (WithStartCommit), and
-// so does forbidRemoteChanges (WithForbidRemoteChanges): its sentence follows
-// the rules and the start commit, before any continuation section.
-func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyCommand string, offered []ReuseEntry, startCommit string, forbidRemoteChanges bool) (string, error) {
+// and every repair measures scope from the same commit (WithStartCommit).
+func plannerPromptFor(goal string, inputKeys []string, remaining string, verifyCommand string, offered []ReuseEntry, startCommit string) (string, error) {
 	prompt, err := plannerPrompt(goal, inputKeys, verifyCommand, offered, startCommit)
 	if err != nil {
 		return "", err
-	}
-	if forbidRemoteChanges {
-		prompt += plannerForbidRemoteChangesSentence
 	}
 	if remaining == "" {
 		return prompt, nil
@@ -2772,15 +2752,6 @@ shared repository: no planned node asserts that it has not moved since %[1]s,
 and none uses %[1]s to prove that nothing landed on it. To show that the run's
 work is not on main, a check asserts that
 'git merge-base --is-ancestor <a commit this run made> main' exits non-zero.`
-
-// plannerForbidRemoteChangesSentence is the ONE sentence --forbid-remote-changes
-// adds to the planner prompt (ADR 0046 §5.2), its wording settled in
-// testdata/planner-prompt-first-forbid-remote.golden.
-const plannerForbidRemoteChangesSentence = `
-
-The operator forbade remote changes for this run and the engine observes the
-remote itself, so no planned node pushes, adds a remote, or opens or edits a
-pull request.`
 
 // plannerContinuationTemplate is appended to the planner prompt on cycle
 // k ≥ 2 of a goal loop (ADR 0011 §2): the statement that a previous attempt
