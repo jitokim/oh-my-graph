@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -287,5 +288,285 @@ func TestTakeGuardedRemoteSnapshot_AnUnreadableBeforeURLMakesBranchesUnavailable
 	}
 	if after.Branches.ReadThroughBeforeURL != nil {
 		t.Errorf("an unavailable part names remotes read through: %v", after.Branches.ReadThroughBeforeURL)
+	}
+}
+
+// fakeGitLog is what a fake git, from writeFakeGit, recorded of one
+// invocation: its argv after "git", and the environment it received.
+type fakeGitLog struct {
+	args []string
+	env  []string
+}
+
+// fakeHeadSHA is the one head the fake git's ls-remote prints.
+var fakeHeadSHA = strings.Repeat("a", 40)
+
+// writeFakeGit puts a fake git first on PATH — exec resolves "git" from the
+// test process's PATH — that records each invocation's argv and environment
+// under a log dir, answers `git version` with version, `config --get-regexp`
+// with a key under remote.omg-before-snapshot if collide (otherwise exit 1,
+// no match), any other `config` read with exit 1 (unset), and ls-remote with
+// one head. It returns readFakeGitLogs's argument.
+func writeFakeGit(t *testing.T, version string, collide bool) string {
+	t.Helper()
+	bin, logs := t.TempDir(), t.TempDir()
+	regexp := "exit 1"
+	if collide {
+		regexp = "echo 'remote.omg-before-snapshot.url /elsewhere.git'; exit 0"
+	}
+	script := `#!/bin/sh
+log="` + logs + `/$$"
+printf '%s\n' "$@" > "$log.args"
+/usr/bin/env > "$log.env"
+case "$1 $2" in
+"version "*) echo "git version ` + version + `" ;;
+"config --get-regexp") ` + regexp + ` ;;
+"config "*) exit 1 ;;
+"ls-remote "*) printf '` + fakeHeadSHA + `\trefs/heads/main\n' ;;
+*) exit 2 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	return logs
+}
+
+// readFakeGitLogs reads every invocation writeFakeGit's git recorded.
+func readFakeGitLogs(t *testing.T, logs string) []fakeGitLog {
+	t.Helper()
+	argFiles, err := filepath.Glob(filepath.Join(logs, "*.args"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls []fakeGitLog
+	for _, f := range argFiles {
+		args, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		env, err := os.ReadFile(strings.TrimSuffix(f, ".args") + ".env")
+		if err != nil {
+			t.Fatal(err)
+		}
+		calls = append(calls, fakeGitLog{
+			args: strings.Split(strings.TrimSuffix(string(args), "\n"), "\n"),
+			env:  strings.Split(strings.TrimSpace(string(env)), "\n"),
+		})
+	}
+	return calls
+}
+
+// countCalls counts the recorded invocations whose first argument is sub.
+func countCalls(calls []fakeGitLog, sub string) int {
+	n := 0
+	for _, c := range calls {
+		if len(c.args) > 0 && c.args[0] == sub {
+			n++
+		}
+	}
+	return n
+}
+
+// fakeGitManager is a manager on the fake git, its parent env carrying one
+// GIT_CONFIG_COUNT entry of its own.
+func fakeGitManager(t *testing.T) *GitManager {
+	t.Helper()
+	m := NewGitManager(t.TempDir(), t.TempDir(), "test-run")
+	m.environ = func() []string {
+		return []string{"PATH=" + os.Getenv("PATH"), "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=core.foo", "GIT_CONFIG_VALUE_0=bar"}
+	}
+	return m
+}
+
+const fakeCredentialURL = "https://user:s3cret@example.invalid/r.git"
+
+// TestGitManager_LsRemoteHeadsURLIsOffTheArgvOfTheGitProcessTheEngineStarts:
+// the before fetch URL reaches git only as GIT_CONFIG_VALUE_1 of the env-
+// defined remote, after the parent's own GIT_CONFIG entry, and no argv of any
+// git the engine started holds it. (git's own transport helper, which the
+// fake never starts, is outside this.)
+func TestGitManager_LsRemoteHeadsURLIsOffTheArgvOfTheGitProcessTheEngineStarts(t *testing.T) {
+	logs := writeFakeGit(t, "2.43.0", false)
+	m := fakeGitManager(t)
+
+	heads, err := m.LsRemoteHeadsURL(context.Background(), fakeCredentialURL)
+	if err != nil {
+		t.Fatalf("LsRemoteHeadsURL: %v", err)
+	}
+	if want := []RemoteHead{{Branch: "main", SHA: fakeHeadSHA}}; !reflect.DeepEqual(heads, want) {
+		t.Fatalf("heads = %+v, want %+v", heads, want)
+	}
+
+	calls := readFakeGitLogs(t, logs)
+	var lsRemote *fakeGitLog
+	for i, c := range calls {
+		for _, a := range c.args {
+			if strings.Contains(a, "s3cret") || strings.Contains(a, "example.invalid") {
+				t.Errorf("git %q carries the URL on its argv", c.args)
+			}
+		}
+		if c.args[0] == "ls-remote" {
+			lsRemote = &calls[i]
+		}
+	}
+	if lsRemote == nil || countCalls(calls, "ls-remote") != 1 {
+		t.Fatalf("want exactly one ls-remote, got calls %+v", calls)
+	}
+	if want := []string{"ls-remote", "--heads", "omg-before-snapshot"}; !reflect.DeepEqual(lsRemote.args, want) {
+		t.Errorf("ls-remote args = %q, want %q", lsRemote.args, want)
+	}
+	env := lsRemote.env
+	for _, kv := range env {
+		if strings.Contains(kv, "s3cret") && kv != "GIT_CONFIG_VALUE_1="+fakeCredentialURL {
+			t.Errorf("the URL is in env as %q, want it only as GIT_CONFIG_VALUE_1", kv)
+		}
+	}
+	for key, want := range map[string]string{
+		"GIT_CONFIG_COUNT":    "2",
+		"GIT_CONFIG_KEY_0":    "core.foo",
+		"GIT_CONFIG_VALUE_0":  "bar",
+		"GIT_CONFIG_KEY_1":    "remote.omg-before-snapshot.url",
+		"GIT_CONFIG_VALUE_1":  fakeCredentialURL,
+		"GIT_TERMINAL_PROMPT": "0",
+		"GIT_SSH_COMMAND":     "ssh -o BatchMode=yes",
+	} {
+		if got := lastValue(env, key); got != want {
+			t.Errorf("%s = %q in ls-remote's env, want %q", key, got, want)
+		}
+	}
+	assertNoAskpass(t, env, "ls-remote's env")
+}
+
+// Before 2.31 git does not read GIT_CONFIG_COUNT: the read is refused, never
+// moved back onto argv, and no ls-remote runs. The version is asked once
+// per manager.
+func TestGitManager_LsRemoteHeadsURLNeedsGit231(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		ok      bool
+	}{
+		{"2.30.9", false},
+		{"2.31.0", true},
+		{"2.43.0", true},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			logs := writeFakeGit(t, tc.version, false)
+			m := fakeGitManager(t)
+			for range 2 {
+				_, err := m.LsRemoteHeadsURL(context.Background(), fakeCredentialURL)
+				if tc.ok && err != nil {
+					t.Fatalf("LsRemoteHeadsURL on git %s: %v", tc.version, err)
+				}
+				if !tc.ok && (err == nil || !strings.Contains(err.Error(), "2.31")) {
+					t.Fatalf("LsRemoteHeadsURL on git %s: err = %v, want it to name 2.31", tc.version, err)
+				}
+				if err != nil && strings.Contains(err.Error(), "s3cret") {
+					t.Errorf("error %q quotes the URL", err)
+				}
+			}
+			calls := readFakeGitLogs(t, logs)
+			if n := countCalls(calls, "version"); n != 1 {
+				t.Errorf("git version asked %d times across two reads, want once", n)
+			}
+			want := 0
+			if tc.ok {
+				want = 2
+			}
+			if n := countCalls(calls, "ls-remote"); n != want {
+				t.Errorf("%d ls-remote spawned, want %d", n, want)
+			}
+		})
+	}
+}
+
+func TestParseGitVersion(t *testing.T) {
+	for out, want := range map[string]gitVersion{
+		"git version 2.43.0":                 {2, 43, true},
+		"git version 2.39.3 (Apple Git-145)": {2, 39, true},
+		"git version 2.45.0.windows.1\n":     {2, 45, true},
+		"git version 3.0":                    {3, 0, true},
+		"git version two":                    {},
+		"git version 2":                      {},
+		"hub version 2.43.0":                 {},
+		"":                                   {},
+	} {
+		if got := parseGitVersion(out); got != want {
+			t.Errorf("parseGitVersion(%q) = %+v, want %+v", out, got, want)
+		}
+	}
+}
+
+// A GIT_CONFIG_COUNT the next index cannot be read from refuses the read
+// before any git runs.
+func TestGitManager_LsRemoteHeadsURLRefusesABadInheritedConfigCount(t *testing.T) {
+	logs := writeFakeGit(t, "2.43.0", false)
+	for _, count := range []string{"x", "-1", "1.5", ""} {
+		m := fakeGitManager(t)
+		m.environ = func() []string { return []string{"PATH=" + os.Getenv("PATH"), "GIT_CONFIG_COUNT=" + count} }
+		if _, err := m.LsRemoteHeadsURL(context.Background(), fakeCredentialURL); err == nil {
+			t.Errorf("GIT_CONFIG_COUNT=%q: the read ran; want it refused", count)
+		}
+	}
+	if calls := readFakeGitLogs(t, logs); len(calls) != 0 {
+		t.Errorf("git ran %d times on a bad GIT_CONFIG_COUNT, want none", len(calls))
+	}
+}
+
+// A config that already has remote.omg-before-snapshot keys would make the
+// read the user's remote: it is refused, with no ls-remote and no URL in the
+// error.
+func TestGitManager_LsRemoteHeadsURLRefusesACollidingRemote(t *testing.T) {
+	logs := writeFakeGit(t, "2.43.0", true)
+	m := fakeGitManager(t)
+	_, err := m.LsRemoteHeadsURL(context.Background(), fakeCredentialURL)
+	if err == nil || !strings.Contains(err.Error(), "already has a remote named omg-before-snapshot") {
+		t.Fatalf("err = %v, want the collision named", err)
+	}
+	for _, leak := range []string{fakeCredentialURL, "s3cret", "example.invalid", "/elsewhere.git"} {
+		if strings.Contains(err.Error(), leak) {
+			t.Errorf("error %q contains %q", err, leak)
+		}
+	}
+	if n := countCalls(readFakeGitLogs(t, logs), "ls-remote"); n != 0 {
+		t.Errorf("%d ls-remote spawned past the collision, want none", n)
+	}
+}
+
+// requireRealGit231 skips a test on a local git that has no GIT_CONFIG_COUNT.
+func requireRealGit231(t *testing.T) {
+	t.Helper()
+	out, err := exec.Command("git", "version").Output()
+	v := parseGitVersion(string(out))
+	if err != nil || !v.ok || v.major < 2 || v.major == 2 && v.minor < configEnvMinor {
+		t.Skipf("local git %q has no GIT_CONFIG_COUNT (needs 2.31)", strings.TrimSpace(string(out)))
+	}
+}
+
+// Against real git: the env-defined remote reads a local bare origin's heads,
+// beside a parent GIT_CONFIG entry, and a repository remote of the engine's
+// name is refused rather than read.
+func TestGitManager_LsRemoteHeadsURLReadsThroughTheEnvDefinedRemote(t *testing.T) {
+	requireRealGit231(t)
+	m, repo := newTestManager(t)
+	m.environ = envWithoutSSHChoice("GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=core.foo", "GIT_CONFIG_VALUE_0=bar")
+	bare := initBareRemote(t)
+	gitIn(t, repo, "remote", "add", "origin", bare)
+	base := gitIn(t, repo, "rev-parse", "HEAD")
+	gitIn(t, repo, "push", "-q", "origin", "main")
+
+	heads, err := m.LsRemoteHeadsURL(context.Background(), bare)
+	if err != nil {
+		t.Fatalf("LsRemoteHeadsURL: %v", err)
+	}
+	if want := []RemoteHead{{Branch: "main", SHA: base}}; !reflect.DeepEqual(heads, want) {
+		t.Fatalf("heads = %+v, want %+v", heads, want)
+	}
+
+	gitIn(t, repo, "remote", "add", "omg-before-snapshot", bare)
+	if _, err := m.LsRemoteHeadsURL(context.Background(), bare); err == nil ||
+		!strings.Contains(err.Error(), "already has a remote named omg-before-snapshot") {
+		t.Errorf("a repository remote named omg-before-snapshot: err = %v, want the collision named", err)
 	}
 }
