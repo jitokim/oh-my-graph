@@ -45,13 +45,21 @@ var runBaseCommit = launchCommitOfWorkingDir
 // observes, and no write of it that fails, stops the leg — and only on a
 // guarded run (--forbid-remote-changes) does a forbidden entry change its exit
 // (ADR 0046 §5.1).
+//
+// A guarded leg reads its after through the fetch URLs its own before saw
+// (beforeURLs), so a node that removes or re-points a remote after pushing to
+// it cannot hide the push. Those URLs are raw — a credential in one is kept —
+// and live only here: never in state.json, the run feed, the terminal or an
+// error. A resumed leg takes its own before, so it never reads the redacted
+// URLs a snapshot saved.
 type remoteLeg struct {
-	obs      worktree.RemoteObserver
-	prs      remote.PRLister
-	recorder *runstate.SnapshotRecorder
-	baseSHA  string
-	guarded  bool
-	changes  runstate.RemoteChanges
+	obs        worktree.RemoteObserver
+	prs        remote.PRLister
+	recorder   *runstate.SnapshotRecorder
+	baseSHA    string
+	guarded    bool
+	beforeURLs worktree.FetchURLs
+	changes    runstate.RemoteChanges
 }
 
 // beginRemoteLeg takes the leg's before snapshot and records it. prior is the
@@ -64,9 +72,23 @@ func beginRemoteLeg(ctx context.Context, runID string, recorder *runstate.Snapsh
 	if prior != nil {
 		l.changes = cloneRemoteChanges(*prior)
 	}
-	l.changes.BeginLeg(worktree.TakeRemoteSnapshot(ctx, l.obs, l.prs))
+	l.changes.BeginLeg(l.snapshot(ctx))
 	l.record()
 	return l
+}
+
+// snapshot reads the remote state: by remote name on an unguarded leg, as
+// always; on a guarded one the before keeps each remote's raw fetch URL and
+// the after reads the before's remotes through them.
+func (l *remoteLeg) snapshot(ctx context.Context) runstate.RemoteSnapshot {
+	if !l.guarded {
+		return worktree.TakeRemoteSnapshot(ctx, l.obs, l.prs)
+	}
+	snap, urls := worktree.TakeGuardedRemoteSnapshot(ctx, l.obs, l.prs, l.beforeURLs)
+	if l.beforeURLs == nil {
+		l.beforeURLs = urls
+	}
+	return snap
 }
 
 // end takes the leg's after snapshot, diffs it against the before with the
@@ -87,7 +109,7 @@ func (l *remoteLeg) end(runCtx context.Context) (interrupted bool) {
 
 	after := interruptedRemoteSnapshot
 	if runCtx.Err() == nil {
-		after = worktree.TakeRemoteSnapshot(ctx, l.obs, l.prs)
+		after = l.snapshot(ctx)
 	}
 	// Read after the snapshot: an interrupt that landed while it ran made
 	// its parts git's kill, not the remote's state.

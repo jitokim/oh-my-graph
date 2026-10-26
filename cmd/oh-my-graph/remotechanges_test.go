@@ -472,6 +472,16 @@ func (o *interruptingObserver) LsRemoteHeads(ctx context.Context, remote string)
 	return heads, err
 }
 
+// LsRemoteHeadsURL interrupts as LsRemoteHeads does, for a guarded after,
+// which reads the before's remotes through their URLs.
+func (o *interruptingObserver) LsRemoteHeadsURL(ctx context.Context, url string) ([]worktree.RemoteHead, error) {
+	heads, err := o.FakeRemoteObserver.LsRemoteHeadsURL(ctx, url)
+	if waitErr := o.interruptAndWait(ctx); waitErr != nil {
+		return nil, waitErr
+	}
+	return heads, err
+}
+
 func (o *interruptingObserver) interruptAndWait(ctx context.Context) error {
 	o.interrupt()
 	select {
@@ -751,6 +761,12 @@ func (o *readOnlyRunDirObserver) LsRemoteHeads(ctx context.Context, remote strin
 		}
 	}
 	return o.FakeRemoteObserver.LsRemoteHeads(ctx, remote)
+}
+
+// LsRemoteHeadsURL is a guarded after's read, which the before never makes:
+// the run directory is read-only by then already.
+func (o *readOnlyRunDirObserver) LsRemoteHeadsURL(ctx context.Context, url string) ([]worktree.RemoteHead, error) {
+	return o.FakeRemoteObserver.LsRemoteHeadsURL(ctx, url)
 }
 
 // failedPauseWrite runs a fresh gate-only run whose run directory turns

@@ -205,8 +205,9 @@ func TestResume_AGuardedLegStartingWithoutThePRPartSaysSoTwice(t *testing.T) {
 
 // A remote's own branches not compared are named in the summary, and the
 // branches part is never claimed as guarded while any remote's piece of it
-// was not compared: the remote removed after the node pushed to it (the QA
-// case), and a part compared for one remote but not another.
+// was not compared. On a guarded leg only a remote added during it can be
+// such a piece: one removed or re-pointed is read through its before URL
+// (forbidremote_url_test.go).
 func TestRunGraph_AGuardedRunNamesEachRemoteWhoseBranchesWereNotCompared(t *testing.T) {
 	origin := worktree.Remote{Name: "origin", FetchURL: "https://example.com/o.git", PushURL: "https://example.com/o.git"}
 	for _, tc := range []struct {
@@ -216,23 +217,6 @@ func TestRunGraph_AGuardedRunNamesEachRemoteWhoseBranchesWereNotCompared(t *test
 		unguard  string
 		wantExit int
 	}{
-		{
-			name:   "the sole remote removed after a push",
-			before: []worktree.Remote{origin},
-			change: func(o *worktree.FakeRemoteObserver, p *remote.FakePRLister) {
-				pushBranch("feat/x", remoteRunSHA)(o, p)
-				o.SetRemotes(nil, nil)
-			},
-			unguard: "branches of origin (remote removed: it has no after refs to compare)",
-		},
-		{
-			name:   "one of two remotes removed",
-			before: []worktree.Remote{origin, remoteUpstream},
-			change: func(o *worktree.FakeRemoteObserver, _ *remote.FakePRLister) {
-				o.SetRemotes([]worktree.Remote{origin}, nil)
-			},
-			unguard: "branches of upstream (remote removed: it has no after refs to compare)",
-		},
 		{
 			name:    "a remote added beside origin",
 			before:  []worktree.Remote{origin},
@@ -266,20 +250,20 @@ func TestRunGraph_AGuardedRunNamesEachRemoteWhoseBranchesWereNotCompared(t *test
 }
 
 // A part-level gap and a remote's own gap are both named, and only the part
-// compared for every remote is guarded.
+// compared for every remote is guarded. The remote is added during the leg,
+// which is itself forbidden, so the leg exits 6 with the summary printed.
 func TestRunGraph_AGuardedRunNamesAPartAndARemotesBranchesTogether(t *testing.T) {
 	isolateRunHome(t)
 	obs, prs := guardedRemote(t, nil)
-	obs.SetRemotes([]worktree.Remote{{Name: "origin", FetchURL: "https://example.com/o.git", PushURL: "https://example.com/o.git"}, remoteUpstream}, nil)
 	lost := func(o *worktree.FakeRemoteObserver, p *remote.FakePRLister) {
-		o.SetRemotes([]worktree.Remote{{Name: "origin", FetchURL: "https://example.com/o.git", PushURL: "https://example.com/o.git"}}, nil)
+		addUpstream(o, p)
 		p.Set(remote.UnavailablePRs(remote.ReasonTimeout, ""))
 	}
 	out, err := runWithRemoteChange(t, obs, prs, lost, "--forbid-remote-changes")
-	if err != nil {
-		t.Fatalf("err = %v, want nil", err)
+	if got := exitCodeForError(err); got != 6 {
+		t.Fatalf("err = %v (exit %d), want exit 6 for the added remote", err, got)
 	}
-	summary := "--forbid-remote-changes: not guarded (not compared): branches of upstream (remote removed: it has no after refs to compare); pull_requests (unavailable after: timeout); guarded: remotes\n" +
+	summary := "--forbid-remote-changes: not guarded (not compared): branches of upstream (remote added: it has no before refs to compare); pull_requests (unavailable after: timeout); guarded: remotes\n" +
 		"PR part not guarded: unavailable after: timeout\n"
 	if !strings.HasSuffix(out, summary) {
 		t.Errorf("summary = want suffix\n%s\ngot\n%s", summary, out)
