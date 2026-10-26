@@ -339,6 +339,17 @@ func reuseOptions(noReuse bool) []coordinator.Option {
 	return nil
 }
 
+// remoteChangesOptions maps --forbid-remote-changes onto the coordinator
+// (ADR 0046 §5.2): set, the planner is told the operator forbade remote
+// changes; unset, it adds nothing and the planner prompt is unchanged. Only
+// `auto` plans with the flag: `chat` and `design` do not register it.
+func remoteChangesOptions(forbid bool) []coordinator.Option {
+	if forbid {
+		return []coordinator.Option{coordinator.WithForbidRemoteChanges()}
+	}
+	return nil
+}
+
 // buildDeclaration is what `auto` says about running without build evidence —
 // the --accept-no-build-evidence flag as the value object the gate takes
 // (coordinator.RequireBuildEvidence). Not a field on VerifyCommand: that value

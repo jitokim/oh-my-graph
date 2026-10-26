@@ -697,6 +697,10 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 	// The commit read above, before the interview; held by the coordinator so
 	// every cycle of the goal loop measures scope from it (#414).
 	options = append(options, coordinator.WithStartCommit(startCommit))
+	// The planner hint of --forbid-remote-changes, on the coordinator so every
+	// cycle's prompt carries it (ADR 0046 §5.2); the snapshot is still what
+	// enforces the flag.
+	options = append(options, remoteChangesOptions(flags.forbidRemoteChanges)...)
 	coord := coordinator.New(nodeRunner, options...)
 	return planAndExecute(ctx, os.Stdout, coord, nodeRunner, flags.commonRunFlags, flags.goal,
 		goalCycleOptions{maxCycles: flags.maxCycles, maxGoalBudgetUSD: flags.maxGoalBudgetUSD}, flags.planOnly, nil,
