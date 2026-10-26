@@ -72,6 +72,10 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 	// about once per loop: the binding is the same invocation's on every
 	// cycle, so a second line about it would only repeat the first.
 	warnedInputs := make(map[string]bool)
+	// Each cycle's forbidden remote change (ADR 0046 §5.1), by run id. The
+	// loop feeds it to the assessor as a failed run, and goalExit reads the
+	// final cycle's back so the goal exits 6 naming it, as `run` does.
+	forbiddenRuns := make(map[string]*RemoteChangeForbiddenError)
 
 	onCyclePlanning := func(cycle int) error {
 		// The previous cycle's leg is closed by its own executeGraph; closing
@@ -154,6 +158,10 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 			// executeGraph already printed the resume hint.
 			return coordinator.CycleEvidence{}, runErr
 		}
+		var forbidden *RemoteChangeForbiddenError
+		if errors.As(runErr, &forbidden) {
+			forbiddenRuns[runID] = forbidden
+		}
 		return cycleEvidence(runID, plan, runErr == nil)
 	}
 
@@ -206,7 +214,7 @@ func planAndExecuteCycles(ctx context.Context, out io.Writer, coord *coordinator
 		}
 		return noteRejectedPlan(out, planDirFor(newRunID()), err)
 	}
-	return goalExit(out, result)
+	return goalExit(out, result, forbiddenRuns)
 }
 
 // isRunFailure reports whether err is the scheduler saying "this run
@@ -527,7 +535,32 @@ func addTokenUsage(a, b runner.TokenUsage) runner.TokenUsage {
 // Every other clean stop is the unmet-goal exit (1), with the final
 // `remaining` in the error. The one nil-without-goal-met case is a declined
 // cycle-1 plan, which is today's "plan discarded", not a failed goal.
-func goalExit(w io.Writer, result coordinator.GoalResult) error {
+//
+// A final cycle whose run failed on a forbidden remote change (forbidden,
+// keyed by run id) turns any of those stops but a decline into exit 6, the
+// error naming the change as `run`'s does (ADR 0046 §5.1). A non-final
+// cycle's forbidden change is only a failed run the loop iterated past: the
+// final cycle decides the exit. A declined plan is the final cycle and ran
+// nothing, so it never exits 6.
+func goalExit(w io.Writer, result coordinator.GoalResult, forbidden map[string]*RemoteChangeForbiddenError) error {
+	err := goalStopError(w, result)
+	if err == nil || result.Stop == coordinator.StopDeclined || len(result.Cycles) == 0 {
+		return err
+	}
+	final := result.Cycles[len(result.Cycles)-1]
+	f, ok := forbidden[final.RunID]
+	if !ok {
+		return err
+	}
+	if result.Stop == coordinator.StopGoalMet {
+		return fmt.Errorf("%v: %w", err, f)
+	}
+	return fmt.Errorf("%v; the final cycle's run FAILED (run %s): %w", err, final.RunID, f)
+}
+
+// goalStopError is goalExit's mapping of each stop, before a final cycle's
+// forbidden remote change is added to it.
+func goalStopError(w io.Writer, result coordinator.GoalResult) error {
 	switch result.Stop {
 	case coordinator.StopGoalMet:
 		final := result.Cycles[len(result.Cycles)-1]
