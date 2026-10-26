@@ -9,12 +9,14 @@
 // random nonce in BOTH markers is what removes that prediction: the nonce is
 // minted after the text is already fixed, so no material can contain it.
 //
-// Seven callers share Nonce (six call sites call it directly; internal/interview
+// Eight callers share Nonce (seven call sites call it directly; internal/interview
 // reaches it through its mintNonce seam): assess.go's engine-recorded material —
-// node details, artifact excerpts and the previous cycle's `remaining` — which is
-// raw model output by design (ADR 0011 §2), plus coordinator.go's continuation
-// quote of that same `remaining` into the next cycle's planner prompt,
-// reusemenu.go's reuse menu, whose summaries are repository-authored prose the
+// node details, artifact excerpts, the ENGINE-OBSERVED remote changes block (ADR
+// 0046 §3.1) and the previous cycle's `remaining` — which is raw model output by
+// design (ADR 0011 §2), plus coordinator.go's continuation quote of that same
+// `remaining` into the next cycle's planner prompt, forbidremote.go's
+// plannerPromptForbidding, which fences that same `remaining` again after the
+// --forbid-remote-changes sentence (ADR 0046 §5.2), reusemenu.go's reuse menu, whose summaries are repository-authored prose the
 // planner reads unreviewed on the committed path (ADR 0038 §9.2), repair.go's
 // quote of the validator's refusals into a re-plan prompt, retryfeedback.go's
 // quote of a node's own rejected attempt into the prompt that retries it (ADR
