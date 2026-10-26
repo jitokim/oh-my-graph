@@ -118,6 +118,19 @@ type RemoteObserver interface {
 	// through the fetch URL its before saw. url is the raw URL, credentials
 	// and all, so no error it returns may contain it.
 	LsRemoteHeadsURL(ctx context.Context, url string) ([]RemoteHead, error)
+	// LsRemoteHeadsURLOutsideRepo is LsRemoteHeadsURL read from outside the
+	// invocation repository, so its config is not read: a guarded after's
+	// read once that config changed since the before or could not be read.
+	LsRemoteHeadsURLOutsideRepo(ctx context.Context, url string) ([]RemoteHead, error)
+	// RepoConfigFingerprint is a digest of the invocation repository's own
+	// (local and worktree) config, includes followed, that a guarded leg
+	// compares between its before and its after. Only the digest is
+	// returned: the values may hold URLs or credentials.
+	RepoConfigFingerprint(ctx context.Context) (string, error)
+	// ResolveFetchURL is url as a guarded before keeps it to read its after
+	// through: a relative local path made absolute against the repository
+	// root, anything else unchanged. No error it returns may contain url.
+	ResolveFetchURL(ctx context.Context, url string) (string, error)
 	// CommitAttributable is ADR 0046 §5.1's local check: whether sha is a
 	// commit in the invocation repository reachable from one of this run's
 	// own branches and not from baseSHA, the run's base commit.

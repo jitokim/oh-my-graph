@@ -48,19 +48,20 @@ var runBaseCommit = launchCommitOfWorkingDir
 // (ADR 0046 §5.1).
 //
 // A guarded leg reads its after through the fetch URLs its own before saw
-// (beforeURLs), so a node that removes or re-points a remote after pushing to
-// it cannot hide the push. Those URLs are raw — a credential in one is kept —
-// and live only here: never in state.json, the run feed, the terminal or an
-// error. A resumed leg takes its own before, so it never reads the redacted
-// URLs a snapshot saved.
+// (guardedBefore, beside the before's repository-config digest), so a node
+// that removes or re-points a remote after pushing to it cannot hide the
+// push. Those URLs are raw — a credential in one is kept — and live only
+// here: never in state.json, the run feed, the terminal or an error. A
+// resumed leg takes its own before, so it never reads the redacted URLs a
+// snapshot saved.
 type remoteLeg struct {
-	obs        worktree.RemoteObserver
-	prs        remote.PRLister
-	recorder   *runstate.SnapshotRecorder
-	baseSHA    string
-	guarded    bool
-	beforeURLs worktree.FetchURLs
-	changes    runstate.RemoteChanges
+	obs           worktree.RemoteObserver
+	prs           remote.PRLister
+	recorder      *runstate.SnapshotRecorder
+	baseSHA       string
+	guarded       bool
+	guardedBefore *worktree.GuardedBefore
+	changes       runstate.RemoteChanges
 }
 
 // beginRemoteLeg takes the leg's before snapshot and records it. prior is the
@@ -85,9 +86,9 @@ func (l *remoteLeg) snapshot(ctx context.Context) runstate.RemoteSnapshot {
 	if !l.guarded {
 		return worktree.TakeRemoteSnapshot(ctx, l.obs, l.prs)
 	}
-	snap, urls := worktree.TakeGuardedRemoteSnapshot(ctx, l.obs, l.prs, l.beforeURLs)
-	if l.beforeURLs == nil {
-		l.beforeURLs = urls
+	snap, before := worktree.TakeGuardedRemoteSnapshot(ctx, l.obs, l.prs, l.guardedBefore)
+	if l.guardedBefore == nil {
+		l.guardedBefore = before
 	}
 	return snap
 }

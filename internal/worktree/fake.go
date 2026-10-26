@@ -98,6 +98,11 @@ type FakeRemoteObserver struct {
 	urlHeads    map[string][]RemoteHead
 	urlErr      map[string]error
 	urlCalls    []string
+	outCalls    []string
+	configFP    string
+	configErr   error
+	resolved    map[string]string
+	resolveErr  map[string]error
 	runCommits  map[string]bool
 	attribCalls []string
 	ghDefaults  map[string]string
@@ -113,6 +118,8 @@ func NewFakeRemoteObserver() *FakeRemoteObserver {
 		urlRemote:  make(map[string]string),
 		urlHeads:   make(map[string][]RemoteHead),
 		urlErr:     make(map[string]error),
+		resolved:   make(map[string]string),
+		resolveErr: make(map[string]error),
 		runCommits: make(map[string]bool),
 	}
 }
@@ -200,6 +207,25 @@ func (f *FakeRemoteObserver) LsRemoteHeadsURL(ctx context.Context, url string) (
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	return f.urlHeadsOf(url)
+}
+
+// LsRemoteHeadsURLOutsideRepo answers as LsRemoteHeadsURL does — a fake has
+// no repository config to step around — and records url both among the URL
+// reads and among the reads outside the repository.
+func (f *FakeRemoteObserver) LsRemoteHeadsURLOutsideRepo(ctx context.Context, url string) ([]RemoteHead, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.outCalls = append(f.outCalls, url)
+	return f.urlHeadsOf(url)
+}
+
+// urlHeadsOf is LsRemoteHeadsURL's answer for url, recorded among the URL
+// reads. f.mu is held.
+func (f *FakeRemoteObserver) urlHeadsOf(url string) ([]RemoteHead, error) {
 	f.urlCalls = append(f.urlCalls, url)
 	if heads, ok := f.urlHeads[url]; ok {
 		if err := f.urlErr[url]; err != nil {
@@ -221,6 +247,54 @@ func (f *FakeRemoteObserver) URLCalls() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string{}, f.urlCalls...)
+}
+
+// OutsideURLCalls returns every URL LsRemoteHeadsURLOutsideRepo was asked, in
+// order. Returns a copy; never nil.
+func (f *FakeRemoteObserver) OutsideURLCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string{}, f.outCalls...)
+}
+
+// SetRepoConfig scripts what RepoConfigFingerprint returns. Nothing scripted
+// is one fixed digest, so a test that never sets it reads inside the
+// repository, as an unchanged config does.
+func (f *FakeRemoteObserver) SetRepoConfig(fingerprint string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.configFP, f.configErr = fingerprint, err
+}
+
+// RepoConfigFingerprint returns the scripted digest, or the scripted error.
+func (f *FakeRemoteObserver) RepoConfigFingerprint(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.configFP, f.configErr
+}
+
+// SetResolvedURL scripts what ResolveFetchURL returns for url; a non-nil err
+// replaces the URL.
+func (f *FakeRemoteObserver) SetResolvedURL(url, resolved string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resolved[url], f.resolveErr[url] = resolved, err
+}
+
+// ResolveFetchURL returns what SetResolvedURL scripted for url, else url.
+func (f *FakeRemoteObserver) ResolveFetchURL(_ context.Context, url string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.resolveErr[url]; err != nil {
+		return "", err
+	}
+	if resolved, ok := f.resolved[url]; ok {
+		return resolved, nil
+	}
+	return url, nil
 }
 
 // CommitAttributable passes exactly the shas SetRunCommit named, except the

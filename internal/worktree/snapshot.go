@@ -2,6 +2,7 @@ package worktree
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"slices"
 	"sort"
@@ -41,32 +42,107 @@ func TakeRemoteSnapshot(ctx context.Context, obs RemoteObserver, prs remote.PRLi
 }
 
 // FetchURLs maps each remote a snapshot listed to its raw fetch URL, as `git
-// remote -v` printed it — any credential in it included. A guarded leg keeps
-// its before's in memory only, to read its after through (ADR 0046 §5.1): it
-// is never recorded, printed or put in an error; the snapshot records the
+// remote -v` printed it — any credential in it included — with a relative
+// local path made absolute (ResolveFetchURL). A guarded leg keeps its
+// before's in memory only, to read its after through (ADR 0046 §5.1): it is
+// never recorded, printed or put in an error; the snapshot records the
 // redacted URL as always.
 type FetchURLs map[string]string
 
-// TakeGuardedRemoteSnapshot is TakeRemoteSnapshot for a guarded leg, which
-// also returns the raw fetch URL of every remote it listed. through is the
-// leg's before's FetchURLs when taking its after (nil for the before): each
-// remote in it is read with `ls-remote --heads <that URL>` rather than by
-// name, whether it is still configured, removed or re-pointed, its refs
-// recorded under its name and the name in Branches.ReadThroughBeforeURL, so
-// removing or re-pointing a remote cannot hide a push to it. A remote not in
-// through — one added during the leg — is read by name. A read through a URL
-// that fails makes the branches part unavailable, as any remote's failed read
-// does, its reason naming the remote and never the URL. When the after cannot
-// list the remotes, the remotes part is unavailable as always, but every
-// remote in through is still read through its URL, so the branches part is
-// still observed for them.
-func TakeGuardedRemoteSnapshot(ctx context.Context, obs RemoteObserver, prs remote.PRLister, through FetchURLs) (runstate.RemoteSnapshot, FetchURLs) {
-	snap, remotes, _ := takeRemoteSnapshotThrough(ctx, obs, prs, through)
-	urls := FetchURLs{}
-	for _, r := range remotes {
-		urls[r.Name] = r.FetchURL
+// GuardedBefore is what a guarded leg's before keeps in memory to read its
+// after through: the FetchURLs, the remotes whose relative local-path URL
+// could not be resolved (with why), and the digest of the repository's own
+// config (RepoConfigFingerprint) — the digest only, never a value.
+type GuardedBefore struct {
+	urls       FetchURLs
+	unresolved map[string]string
+	config     string
+	configRead bool
+}
+
+// readThrough is every remote the before listed, sorted: each is read
+// through its before URL at the after, never by name. Nil-safe.
+func (b *GuardedBefore) readThrough() []string {
+	if b == nil {
+		return nil
 	}
-	return snap, urls
+	names := slices.Collect(maps.Keys(b.urls))
+	for name := range b.unresolved {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// readsThrough reports whether the after reads name through its before URL.
+// Nil-safe.
+func (b *GuardedBefore) readsThrough(name string) bool {
+	if b == nil {
+		return false
+	}
+	_, url := b.urls[name]
+	_, unresolved := b.unresolved[name]
+	return url || unresolved
+}
+
+// readOutsideRepo reports whether the after must read the before URLs from
+// outside the repository (LsRemoteHeadsURLOutsideRepo): the repository's
+// config may no longer name the servers the before read — its digest
+// differs from the before's, or it could not be read at either, or `git
+// remote -v` failed (remotesErr). Otherwise the read stays inside, where a
+// repository credential helper still works. Nil-safe; false when there is no
+// URL to read.
+func (b *GuardedBefore) readOutsideRepo(ctx context.Context, obs RemoteObserver, remotesErr error) bool {
+	if b == nil || len(b.urls) == 0 {
+		return false
+	}
+	if remotesErr != nil || !b.configRead {
+		return true
+	}
+	config, err := obs.RepoConfigFingerprint(ctx)
+	return err != nil || config != b.config
+}
+
+// TakeGuardedRemoteSnapshot is TakeRemoteSnapshot for a guarded leg. Taking
+// the before (before nil), it also returns what the after reads through:
+// every listed remote's raw fetch URL, a relative local path made absolute
+// against the repository root — one that cannot be is kept as unresolved,
+// and its read at the after fails with why — and the digest of the
+// repository's own config. Taking the after, before is the leg's before's,
+// and it returns nil: each remote in before is read with `ls-remote --heads
+// <that URL>` rather than by name, whether it is still configured, removed
+// or re-pointed, its refs recorded under its name and the name in
+// Branches.ReadThroughBeforeURL, so removing or re-pointing a remote cannot
+// hide a push to it. Those reads run inside the repository while its config
+// digest is the before's and `git remote -v` works, and outside it
+// (LsRemoteHeadsURLOutsideRepo) otherwise, so a node that rewrites the config
+// (an insteadOf) or breaks it cannot send them elsewhere or fail them. A
+// remote not in before — one added during the leg — is read by name. A read
+// through a URL that fails makes the branches part unavailable, as any
+// remote's failed read does, its reason naming the remote and never the URL.
+// When the after cannot list the remotes, the remotes part is unavailable as
+// always, but every remote in before is still read through its URL, so the
+// branches part is still observed for them.
+func TakeGuardedRemoteSnapshot(ctx context.Context, obs RemoteObserver, prs remote.PRLister, before *GuardedBefore) (runstate.RemoteSnapshot, *GuardedBefore) {
+	snap, remotes, _ := takeRemoteSnapshotThrough(ctx, obs, prs, before)
+	if before != nil {
+		return snap, nil
+	}
+	pin := &GuardedBefore{urls: FetchURLs{}, unresolved: map[string]string{}}
+	if len(remotes) == 0 {
+		return snap, pin
+	}
+	config, err := obs.RepoConfigFingerprint(ctx)
+	pin.config, pin.configRead = config, err == nil
+	for _, r := range remotes {
+		url, err := obs.ResolveFetchURL(ctx, r.FetchURL)
+		if err != nil {
+			pin.unresolved[r.Name] = err.Error()
+			continue
+		}
+		pin.urls[r.Name] = url
+	}
+	return snap, pin
 }
 
 // takeRemoteSnapshot is TakeRemoteSnapshot, also returning the repository gh
@@ -77,9 +153,9 @@ func takeRemoteSnapshot(ctx context.Context, obs RemoteObserver, prs remote.PRLi
 }
 
 // takeRemoteSnapshotThrough is the snapshot, its git parts read through
-// through's URLs (none: every remote by name), also returning the remotes
+// through's URLs (nil: every remote by name), also returning the remotes
 // listed and the repository gh was expected to read.
-func takeRemoteSnapshotThrough(ctx context.Context, obs RemoteObserver, prs remote.PRLister, through FetchURLs) (runstate.RemoteSnapshot, []Remote, ExpectedGHRepo) {
+func takeRemoteSnapshotThrough(ctx context.Context, obs RemoteObserver, prs remote.PRLister, through *GuardedBefore) (runstate.RemoteSnapshot, []Remote, ExpectedGHRepo) {
 	snap, remotes, remotesErr := takeGitParts(ctx, obs, through)
 	expected, unknown := expectGHRepo(ctx, obs, prs.RepoEnv(), remotes, remotesErr)
 	if unknown != nil {
@@ -103,16 +179,18 @@ func takeRemoteSnapshotThrough(ctx context.Context, obs RemoteObserver, prs remo
 // unless through names remotes, as a guarded after's does: their URLs are
 // already in hand, so each is still read through its URL and the branches
 // part records those remotes' refs, so a node that breaks `git remote -v`
-// (a corrupted .git/config) cannot hide a push behind it.
-func takeGitParts(ctx context.Context, obs RemoteObserver, through FetchURLs) (runstate.RemoteSnapshot, []Remote, error) {
+// (a corrupted .git/config) cannot hide a push behind it — the reads then run
+// outside the repository, whose config is what broke.
+func takeGitParts(ctx context.Context, obs RemoteObserver, through *GuardedBefore) (runstate.RemoteSnapshot, []Remote, error) {
 	var snap runstate.RemoteSnapshot
 
 	remotes, err := obs.Remotes(ctx)
+	outside := through.readOutsideRepo(ctx, obs, err)
 	if err != nil {
 		reason := remote.SummarizeReason(err.Error())
 		snap.Remotes = runstate.RemotesSnapshot{Status: runstate.RemotePartUnavailable, Reason: reason}
-		if len(through) > 0 {
-			snap.Branches = takeBranches(ctx, obs, nil, through)
+		if len(through.readThrough()) > 0 {
+			snap.Branches = takeBranches(ctx, obs, nil, through, outside)
 			return snap, nil, err
 		}
 		snap.Branches = runstate.BranchesSnapshot{Status: runstate.RemotePartUnavailable,
@@ -125,13 +203,14 @@ func takeGitParts(ctx context.Context, obs RemoteObserver, through FetchURLs) (r
 			Name: r.Name, FetchURL: remote.RedactURLCredentials(r.FetchURL), PushURL: remote.RedactURLCredentials(r.PushURL),
 		})
 	}
-	snap.Branches = takeBranches(ctx, obs, remotes, through)
+	snap.Branches = takeBranches(ctx, obs, remotes, through, outside)
 	return snap, remotes, nil
 }
 
 // takeBranches reads the branches part: each remote in through through its
-// URL there, then each of remotes not in through by name.
-func takeBranches(ctx context.Context, obs RemoteObserver, remotes []Remote, through FetchURLs) runstate.BranchesSnapshot {
+// URL there — from outside the repository when outside is set — then each of
+// remotes not in through by name.
+func takeBranches(ctx context.Context, obs RemoteObserver, remotes []Remote, through *GuardedBefore, outside bool) runstate.BranchesSnapshot {
 	var failures []string
 	var refs []runstate.RemoteBranchRef
 	read := func(name string, heads []RemoteHead, err error) {
@@ -143,13 +222,23 @@ func takeBranches(ctx context.Context, obs RemoteObserver, remotes []Remote, thr
 			refs = append(refs, runstate.RemoteBranchRef{Remote: name, Branch: h.Branch, SHA: h.SHA})
 		}
 	}
-	readThrough := slices.Sorted(maps.Keys(through))
+	readThrough := through.readThrough()
 	for _, name := range readThrough {
-		heads, err := obs.LsRemoteHeadsURL(ctx, through[name])
+		if reason, ok := through.unresolved[name]; ok {
+			read(name, nil, errors.New(reason))
+			continue
+		}
+		var heads []RemoteHead
+		var err error
+		if outside {
+			heads, err = obs.LsRemoteHeadsURLOutsideRepo(ctx, through.urls[name])
+		} else {
+			heads, err = obs.LsRemoteHeadsURL(ctx, through.urls[name])
+		}
 		read(name, heads, err)
 	}
 	for _, r := range remotes {
-		if _, ok := through[r.Name]; ok {
+		if through.readsThrough(r.Name) {
 			continue
 		}
 		heads, err := obs.LsRemoteHeads(ctx, r.Name)

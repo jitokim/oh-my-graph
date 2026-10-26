@@ -239,7 +239,7 @@ func TestTakeGuardedRemoteSnapshot_ReadsTheBeforesRemotesThroughTheirURLs(t *tes
 	obs.SetHeads("gone", []RemoteHead{{Branch: "g", SHA: strings.Repeat("b", 40)}}, nil)
 
 	before, urls := TakeGuardedRemoteSnapshot(ctx, obs, ghRepoPRs(), nil)
-	if want := (FetchURLs{"gone": "https://example.com/g.git", "origin": testCredentialURL}); !reflect.DeepEqual(urls, want) {
+	if want := (FetchURLs{"gone": "https://example.com/g.git", "origin": testCredentialURL}); !reflect.DeepEqual(urls.urls, want) {
 		t.Fatalf("before URLs = %v, want %v", urls, want)
 	}
 	if got := before.Remotes.Configured[1].FetchURL; got != "https://***@127.0.0.1:1/x.git" {

@@ -2,6 +2,8 @@ package worktree
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -36,9 +38,10 @@ const gitWaitDelay = time.Second
 //
 // Its scope is the git commands the engine itself issues against the
 // invocation repository: worktrees, and the remote snapshot (#410). The
-// snapshot's reads — Remotes, LsRemoteHeads, LsRemoteHeadsURL (with its
-// `git version` and collision checks), the local CommitAttributable check and
-// the GHDefaultRemotes config read — go through
+// snapshot's reads — Remotes, LsRemoteHeads, LsRemoteHeadsURL and
+// LsRemoteHeadsURLOutsideRepo (with their `git version` and collision
+// checks), RepoConfigFingerprint, ResolveFetchURL, the local
+// CommitAttributable check and the GHDefaultRemotes config read — go through
 // the same m.gitRun/gitCmd path that m.git uses, so they inherit the one
 // exec.Command, the env scrub and the timeout, and add only
 // GIT_TERMINAL_PROMPT=0 and an empty GIT_ASKPASS — plus, for Remotes and the
@@ -78,6 +81,11 @@ type GitManager struct {
 	// first call does not refuse every later one.
 	versionMu sync.Mutex
 	version   *gitVersion
+
+	// observe, when set, is handed each command just before it runs: a test
+	// hook, nil in production, so a test can assert the Dir and Env a real
+	// git child got.
+	observe func(*exec.Cmd)
 }
 
 // managedWorktree records what Acquire provisioned for one name — everything
@@ -396,11 +404,21 @@ func gitFailure(args []string, err error, output string) error {
 // LsRemoteHeadsURL's, which must not echo the URL their env or config carries
 // — the URL is never on the argv of the git process the engine starts.
 func (m *GitManager) gitRun(ctx context.Context, extraEnv []string, args ...string) (string, error) {
+	return m.gitRunIn(ctx, nil, extraEnv, args...)
+}
+
+// gitRunIn is gitRun, run outside the repository when out is set (see
+// gitCmdIn).
+func (m *GitManager) gitRunIn(ctx context.Context, out *outsideRepo, extraEnv []string, args ...string) (string, error) {
 	cmdCtx, cancel := context.WithTimeout(ctx, m.timeout)
 	defer cancel()
 
-	out, err := m.gitCmd(cmdCtx, extraEnv, args...).CombinedOutput()
-	output := strings.TrimSpace(string(out))
+	cmd := m.gitCmdIn(cmdCtx, out, extraEnv, args...)
+	if m.observe != nil {
+		m.observe(cmd)
+	}
+	combined, err := cmd.CombinedOutput()
+	output := strings.TrimSpace(string(combined))
 	if err != nil && errors.Is(cmdCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
 		err = fmt.Errorf("timed out after %s: %w", m.timeout, err)
 	}
@@ -429,27 +447,62 @@ func (m *GitManager) gitRun(ctx context.Context, extraEnv []string, args ...stri
 // grandchild still holding the output pipe would otherwise keep
 // CombinedOutput waiting for as long as it lives.
 func (m *GitManager) gitCmd(ctx context.Context, extraEnv []string, args ...string) *exec.Cmd {
+	return m.gitCmdIn(ctx, nil, extraEnv, args...)
+}
+
+// gitCmdIn is gitCmd, with the command moved out of the repository when out
+// is set: it runs in out.dir, a fresh empty directory, with the variables
+// that name a repository (repoLocatingEnv) dropped after the scrub and
+// GIT_CEILING_DIRECTORIES set to out.dir's parent, so git finds no
+// repository — not the invocation one, and not one the temporary directory
+// happens to sit in — and reads no repository config.
+func (m *GitManager) gitCmdIn(ctx context.Context, out *outsideRepo, extraEnv []string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = m.repoDir
 	cmd.Env = childenv.Scrub(m.environ())
+	if out != nil {
+		cmd.Dir = out.dir
+		cmd.Env = withoutKeys(cmd.Env, repoLocatingEnv)
+		extraEnv = append([]string{"GIT_CEILING_DIRECTORIES=" + filepath.Dir(out.dir)}, extraEnv...)
+	}
 	cmd.Env = append(withoutKeysOf(cmd.Env, extraEnv), extraEnv...)
 	cmd.WaitDelay = gitWaitDelay
 	return cmd
 }
 
+// outsideRepo is where a command runs when it must not read the invocation
+// repository: dir, a fresh empty directory its caller made and removes.
+type outsideRepo struct{ dir string }
+
+// repoLocatingEnv is every variable that would point a git child run outside
+// the repository back at one.
+var repoLocatingEnv = []string{
+	"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
+	"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+}
+
 // withoutKeysOf is env less every entry whose key some entry of extra sets.
 func withoutKeysOf(env, extra []string) []string {
-	if len(extra) == 0 {
-		return env
-	}
-	keys := make(map[string]bool, len(extra))
+	keys := make([]string, 0, len(extra))
 	for _, kv := range extra {
 		k, _, _ := strings.Cut(kv, "=")
-		keys[k] = true
+		keys = append(keys, k)
+	}
+	return withoutKeys(env, keys)
+}
+
+// withoutKeys is env less every entry whose key is one of keys.
+func withoutKeys(env, keys []string) []string {
+	if len(keys) == 0 {
+		return env
+	}
+	drop := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		drop[k] = true
 	}
 	kept := make([]string, 0, len(env))
 	for _, kv := range env {
-		if k, _, _ := strings.Cut(kv, "="); !keys[k] {
+		if k, _, _ := strings.Cut(kv, "="); !drop[k] {
 			kept = append(kept, kv)
 		}
 	}
@@ -479,12 +532,19 @@ const batchSSH = "GIT_SSH_COMMAND=ssh -o BatchMode=yes"
 // is not set, and any failure to read it reads as unset: the safe direction
 // is never to prompt.
 func (m *GitManager) snapshotEnv(ctx context.Context) []string {
+	return m.snapshotEnvIn(ctx, nil)
+}
+
+// snapshotEnvIn is snapshotEnv for a command run where out puts it: outside
+// the repository, core.sshCommand is read there too, so only the global or
+// env config's counts — the repository's is not what the child will read.
+func (m *GitManager) snapshotEnvIn(ctx context.Context, out *outsideRepo) []string {
 	for _, kv := range childenv.Scrub(m.environ()) {
 		if k, _, _ := strings.Cut(kv, "="); k == "GIT_SSH_COMMAND" || k == "GIT_SSH" {
 			return noPromptEnv
 		}
 	}
-	if cmd, err := m.gitEnv(ctx, noPromptEnv, "config", "core.sshCommand"); err == nil && cmd != "" {
+	if cmd, err := m.gitRunIn(ctx, out, noPromptEnv, "config", "core.sshCommand"); err == nil && cmd != "" {
 		return noPromptEnv
 	}
 	return append(append([]string(nil), noPromptEnv...), batchSSH)
@@ -592,6 +652,37 @@ func (m *GitManager) LsRemoteHeads(ctx context.Context, remote string) ([]Remote
 // failed read reports git's exit, never its argv or its output, which may
 // echo the URL.
 func (m *GitManager) LsRemoteHeadsURL(ctx context.Context, url string) ([]RemoteHead, error) {
+	return m.lsRemoteHeadsURL(ctx, url, nil)
+}
+
+// LsRemoteHeadsURLOutsideRepo is LsRemoteHeadsURL run outside the invocation
+// repository: a guarded after's read once the repository's own config can no
+// longer be trusted to name the same server — it changed since the before
+// (RepoConfigFingerprint), or it, or `git remote -v`, could not be read. Read
+// inside, a url.<base>.insteadOf a node added would send the read to another
+// server, and a config a node broke would fail it.
+//
+// Every git it starts — the version ask, the core.sshCommand read, the
+// collision check and the ls-remote — runs in a fresh empty temporary
+// directory, removed afterwards, with the repository-locating variables
+// dropped and GIT_CEILING_DIRECTORIES at the directory's parent (see
+// gitCmdIn), so only the global and env config are read: a repository remote
+// named omg-before-snapshot no longer collides, and a repository-only
+// setting such as a credential helper is not used, so a server that needs it
+// fails the read, unavailable. url must already be absolute if it is a local
+// path (ResolveFetchURL).
+func (m *GitManager) LsRemoteHeadsURLOutsideRepo(ctx context.Context, url string) ([]RemoteHead, error) {
+	dir, err := os.MkdirTemp("", "omg-before-snapshot-")
+	if err != nil {
+		return nil, fmt.Errorf("cannot create an empty directory to read the before fetch URL from outside the repository: %w", err)
+	}
+	defer os.RemoveAll(dir)
+	return m.lsRemoteHeadsURL(ctx, url, &outsideRepo{dir: dir})
+}
+
+// lsRemoteHeadsURL is the read of LsRemoteHeadsURL, in the repository when
+// out is nil and where out puts it otherwise.
+func (m *GitManager) lsRemoteHeadsURL(ctx context.Context, url string, out *outsideRepo) ([]RemoteHead, error) {
 	if url == "" || strings.HasPrefix(url, "-") {
 		return nil, errors.New("refusing to ls-remote the before fetch URL: not a usable URL")
 	}
@@ -599,20 +690,28 @@ func (m *GitManager) LsRemoteHeadsURL(ctx context.Context, url string) ([]Remote
 	if err != nil {
 		return nil, err
 	}
-	if err := m.requireConfigEnvGit(ctx); err != nil {
+	if err := m.requireConfigEnvGit(ctx, out); err != nil {
 		return nil, err
 	}
-	env := m.snapshotEnv(ctx)
-	if err := m.checkBeforeSnapshotRemoteFree(ctx, env); err != nil {
+	env := m.snapshotEnvIn(ctx, out)
+	if err := m.checkBeforeSnapshotRemoteFree(ctx, out, env); err != nil {
 		return nil, err
 	}
 	env = append(env, beforeSnapshotEnv(n, url)...)
-	out, err := m.gitRun(ctx, env, lsRemoteHeadsArgs(beforeSnapshotRemote)...)
+	heads, err := m.gitRunIn(ctx, out, env, lsRemoteHeadsArgs(beforeSnapshotRemote)...)
 	if err != nil {
+		if out != nil {
+			return nil, fmt.Errorf("git ls-remote --heads <before fetch URL> (%s): %w", readOutsideRepo, err)
+		}
 		return nil, fmt.Errorf("git ls-remote --heads <before fetch URL>: %w", err)
 	}
-	return parseLsRemoteHeads(out), nil
+	return parseLsRemoteHeads(heads), nil
 }
+
+// readOutsideRepo is what a failed read outside the repository says about
+// where it ran, so an operator whose server needs a repository-only setting
+// can tell why it was not used.
+const readOutsideRepo = "read outside the repository: its config changed or could not be read"
 
 // beforeSnapshotRemote is the remote LsRemoteHeadsURL defines in its child's
 // env to read a before fetch URL through.
@@ -660,15 +759,19 @@ const beforeSnapshotRemoteKeys = `^remote\.omg-before-snapshot\.`
 // checkBeforeSnapshotRemoteFree fails when the config the read would see —
 // the repository's, or the env's — already has a key under
 // remote.omg-before-snapshot: git would merge it into the remote the read
-// defines, and read the user's remote instead. `git config --get-regexp`
-// exits 1 when no key matches, the clean case; any other failure is an
-// error. Its output, which may hold a URL, is never quoted.
-func (m *GitManager) checkBeforeSnapshotRemoteFree(ctx context.Context, env []string) error {
-	_, err := m.gitRun(ctx, env, "config", "--get-regexp", beforeSnapshotRemoteKeys)
+// defines, and read the user's remote instead. Run where out puts it,
+// outside the repository, it sees only the global and env config, the only
+// ones the read there sees. `git config --get-regexp` exits 1 when no key
+// matches, the clean case; any other failure is an error. Its output, which
+// may hold a URL, is never quoted.
+func (m *GitManager) checkBeforeSnapshotRemoteFree(ctx context.Context, out *outsideRepo, env []string) error {
+	_, err := m.gitRunIn(ctx, out, env, "config", "--get-regexp", beforeSnapshotRemoteKeys)
 	var exitErr *exec.ExitError
 	switch {
 	case errors.As(err, &exitErr) && exitErr.ExitCode() == 1:
 		return nil
+	case err == nil && out != nil:
+		return errors.New("the global or env config already has a remote named " + beforeSnapshotRemote + ": " + noUnexposedRead)
 	case err == nil:
 		return errors.New("the repository already has a remote named " + beforeSnapshotRemote + ": " + noUnexposedRead)
 	default:
@@ -687,17 +790,17 @@ type gitVersion struct {
 const configEnvMinor = 31
 
 // requireConfigEnvGit fails unless git reads GIT_CONFIG_COUNT (2.31 or
-// later). The version is asked once per manager and kept, unless the ask
-// itself failed to run.
-func (m *GitManager) requireConfigEnvGit(ctx context.Context) error {
+// later). The version is asked once per manager, where out puts it, and
+// kept, unless the ask itself failed to run.
+func (m *GitManager) requireConfigEnvGit(ctx context.Context, out *outsideRepo) error {
 	m.versionMu.Lock()
 	defer m.versionMu.Unlock()
 	if m.version == nil {
-		out, err := m.gitRun(ctx, noPromptEnv, "version")
+		printed, err := m.gitRunIn(ctx, out, noPromptEnv, "version")
 		if err != nil {
 			return fmt.Errorf("cannot determine git version: %w: %s", err, noUnexposedRead)
 		}
-		v := parseGitVersion(out)
+		v := parseGitVersion(printed)
 		m.version = &v
 	}
 	switch v := *m.version; {
@@ -731,6 +834,76 @@ func parseGitVersion(out string) gitVersion {
 		return gitVersion{}
 	}
 	return gitVersion{major: major, minor: minor, ok: true}
+}
+
+// RepoConfigFingerprint is the SHA-256, in hex, of the invocation
+// repository's own config as `git config --list --show-origin --show-scope
+// --includes` prints it there, read with prompting off: every line but those
+// git scopes system, global or command — so the local and worktree entries,
+// those of a file an include.path or includeIf reaches from them included,
+// and any line git does not scope at all (a continuation of a value holding a
+// newline), which keeps every change to them a change to the digest. A
+// guarded leg pins it at its before and compares it at its after
+// (TakeGuardedRemoteSnapshot). Only the digest leaves here: the values may
+// hold URLs or credentials, so a failure reports git's exit, never its
+// output.
+func (m *GitManager) RepoConfigFingerprint(ctx context.Context) (string, error) {
+	out, err := m.gitRun(ctx, noPromptEnv, "config", "--list", "--show-origin", "--show-scope", "--includes")
+	if err != nil {
+		return "", fmt.Errorf("git config --list --show-origin --show-scope --includes: %w", err)
+	}
+	return repoConfigFingerprint(out), nil
+}
+
+// repoConfigFingerprint digests the lines of a scoped `git config --list`
+// that RepoConfigFingerprint keeps.
+func repoConfigFingerprint(list string) string {
+	h := sha256.New()
+	for _, line := range strings.Split(list, "\n") {
+		switch scope, _, _ := strings.Cut(line, "\t"); scope {
+		case "system", "global", "command":
+			continue
+		}
+		h.Write([]byte(line + "\n"))
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// unresolvedLocalURL opens the error of a relative local-path fetch URL
+// ResolveFetchURL could not make absolute.
+const unresolvedLocalURL = "the before fetch URL is a relative local path, and the repository root it is relative to could not be read"
+
+// ResolveFetchURL returns url as a guarded leg's before keeps it to read its
+// after through: unchanged, unless it is a relative local path (../origin.git),
+// which git reads relative to the repository root and a read outside the
+// repository would read relative to somewhere else — that is made absolute
+// against `git rev-parse --show-toplevel`. A URL with a scheme, an scp-like
+// host:path, an absolute path and a <transport>::<address> are left as they
+// are, as is everything `git remote -v` already rewrote through insteadOf.
+// The error never names the URL.
+func (m *GitManager) ResolveFetchURL(ctx context.Context, url string) (string, error) {
+	if !isRelativeLocalPath(url) {
+		return url, nil
+	}
+	top, err := m.gitRun(ctx, noPromptEnv, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", fmt.Errorf("%s: git rev-parse --show-toplevel: %w", unresolvedLocalURL, err)
+	}
+	if strings.Contains(top, "\n") || !filepath.IsAbs(top) {
+		return "", errors.New(unresolvedLocalURL + ": git rev-parse --show-toplevel printed no absolute path")
+	}
+	return filepath.Join(top, url), nil
+}
+
+// isRelativeLocalPath is git's own test for a local path (connect.c's
+// url_is_local_not_ssh: no scheme, and no colon or a slash before the first
+// one), less the absolute paths.
+func isRelativeLocalPath(url string) bool {
+	if url == "" || strings.Contains(url, "://") || filepath.IsAbs(url) {
+		return false
+	}
+	colon, slash := strings.IndexByte(url, ':'), strings.IndexByte(url, '/')
+	return colon < 0 || slash >= 0 && slash < colon
 }
 
 func lsRemoteHeadsArgs(repository string) []string {
