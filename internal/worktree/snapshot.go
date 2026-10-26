@@ -205,3 +205,48 @@ func takePullRequests(ctx context.Context, prs remote.PRLister, expected Expecte
 func RunCommitCheck(ctx context.Context, obs RemoteObserver, baseSHA string) func(sha string) bool {
 	return func(sha string) bool { return obs.CommitAttributable(ctx, sha, baseSHA) }
 }
+
+// EndGuardedLeg is runstate.RemoteChanges.EndLeg for a guarded leg: it
+// records after the same way, then replaces the leg's diff with
+// DiffGuardedRemoteSnapshots's, so branches read through the before URLs are
+// compared even when the after could not list the remotes.
+func EndGuardedLeg(c *runstate.RemoteChanges, after runstate.RemoteSnapshot, isRunCommit func(sha string) bool) bool {
+	if !c.EndLeg(after, isRunCommit) {
+		return false
+	}
+	leg := &c.Legs[len(c.Legs)-1]
+	diff := DiffGuardedRemoteSnapshots(leg.Before, after, isRunCommit)
+	leg.Changes = &diff
+	return true
+}
+
+// DiffGuardedRemoteSnapshots is runstate.DiffRemoteSnapshots for a guarded
+// leg. When the after could not list the remotes but read the before's
+// through their before fetch URLs (TakeGuardedRemoteSnapshot), those refs are
+// the same repositories' as the before's, so the branches part is compared as
+// if the remotes were the before's, while the remotes part stays not
+// compared, with its own reason. Otherwise it is runstate.DiffRemoteSnapshots.
+func DiffGuardedRemoteSnapshots(before, after runstate.RemoteSnapshot, isRunCommit func(sha string) bool) runstate.RemoteDiff {
+	d := runstate.DiffRemoteSnapshots(before, after, isRunCommit)
+	if before.Remotes.Status != runstate.RemotePartObserved || after.Remotes.Status == runstate.RemotePartObserved ||
+		after.Branches.Status != runstate.RemotePartObserved || len(after.Branches.ReadThroughBeforeURL) == 0 {
+		return d
+	}
+	standIn := after
+	standIn.Remotes = before.Remotes
+	branches := runstate.DiffRemoteSnapshots(before, standIn, isRunCommit)
+
+	diff := runstate.RemoteDiff{Observed: []runstate.RemotePart{}, Entries: branches.Entries, NotCompared: []runstate.RemoteNotCompared{}}
+	for _, p := range branches.Observed {
+		if p != runstate.RemotePartRemotes {
+			diff.Observed = append(diff.Observed, p)
+		}
+	}
+	for _, nc := range d.NotCompared {
+		if nc.Part == runstate.RemotePartRemotes {
+			diff.NotCompared = append(diff.NotCompared, nc)
+		}
+	}
+	diff.NotCompared = append(diff.NotCompared, branches.NotCompared...)
+	return diff
+}

@@ -993,33 +993,3 @@ func TestDiffRemoteSnapshots_AnAmbiguousRepoIsNotComparedNeverEmpty(t *testing.T
 		t.Errorf("not_compared = %+v, want %+v", got.NotCompared, want)
 	}
 }
-
-// A guarded after that could not list its remotes but read the before's
-// through their fetch URLs has its branches compared for those remotes; a
-// before remote it did not read through is not compared, and says why.
-func TestDiffRemoteSnapshots_ReadThroughBranchesAreComparedWithoutTheAftersRemotes(t *testing.T) {
-	upstream := RemoteConfig{Name: "upstream", FetchURL: "/srv/upstream.git", PushURL: "/srv/upstream.git"}
-	before := observed([]RemoteConfig{origin, upstream}, ref("origin", "main", shaBase), ref("upstream", "main", shaBase))
-	after := RemoteSnapshot{
-		Remotes: RemotesSnapshot{Status: RemotePartUnavailable, Reason: "fatal: bad config line 1"},
-		Branches: BranchesSnapshot{Status: RemotePartObserved, ReadThroughBeforeURL: []string{"origin"},
-			Refs: []RemoteBranchRef{ref("origin", "main", shaBase), ref("origin", "feat/run", shaRun)}},
-		PullRequests: PullRequestsSnapshot{Status: RemotePartObserved},
-	}
-	got := DiffRemoteSnapshots(before, after, runCommitIs(shaRun))
-	want := []RemoteChangeEntry{{Kind: BranchCreated, Remote: "origin", Branch: "feat/run", NewSHA: shaRun, Attribution: AttributionRunCommit}}
-	if !reflect.DeepEqual(got.Entries, want) {
-		t.Errorf("entries = %+v\nwant      %+v", got.Entries, want)
-	}
-	if !reflect.DeepEqual(got.Observed, []RemotePart{RemotePartBranches, RemotePartPullRequests}) {
-		t.Errorf("observed = %v, want branches and pull_requests", got.Observed)
-	}
-	wantSkipped := []RemoteNotCompared{
-		{Part: RemotePartRemotes, Reason: "unavailable after: fatal: bad config line 1"},
-		{Part: RemotePartBranches, Remote: "upstream",
-			Reason: "the remotes part is unavailable after, and this remote was not read through its before fetch URL"},
-	}
-	if !reflect.DeepEqual(got.NotCompared, wantSkipped) {
-		t.Errorf("not_compared = %+v\nwant          %+v", got.NotCompared, wantSkipped)
-	}
-}

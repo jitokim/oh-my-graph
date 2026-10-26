@@ -293,8 +293,7 @@ func (c *RemoteChanges) EndLeg(after RemoteSnapshot, isRunCommit func(sha string
 // come from another repository; each such remote gets its own not_compared
 // item, beside the remote entry that already reports it — unless the after
 // read that remote's refs through the before's fetch URL
-// (ReadThroughBeforeURL), which makes them the same repository's refs; such
-// refs are compared even when the after's remotes part is unavailable. Pull
+// (ReadThroughBeforeURL), which makes them the same repository's refs. Pull
 // requests are
 // compared on their own: gh reads the GitHub repository, not a remote, and
 // two lists that name different repositories are not compared either.
@@ -326,7 +325,7 @@ func DiffRemoteSnapshots(before, after RemoteSnapshot, isRunCommit func(sha stri
 	switch {
 	case !ok:
 		d.NotCompared = append(d.NotCompared, RemoteNotCompared{Part: RemotePartBranches, Reason: reason})
-	case !remotesCompared && !readThroughWithoutRemotes(before, after):
+	case !remotesCompared:
 		// Which remotes' refs are comparable is decided by the remotes part.
 		d.NotCompared = append(d.NotCompared, RemoteNotCompared{
 			Part: RemotePartBranches, Reason: "the remotes part was not compared, so no remote's refs can be matched",
@@ -349,15 +348,6 @@ func DiffRemoteSnapshots(before, after RemoteSnapshot, isRunCommit func(sha stri
 		d.NotCompared = append(d.NotCompared, RemoteNotCompared{Part: RemotePartPullRequests, Reason: reason})
 	}
 	return d
-}
-
-// readThroughWithoutRemotes reports whether after, unable to list its
-// remotes, still read the refs of before's remotes through their before
-// fetch URLs: those refs are the same repositories' as before's, so they are
-// compared without the after's remotes part.
-func readThroughWithoutRemotes(before, after RemoteSnapshot) bool {
-	return before.Remotes.Status == RemotePartObserved && after.Remotes.Status != RemotePartObserved &&
-		len(after.Branches.ReadThroughBeforeURL) > 0
 }
 
 // comparable reports whether a part was observed on both sides, and when it
@@ -450,9 +440,6 @@ func diffBranches(before, after RemoteSnapshot, attribute func(string) RemoteAtt
 				skipped = append(skipped, RemoteNotCompared{Part: RemotePartBranches, Remote: name,
 					Reason: "fetch URL changed: the new repository has no before refs to compare"})
 			}
-		case !inCur && after.Remotes.Status != RemotePartObserved:
-			skipped = append(skipped, RemoteNotCompared{Part: RemotePartBranches, Remote: name,
-				Reason: "the remotes part is unavailable after, and this remote was not read through its before fetch URL"})
 		case !inCur:
 			skipped = append(skipped, RemoteNotCompared{Part: RemotePartBranches, Remote: name,
 				Reason: "remote removed: it has no after refs to compare"})

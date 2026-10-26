@@ -320,7 +320,7 @@ func TestTakeGuardedRemoteSnapshot_ComparesBranchesThroughTheBeforeURLsWhenTheRe
 		t.Fatalf("branches = %+v, want observed, read through origin's before URL", after.Branches)
 	}
 
-	diff := runstate.DiffRemoteSnapshots(before, after, RunCommitCheck(ctx, obs, base))
+	diff := DiffGuardedRemoteSnapshots(before, after, RunCommitCheck(ctx, obs, base))
 	want := []runstate.RemoteChangeEntry{{Kind: runstate.BranchCreated, Remote: "origin", Branch: "feat/run",
 		NewSHA: runCommit, Attribution: runstate.AttributionRunCommit}}
 	if !reflect.DeepEqual(diff.Entries, want) {

@@ -121,7 +121,12 @@ func (l *remoteLeg) end(runCtx context.Context) (interrupted bool) {
 	// The commit check is local and bounded: it runs on a context of its
 	// own, so an interrupt that lands after the read above cannot fail it
 	// and record a run commit not_attributable.
-	l.changes.EndLeg(after, worktree.RunCommitCheck(context.Background(), l.obs, l.baseSHA))
+	isRunCommit := worktree.RunCommitCheck(context.Background(), l.obs, l.baseSHA)
+	if l.guarded {
+		worktree.EndGuardedLeg(&l.changes, after, isRunCommit)
+	} else {
+		l.changes.EndLeg(after, isRunCommit)
+	}
 	l.record()
 	return interrupted
 }
