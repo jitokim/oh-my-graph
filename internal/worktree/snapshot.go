@@ -56,7 +56,10 @@ type FetchURLs map[string]string
 // removing or re-pointing a remote cannot hide a push to it. A remote not in
 // through — one added during the leg — is read by name. A read through a URL
 // that fails makes the branches part unavailable, as any remote's failed read
-// does, its reason naming the remote and never the URL.
+// does, its reason naming the remote and never the URL. When the after cannot
+// list the remotes, the remotes part is unavailable as always, but every
+// remote in through is still read through its URL, so the branches part is
+// still observed for them.
 func TakeGuardedRemoteSnapshot(ctx context.Context, obs RemoteObserver, prs remote.PRLister, through FetchURLs) (runstate.RemoteSnapshot, FetchURLs) {
 	snap, remotes, _ := takeRemoteSnapshotThrough(ctx, obs, prs, through)
 	urls := FetchURLs{}
@@ -95,6 +98,12 @@ func takeRemoteSnapshotThrough(ctx context.Context, obs RemoteObserver, prs remo
 // takeGitParts reads the remotes and branches parts, and hands back the
 // remotes, or the error that made that part unavailable, for expectGHRepo.
 // Each remote in through is read through its URL there, the rest by name.
+//
+// When the remotes cannot be listed, the branches part is unavailable too —
+// unless through names remotes, as a guarded after's does: their URLs are
+// already in hand, so each is still read through its URL and the branches
+// part records those remotes' refs, so a node that breaks `git remote -v`
+// (a corrupted .git/config) cannot hide a push behind it.
 func takeGitParts(ctx context.Context, obs RemoteObserver, through FetchURLs) (runstate.RemoteSnapshot, []Remote, error) {
 	var snap runstate.RemoteSnapshot
 
@@ -102,6 +111,10 @@ func takeGitParts(ctx context.Context, obs RemoteObserver, through FetchURLs) (r
 	if err != nil {
 		reason := remote.SummarizeReason(err.Error())
 		snap.Remotes = runstate.RemotesSnapshot{Status: runstate.RemotePartUnavailable, Reason: reason}
+		if len(through) > 0 {
+			snap.Branches = takeBranches(ctx, obs, nil, through)
+			return snap, nil, err
+		}
 		snap.Branches = runstate.BranchesSnapshot{Status: runstate.RemotePartUnavailable,
 			Reason: "the remotes part is unavailable: " + reason}
 		return snap, nil, err
@@ -112,7 +125,13 @@ func takeGitParts(ctx context.Context, obs RemoteObserver, through FetchURLs) (r
 			Name: r.Name, FetchURL: remote.RedactURLCredentials(r.FetchURL), PushURL: remote.RedactURLCredentials(r.PushURL),
 		})
 	}
+	snap.Branches = takeBranches(ctx, obs, remotes, through)
+	return snap, remotes, nil
+}
 
+// takeBranches reads the branches part: each remote in through through its
+// URL there, then each of remotes not in through by name.
+func takeBranches(ctx context.Context, obs RemoteObserver, remotes []Remote, through FetchURLs) runstate.BranchesSnapshot {
 	var failures []string
 	var refs []runstate.RemoteBranchRef
 	read := func(name string, heads []RemoteHead, err error) {
@@ -137,17 +156,16 @@ func takeGitParts(ctx context.Context, obs RemoteObserver, through FetchURLs) (r
 		read(r.Name, heads, err)
 	}
 	if len(failures) > 0 {
-		snap.Branches = runstate.BranchesSnapshot{Status: runstate.RemotePartUnavailable,
+		return runstate.BranchesSnapshot{Status: runstate.RemotePartUnavailable,
 			Reason: remote.SummarizeReason(strings.Join(failures, "; "))}
-		return snap, remotes, nil
 	}
-	snap.Branches = runstate.BranchesSnapshot{Status: runstate.RemotePartObserved, Refs: refs}
+	branches := runstate.BranchesSnapshot{Status: runstate.RemotePartObserved, Refs: refs}
 	if len(readThrough) > 0 {
 		// Read in two passes, so back into remote order.
 		sort.SliceStable(refs, func(i, j int) bool { return refs[i].Remote < refs[j].Remote })
-		snap.Branches.ReadThroughBeforeURL = readThrough
+		branches.ReadThroughBeforeURL = readThrough
 	}
-	return snap, remotes, nil
+	return branches
 }
 
 // takePullRequests records what prs answered. The limit rule is applied

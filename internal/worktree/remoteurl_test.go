@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -289,6 +290,76 @@ func TestTakeGuardedRemoteSnapshot_AnUnreadableBeforeURLMakesBranchesUnavailable
 	}
 	if after.Branches.ReadThroughBeforeURL != nil {
 		t.Errorf("an unavailable part names remotes read through: %v", after.Branches.ReadThroughBeforeURL)
+	}
+}
+
+// A node that pushes its own commit to a new branch and then breaks `git
+// remote -v` (a corrupted .git/config) does not hide the push from a guarded
+// after: the remotes part is unavailable as always, but the before's remotes
+// are still read through their before URLs, and their branches compared.
+func TestTakeGuardedRemoteSnapshot_ComparesBranchesThroughTheBeforeURLsWhenTheRemotesCannotBeListed(t *testing.T) {
+	ctx := context.Background()
+	runCommit, base, main := strings.Repeat("c", 40), strings.Repeat("d", 40), strings.Repeat("a", 40)
+	obs := NewFakeRemoteObserver()
+	obs.SetRemotes([]Remote{{Name: "origin", FetchURL: testCredentialURL, PushURL: testCredentialURL}}, nil)
+	obs.SetHeads("origin", []RemoteHead{{Branch: "main", SHA: main}}, nil)
+	obs.SetRunCommit(runCommit)
+	before, urls := TakeGuardedRemoteSnapshot(ctx, obs, ghRepoPRs(), nil)
+
+	obs.SetHeads("origin", []RemoteHead{{Branch: "main", SHA: main}, {Branch: "feat/run", SHA: runCommit}}, nil)
+	obs.SetRemotes(nil, errors.New("fatal: bad config line 1 in file .git/config"))
+	after, _ := TakeGuardedRemoteSnapshot(ctx, obs, ghRepoPRs(), urls)
+
+	if after.Remotes.Status != runstate.RemotePartUnavailable || after.Remotes.Reason != "fatal: bad config line 1 in file .git/config" {
+		t.Errorf("remotes = %+v, want unavailable with git's reason", after.Remotes)
+	}
+	if calls := obs.URLCalls(); !reflect.DeepEqual(calls, []string{testCredentialURL}) {
+		t.Errorf("URL reads = %v, want origin's before URL", calls)
+	}
+	if after.Branches.Status != runstate.RemotePartObserved || !reflect.DeepEqual(after.Branches.ReadThroughBeforeURL, []string{"origin"}) {
+		t.Fatalf("branches = %+v, want observed, read through origin's before URL", after.Branches)
+	}
+
+	diff := runstate.DiffRemoteSnapshots(before, after, RunCommitCheck(ctx, obs, base))
+	want := []runstate.RemoteChangeEntry{{Kind: runstate.BranchCreated, Remote: "origin", Branch: "feat/run",
+		NewSHA: runCommit, Attribution: runstate.AttributionRunCommit}}
+	if !reflect.DeepEqual(diff.Entries, want) {
+		t.Errorf("entries = %+v\nwant      %+v", diff.Entries, want)
+	}
+	if !slices.Contains(diff.Observed, runstate.RemotePartBranches) || slices.Contains(diff.Observed, runstate.RemotePartRemotes) {
+		t.Errorf("observed = %v, want branches and not remotes", diff.Observed)
+	}
+	if len(diff.NotCompared) != 1 || diff.NotCompared[0].Part != runstate.RemotePartRemotes {
+		t.Errorf("not_compared = %+v, want only the remotes part", diff.NotCompared)
+	}
+}
+
+// Unguarded, the same failure leaves the branches part unavailable, as it
+// always did: nothing is read through a URL, and nothing is compared.
+func TestTakeRemoteSnapshot_UnguardedBranchesAreUnavailableWhenTheRemotesCannotBeListed(t *testing.T) {
+	ctx := context.Background()
+	runCommit, main := strings.Repeat("c", 40), strings.Repeat("a", 40)
+	obs := NewFakeRemoteObserver()
+	obs.SetRemotes([]Remote{{Name: "origin", FetchURL: testCredentialURL, PushURL: testCredentialURL}}, nil)
+	obs.SetHeads("origin", []RemoteHead{{Branch: "main", SHA: main}}, nil)
+	obs.SetRunCommit(runCommit)
+	before := TakeRemoteSnapshot(ctx, obs, ghRepoPRs())
+
+	obs.SetHeads("origin", []RemoteHead{{Branch: "main", SHA: main}, {Branch: "feat/run", SHA: runCommit}}, nil)
+	obs.SetRemotes(nil, errors.New("fatal: bad config line 1 in file .git/config"))
+	after := TakeRemoteSnapshot(ctx, obs, ghRepoPRs())
+
+	want := runstate.BranchesSnapshot{Status: runstate.RemotePartUnavailable,
+		Reason: "the remotes part is unavailable: fatal: bad config line 1 in file .git/config"}
+	if !reflect.DeepEqual(after.Branches, want) {
+		t.Errorf("branches = %+v, want %+v", after.Branches, want)
+	}
+	if calls := obs.URLCalls(); len(calls) != 0 {
+		t.Errorf("an unguarded snapshot read through URLs %v", calls)
+	}
+	diff := runstate.DiffRemoteSnapshots(before, after, RunCommitCheck(ctx, obs, strings.Repeat("d", 40)))
+	if len(diff.Entries) != 0 || slices.Contains(diff.Observed, runstate.RemotePartBranches) || slices.Contains(diff.Observed, runstate.RemotePartRemotes) {
+		t.Errorf("diff = %+v, want neither git part compared", diff)
 	}
 }
 
