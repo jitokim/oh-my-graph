@@ -444,11 +444,13 @@ Ctrl-C during the after snapshot. On a `run` leg whose commit check could not
 run — the repository's config could not be read by the leg's after, or a
 check's own git read failed — the leg's `changes` add a `not_compared` item
 for each of `branches` and `pull_requests` in `observed`, reason `attribution
-unavailable: repository config unreadable`; when the shallow file in the
-common git dir changed during the leg, the reason is `attribution
-unavailable: shallow boundary changed`. The entries keep the attribution the
-check answered, nothing more is forbidden, and the run's end line names
-those parts not guarded with the reason; no field is added. A run a forbidden
+unavailable: repository config unreadable` when the config could not be
+read, or `attribution unavailable: attribution check read failed` for any
+other failure of the check's own git read (a timeout, say); when the shallow
+file in the common git dir changed during the leg, the reason is
+`attribution unavailable: shallow boundary changed`. The entries keep the
+attribution the check answered, nothing more is forbidden, and the run's end
+line names those parts not guarded with the reason; no field is added. A run a forbidden
 entry failed derives `FAIL` even with every node `PASS`: on a guarded run a
 closed leg whose outcome is `"failed"` reads `FAIL` before the node count is
 looked at. An unguarded run derives exactly

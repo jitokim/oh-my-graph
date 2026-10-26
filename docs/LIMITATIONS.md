@@ -640,8 +640,11 @@ has no open issue behind it.
   that leg's push is recorded `not_attributable` and does not fail the run:
   a broken config alone exits 0 when every node passed. The end line names
   the branches and pull requests not guarded, `branches (attribution
-  unavailable: repository config unreadable); pull_requests (…)`, never as
-  guarded, and the record keeps the reason as a `not compared` item. A
+  unavailable: repository config unreadable); pull_requests (…)` when the
+  config could not be read, or `attribution unavailable: attribution check
+  read failed` when the config still reads but the check's own git read
+  failed (a timeout, say), never as guarded, and the record keeps the reason
+  as a `not compared` item. A
   config that changed but can still be read, such as an `insteadOf`, does
   not do this: the check reads it, and a node's own push behind it still
   fails the guarded run with exit 6.

@@ -1270,9 +1270,12 @@ its commit's parents from it. On a guarded `run` leg whose *after* could not
 read the repository's config, or whose check's own git read failed — not a
 proven false — the leg's observed `branches` and `pull_requests` parts get a
 `not_compared` item with the reason `attribution unavailable: repository
-config unreadable`; when the shallow file in the common git dir is not what
-the *before* pinned (its SHA-256, kept in memory only), the reason is
-`attribution unavailable: shallow boundary changed`. The entries keep the
+config unreadable` when the config fingerprint read failed, or `attribution
+unavailable: attribution check read failed` for any other failure of the
+check's own git read (a timeout, say); when the shallow file in the common
+git dir is not what the *before* pinned (its SHA-256, kept in memory only),
+the reason is `attribution unavailable: shallow boundary changed`. The
+config reason wins when both reads failed. The entries keep the
 label the check answered, nothing more is forbidden, and a leg whose nodes
 all passed exits 0; the end line (below) names those parts not guarded with
 the reason and never as guarded. A config that changed but stays readable
@@ -4327,7 +4330,12 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   change record: the entry counts and which parts were compared or guarded
   outside the fence, every entry and not-compared reason (repository and `gh`
   text) inside a nonce fence, each line cut to 300 bytes; with no record it is
-  one line saying the remote state is unknown, not "no changes".
+  one line saying the remote state is unknown, not "no changes". The block
+  names its guarded and not-guarded parts with the CLI end line's own rule
+  and reasons (`worktree.GuardOfLeg`): a guarded `auto` run reads `guarded:
+  remotes` and `branches` and `pull_requests` not guarded, `auto: no run
+  branches`, and an `attribution unavailable: …` reason reads word for word
+  as on the end line.
   **A node with a `verification` record gets an engine verification block**
   (#332; `cycleEvidence` copies the record into
   `coordinator.NodeVerification`, so the coordinator still does not import
