@@ -181,8 +181,14 @@ behaviour itself is tracked in
 [#438](https://github.com/jitokim/oh-my-graph/issues/438). README.md,
 README.ko.md, docs/LIMITATIONS.md and docs/RUN-FEED.md match the code.
 
-Release QA: `make smoke` (claude): <<make-smoke-claude-result>> (fresh
-folder, run id, PASS or FAIL); codex smoke skipped: account limit until 10/31.
+Release QA: `make local` and `make smoke` (claude) passed (run
+`20261027-155422.609296739-1`: `write` verified, `critique` exit-only, in its
+own fresh directory). Codex smoke skipped: account limit until 10/31. On the
+release binary, `--forbid-remote-changes` failed `run` with exit 6 on a node's
+own push to a new branch and on a new remote, and failed `auto` with exit 6 on
+a new remote in its final cycle; without the flag the same push was recorded
+and the run exited 0. The `--verify-cmd` pin cases gave the same results as
+v0.18.0.
 
 ### Added
 
