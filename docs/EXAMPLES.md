@@ -368,12 +368,12 @@ What `auto` can exit with:
 | `2` | paused — at a gate or on a session limit — and resumable with `resume` |
 | `3` | refused: a build system was detected and no build evidence was given (ADR 0030) |
 | `5` | refused: baseline red — `--verify-cmd` already failed, could not run, or timed out on the starting tree |
-| `6` | `--forbid-remote-changes` was set and the run observed a forbidden remote change: a new branch or pull request at a commit this run made, or a new remote |
+| `6` | `--forbid-remote-changes` was set and the final cycle's run added a new remote; a node's own push to a new branch or pull request is never attributed to the run in `auto`, so it is reported, not failed ([#438](https://github.com/jitokim/oh-my-graph/issues/438)) |
 
 Exits 3 and 5 make no model call and leave no run directory. Exit 6 has a run
-directory, and the run reads `FAIL` (`run` and `resume` exit 6 the same way);
-`auto` exits 6 only when its final cycle's run added a remote, the only change
-that fails a guarded `auto` run ([LIMITATIONS](LIMITATIONS.md#known-limitations)).
+directory, and the run reads `FAIL`. `run` and `resume` exit 6 the same way,
+and also on a new branch or pull request at a commit the run made
+([LIMITATIONS](LIMITATIONS.md#known-limitations)).
 Exit `4` is not `auto`'s: only `runs list --exit-in-flight` returns it.
 
 ## Zero-config: auto mode (the headline)
