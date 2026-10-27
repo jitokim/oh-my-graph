@@ -19,6 +19,169 @@ has landed since the last release is the list of files in that directory.
 
 ## [v0.19.0] - 2026-10-29
 
+**If you built oh-my-graph from `main` on 2026-10-26, read this first.**
+Released versions, v0.18.0 and earlier, are not affected. Affected are only
+binaries built from `main` from 1b94972
+([#431](https://github.com/jitokim/oh-my-graph/pull/431)) up to but not
+including 972d236 ([#435](https://github.com/jitokim/oh-my-graph/pull/435),
+which has the fix), on 2026-10-26, and only runs whose remote URL carried a
+password containing `@`: those builds masked the password in a remote URL only
+up to its first `@`, so the rest of it could be written to the run's record and
+printed. If you ran such a build, delete those runs' folders,
+`~/.oh-my-graph/runs/<run-id>/` (or `$OMG_HOME/runs/<run-id>/`). If you saved
+that run's terminal output to a file, delete or check that file too. If you
+shared or uploaded that `state.json`, change that password.
+
+**Minor, and the through-line is that a run now says what it changed on the
+remote, and fails for it only when you ask**
+([ADR 0046](docs/adr/0046-the-engine-records-remote-changes-and-fails-only-when-the-operator-forbids-them.md),
+[#410](https://github.com/jitokim/oh-my-graph/issues/410)). `run`, `auto` and
+`resume` snapshot the invocation repository's remotes, remote branch heads and
+open pull requests before and after each leg, store the difference as
+`remote_changes` in `state.json` and print it after the ledger table
+([#431](https://github.com/jitokim/oh-my-graph/pull/431),
+[#435](https://github.com/jitokim/oh-my-graph/pull/435)). The pull request part
+reads `gh pr list` through a fifth exec seam, and a part that cannot be read is
+recorded `unavailable` and printed as `not compared`, never as an empty list.
+On its own the record changes no verdict and no exit code. With
+`--forbid-remote-changes` (on `run` or `auto`, and carried by `resume`), a leg
+that leaves a new branch or pull request at a commit this run made, or a new
+remote, fails with exit 6, even when every node passed or the leg paused at a
+gate, and the run reads `FAIL` in `runs list` and `show`
+([#436](https://github.com/jitokim/oh-my-graph/pull/436)). A push onto a branch
+that already existed, `main` included, is recorded and never fails the run. A
+guarded `auto` tells its planner that remote changes are forbidden, shows the
+record to the goal assessor, and exits 6 only when its final cycle's run made a
+forbidden change ([#437](https://github.com/jitokim/oh-my-graph/pull/437)).
+
+What the flag does not guard, as docs/LIMITATIONS.md words it. In `auto`, only
+a new remote can fail a guarded run: a planned node runs without an engine
+worktree, so its own push is never attributable, and the guard lines name
+branches and pull requests not guarded, with the reason `auto: no run
+branches`. In a guarded `run` leg, a repository config that cannot be read, an
+attribution check whose own git read fails, or a `.git/shallow` written during
+the leg leaves the node's own push `not_attributable`, and the run is not
+failed for it; the end line names the branches and pull requests not guarded,
+`attribution unavailable: repository config unreadable`, `attribution
+unavailable: attribution check read failed` or `attribution unavailable:
+shallow boundary changed`. And a credential in a remote URL can still show on
+git's own helper's argv: the engine keeps the URL off the argv of the git
+process it starts, but git starts `git-remote-https` with the URL on that
+helper's argv, where other users on the same machine can read it; use a
+credential helper or SSH instead. The record, and so the flag, also misses
+other repositories, a change reverted before the leg ends, and anything beyond
+remotes, branch heads and open pull requests' head shas; docs/LIMITATIONS.md
+lists the rest.
+
+The planner and the goal assessor got their own run of fixes. With
+`--verify-cmd`, the planner ends the graph in one sink, so the verify command,
+which runs at every sink, runs once per cycle instead of twice
+([#396](https://github.com/jitokim/oh-my-graph/issues/396),
+[#424](https://github.com/jitokim/oh-my-graph/pull/424)). Every done-list
+command other than the verify command now reaches the final check node, and a
+different command that checks the same thing never stands in for it
+([#333](https://github.com/jitokim/oh-my-graph/issues/333),
+[#426](https://github.com/jitokim/oh-my-graph/pull/426)). A planned review loop
+answers `CLEAN`, `MINOR:` or `FINDINGS:` and fails a round only on `FINDINGS:`,
+so a cosmetic finding no longer fires the repair arc
+([#288](https://github.com/jitokim/oh-my-graph/issues/288),
+[#428](https://github.com/jitokim/oh-my-graph/pull/428)). `auto` stops with
+`unrunnable_done_item` when the final check names, on an `UNRUNNABLE:` line, a
+done-list command no planned node can run, instead of planning cycles that
+never could ([#333](https://github.com/jitokim/oh-my-graph/issues/333),
+[#429](https://github.com/jitokim/oh-my-graph/pull/429)). A planned check node
+never changes repository state: it checks out, resets, stashes, commits and
+branches nothing, and reads other refs with `git show` or `git diff`
+([#427](https://github.com/jitokim/oh-my-graph/issues/427),
+[#430](https://github.com/jitokim/oh-my-graph/pull/430)). With `--verify-cmd`,
+a code-changing node runs only the tests for what it changed, since the engine
+runs the suite itself ([#392](https://github.com/jitokim/oh-my-graph/issues/392),
+[#394](https://github.com/jitokim/oh-my-graph/pull/394)). The planner no longer
+splits a medium goal into one node per file
+([#393](https://github.com/jitokim/oh-my-graph/issues/393),
+[#411](https://github.com/jitokim/oh-my-graph/pull/411)). Without
+`--verify-cmd`, a done-list command no allowed Bash pattern covers fails the
+final check instead of passing it, and the prompt calls such a check's PASS
+self-reported ([#399](https://github.com/jitokim/oh-my-graph/issues/399),
+[#403](https://github.com/jitokim/oh-my-graph/pull/403),
+[#407](https://github.com/jitokim/oh-my-graph/pull/407)). A check node no
+longer fails a goal for state the goal forbids changing, such as a pull request
+it said not to open ([#388](https://github.com/jitokim/oh-my-graph/issues/388),
+[#409](https://github.com/jitokim/oh-my-graph/pull/409)). A planner reply whose
+prose quotes braces before the plan is no longer refused: the plan is the one
+JSON object in the reply, and two are refused as ambiguous
+([#387](https://github.com/jitokim/oh-my-graph/issues/387),
+[#413](https://github.com/jitokim/oh-my-graph/pull/413)). `auto`, `design` and
+`chat` tell the planner the commit the run started from, so scope checks
+measure `<sha>..HEAD` and leave earlier commits alone
+([#414](https://github.com/jitokim/oh-my-graph/issues/414),
+[#417](https://github.com/jitokim/oh-my-graph/pull/417)). The assessor renders
+short artifacts whole and shares the rest of its budget among long ones
+([#405](https://github.com/jitokim/oh-my-graph/issues/405),
+[#406](https://github.com/jitokim/oh-my-graph/pull/406)), budgets sink
+artifacts first so the final check's artifact always reaches it
+([#408](https://github.com/jitokim/oh-my-graph/issues/408),
+[#418](https://github.com/jitokim/oh-my-graph/pull/418)), and caps
+verification output tails at half its budget, after that sink share is
+reserved ([#419](https://github.com/jitokim/oh-my-graph/issues/419),
+[#421](https://github.com/jitokim/oh-my-graph/pull/421)).
+
+Also in this release: every run records the oh-my-graph build that wrote it,
+and `show` prints it on an `engine:` line
+([#373](https://github.com/jitokim/oh-my-graph/issues/373),
+[#384](https://github.com/jitokim/oh-my-graph/pull/384)); a shipped graph,
+`graphs/drift-review.yaml`, holds a change to its design document against a
+requirements file pinned by a lock
+([#386](https://github.com/jitokim/oh-my-graph/issues/386),
+[#389](https://github.com/jitokim/oh-my-graph/pull/389)); a graph giving one
+parent two `handoff: session` children is refused at load
+([#402](https://github.com/jitokim/oh-my-graph/issues/402),
+[#404](https://github.com/jitokim/oh-my-graph/pull/404)); a `handoff: session`
+node is no longer charged for its parent's spend
+([#398](https://github.com/jitokim/oh-my-graph/issues/398),
+[#401](https://github.com/jitokim/oh-my-graph/pull/401)); the verify pin reads
+node's `--eval=`/`--print=` form and no longer skips a script given an inline
+option after it ([#375](https://github.com/jitokim/oh-my-graph/issues/375),
+[#379](https://github.com/jitokim/oh-my-graph/pull/379)); a `dontAsk` node with
+only scoped Bash grants is told to run one plain command per call, so its own
+compound commands are not denied
+([#380](https://github.com/jitokim/oh-my-graph/issues/380),
+[#381](https://github.com/jitokim/oh-my-graph/pull/381)); `merge-shepherd`'s
+`recheck` waits out a CodeRabbit review `triage` already answered instead of
+halting on it ([#382](https://github.com/jitokim/oh-my-graph/issues/382),
+[#383](https://github.com/jitokim/oh-my-graph/pull/383)); and
+`scripts/drift-baseline.sh` names a missing pinned file on macOS too
+([#395](https://github.com/jitokim/oh-my-graph/issues/395),
+[#400](https://github.com/jitokim/oh-my-graph/pull/400)).
+
+Open follow-ups.
+[#438](https://github.com/jitokim/oh-my-graph/issues/438): making a planned
+node's own push attributable in `auto`, so `--forbid-remote-changes` can fail
+it there, awaits the captain's decision. Failing closed when attribution is
+unavailable, so a guarded `run` leg whose branches and pull requests read not
+guarded (`attribution unavailable: …`) fails instead of passing, awaits the
+captain's decision too.
+[#439](https://github.com/jitokim/oh-my-graph/issues/439): moving
+`GuardOfLeg` to `runstate`, and making a node-callback setup failure fail its
+test at the cause.
+
+This release's rotating meta-review took **docs** as its subject.
+Meta-review (docs): we asked which user-facing doc states a guarantee about
+remote changes or exit codes that the code does not keep, and compared
+README.md, README.ko.md, docs/EXAMPLES.md, docs/LIMITATIONS.md,
+docs/RUN-FEED.md and the ADR 0046 file in docs/adr/ against
+`exitCodeForError`, `remoteEntryForbidden`, the guard summary reasons and the
+`auto` goal-loop exit. ADR 0046 (§5.1, §7) over-promises that
+`--forbid-remote-changes` fails `auto` on a new branch or PR at a run commit
+with exit 6, and doesn't cover `auto: no run branches`, the final-cycle-only
+exit or the `attribution unavailable` cases; the exit-6 row of
+docs/EXAMPLES.md's `auto` exit table makes the same claim, which the doc
+corrects two lines later. README.md, README.ko.md, docs/LIMITATIONS.md and
+docs/RUN-FEED.md match the code.
+
+Release QA: `make smoke` (claude): <<make-smoke-claude-result>> (fresh
+folder, run id, PASS or FAIL); codex smoke skipped: account limit until 10/31.
+
 ### Added
 
 - **Every run now records which oh-my-graph build wrote it, and `show`
@@ -6056,7 +6219,8 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   permanently — it would make an `auto` run depend on files the user forgot
   they had.
 
-[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.19.0...HEAD
+[v0.19.0]: https://github.com/jitokim/oh-my-graph/compare/v0.18.0...v0.19.0
 [v0.18.0]: https://github.com/jitokim/oh-my-graph/compare/v0.17.0...v0.18.0
 [v0.17.0]: https://github.com/jitokim/oh-my-graph/compare/v0.16.0...v0.17.0
 [v0.16.0]: https://github.com/jitokim/oh-my-graph/compare/v0.15.0...v0.16.0
