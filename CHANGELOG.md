@@ -119,9 +119,9 @@ measure `<sha>..HEAD` and leave earlier commits alone
 short artifacts whole and shares the rest of its budget among long ones
 ([#405](https://github.com/jitokim/oh-my-graph/issues/405),
 [#406](https://github.com/jitokim/oh-my-graph/pull/406)), budgets sink
-artifacts first so the final check's artifact is prioritized, though it can
-still be left out when its 2,000-byte floor cannot be given under the
-12,000-byte budget
+artifacts first, up to half the budget, so the final check's artifact is
+prioritized; only when several long sink artifacts share that half can one be
+left out
 ([#408](https://github.com/jitokim/oh-my-graph/issues/408),
 [#418](https://github.com/jitokim/oh-my-graph/pull/418)), and caps
 verification output tails at half its budget, after that sink share is
