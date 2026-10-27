@@ -17,6 +17,432 @@ pull requests never edit a common file
 ([ADR 0042](docs/adr/0042-a-changelog-entry-is-a-file-the-pr-owns.md)). What
 has landed since the last release is the list of files in that directory.
 
+## [v0.19.0] - 2026-10-29
+
+### Added
+
+- **Every run now records which oh-my-graph build wrote it, and `show`
+  prints it.** `state.json` and each `run_started` event carry
+  `engine_version`, plus `engine_commit` (the full VCS revision, absent
+  when the build has none) and `engine_modified` (only `true`, only for a
+  dirty tree with a commit). The commit is the build info's `vcs.revision`,
+  or, only when there is none, the link-time `-X main.Commit` (dirty when
+  `-X main.Modified` is `"true"`); a stale `-X` never overrides a real
+  revision. `make build` now stamps both from git, so builds in a linked git
+  worktree, where Go embeds no VCS info, still record their commit, and the
+  build still succeeds with both empty when git is unavailable. Release
+  builds via goreleaser carry VCS info and are unchanged. Every leg stamps
+  the binary running it, so `state.json` names the last writer and each
+  leg's own build stays on its `run_started`. `show` prints an `engine:`
+  line under the run header, adds a `distinct engines, in first-seen leg
+  order:` list when legs were run by different builds, prints
+  `engine: oh-my-graph <version> (commit unknown)` for a version stamped
+  without a commit, and prints `engine: version not recorded` for an older
+  run instead of guessing. The
+  fields are optional and absent on older runs, which still load, show and
+  resume; the schema stays 3.
+  ([#373](https://github.com/jitokim/oh-my-graph/issues/373))
+- **A shipped graph holds a change to its design document: `graphs/drift-review.yaml`, built from two new fragments, `drift-check` and `drift-nego`, and a new script, `scripts/drift-baseline.sh`.** The change is judged against a requirements file: one requirement per line, exactly five fields `ID | measure | source | check | text`, with `#` comments and blank lines ignored, and `measure` either `invariant` or `llm`. No field may hold `|`, so an entry with any other count is refused as `<ID> has N fields, want 5 ('|' is not allowed inside a check; put a pipeline in a script file)`. An empty source or check, an unknown measure or a duplicate ID is an error. `drift-check` is two nodes and runs invariants first. `baseline` runs no model: the engine runs the bound `baseline` command (the shipped script, `scripts/drift-baseline.sh <design> <requirements-file> <lock-file> [head]`, checks that `head` is the checked-out commit, then the lock, then the format, then every `invariant` entry's shell check; the graph appends `head` to the bound command) as the node's `verify:`, so a failure stops the run before any model judges drift. Then `check`, read-only under `plan`, diffs `base..head` against the design, judges only the `llm` entries, and answers `NO_DRIFT`, or `DRIFT:` with a JSON list naming, for each gap, the requirement it violates (`unlisted` when none does) and the commit behind it. It never sees the authors' reasons, so it cannot explain the drift away. The lock pins the design and the requirements file by sha256, must have an entry for both (`LOCK <file> not pinned` otherwise), and is owned by a person: the script only verifies it with `sha256sum -c` and never writes it, and the owner creates or updates it with `sha256sum <design> <requirements-file> > <lock-file>`. `drift-nego` is three nodes. `interview` speaks for each commit's author, `rule` gives every item fix-code, amend-design or accept-deviation and holds no write tool, and `fix` applies the fix-code items only, commits them with the oh-my-graph trailer, and is gated on an engine-run `verify:` of the baseline command and then the `verify` command, so a `fix` that edits the design, the requirements or the lock stops the run. Each node is a fresh session handing on an artifact, so a run costs about five sessions and two baseline runs. An `AMEND_DESIGN:` ruling fails `rule`'s check and halts the run before `fix`, because a gate cannot be conditional today. `check` and `interview` retry once on a result mismatch, since a misplaced token is a formatting slip, and `rule` never does, because its `AMEND_DESIGN:` failure is the stop for a human. The `nego` nodes still run after a `NO_DRIFT` check and answer at once. `head` is a required input (pass `HEAD`), and so are the new `requirements` and `baseline`. The interview is a fresh session reading the author's commits; resuming the author's own session is still open. ([#386](https://github.com/jitokim/oh-my-graph/issues/386))
+- **The goal assessor sees the run's remote changes.** In `auto`, the
+  assessment prompt gains an `ENGINE-OBSERVED remote changes` block right
+  after the run outcome, with or without `--forbid-remote-changes`, built
+  from the run's remote change record: the entry counts and which parts were
+  compared (and, on a guarded run, guarded) are the engine's own lines; every
+  entry, with its leg and its label ("observed during the run; points at a
+  commit this run made" or "observed, not attributable"), and every
+  not-compared reason sits inside a nonce fence, each line cut to 300 bytes,
+  at most 20 entries and 10 not-compared items with the rest counted. A part
+  not compared, or a run with no record, reads as unknown, never as "no
+  changes". The printed summary and the block share one wording (ADR 0046),
+  and the block names its guarded and not-guarded parts with the end line's
+  own rule and reasons: a guarded `auto` run reads `guarded: remotes`, with
+  branches and pull requests not guarded (`auto: no run branches`).
+  ([#410](https://github.com/jitokim/oh-my-graph/issues/410))
+- **`auto --forbid-remote-changes` tells the planner.** Every planner prompt
+  (first, repair and later cycles) gains one sentence: the operator forbade
+  remote changes and the engine observes the remote itself, so no planned
+  node pushes, adds a remote, or opens or edits a pull request. Without the
+  flag the planner prompt is byte-identical. A guarded `auto` now exits 6,
+  its last line naming the change, when its final cycle's run made a
+  forbidden one, and its guard lines list branches and pull requests under
+  not guarded (`auto: no run branches`), since a planned node's own push is
+  never attributable.
+  ([#410](https://github.com/jitokim/oh-my-graph/issues/410))
+- **A guarded leg still compares branches when its end snapshot cannot list
+  the remotes.** A node that pushed and then broke `git remote -v` (a
+  corrupted `.git/config`) used to leave the branches part not compared and
+  its push unseen; a `--forbid-remote-changes` leg now reads each remote it
+  had at the start through that start's fetch URL, so the push is recorded,
+  while the remotes part stays not compared. Once the repository's own
+  config changed or cannot be read, those reads run from an empty directory
+  outside the repository, so an `insteadOf` or a broken `.git/config` cannot
+  redirect them. The commit check is not moved outside: it still reads that
+  config. One that changed but still reads, such as an `insteadOf`, leaves
+  the node's own push `run_commit`, and the run exits 6; one that cannot be
+  read leaves the push `not_attributable`, the run is not failed for it, and
+  the end line lists the branches and pull requests under not guarded,
+  `attribution unavailable: repository config unreadable` (only when the
+  config could not be read); a check whose own git read fails with the
+  config still readable gives `attribution unavailable: attribution check
+  read failed`, and a `.git/shallow` written during the leg gives
+  `attribution unavailable: shallow boundary changed`. Unguarded runs
+  are unchanged. If the leg's start could
+  not list the remotes, the branches part is still not compared, as ADR 0046
+  already lists.
+  ([#410](https://github.com/jitokim/oh-my-graph/issues/410))
+- **`run` and `auto` take `--forbid-remote-changes`, which fails a run that
+  leaves new state on the remote (exit 6).** With the flag, a leg whose own
+  remote change record holds a `branch_created` or `pr_opened` labelled
+  `run_commit` (a new branch or PR at a commit this run made), or a
+  `remote_added`, ends with `new remote state observed during the run, and
+  --forbid-remote-changes was set: …` on stderr and exit 6, whatever its nodes
+  did: a node failure is reported with it, and `--continue-on-fail` cannot
+  prune it. Nothing else fails it: `branch_moved` and `pr_updated` (a push
+  onto an existing branch, `main` included) whatever their label,
+  `remote_removed`, `remote_url_changed`, `branch_deleted`,
+  `pr_no_longer_open` and every between-legs entry are reported only, as
+  without the flag (ADR 0046). A leg that paused at a gate or on the session
+  limit while holding a forbidden entry fails too: the pause is withdrawn, no
+  pause hint is printed, and it continues with `resume --retry-failed`. Such
+  a run reads `FAIL` in `runs list`, `show` and the live views even with every
+  node `PASS`, because on a guarded run a closed leg whose outcome is
+  `"failed"` reads `FAIL` before its node count. ADR 0023 §2.6's agreement is
+  now exit 1 or 6 ↔ `FAIL`. Unguarded statuses are unchanged: a Ctrl-C during
+  a passed leg's end remote snapshot still reads `PASS` while it exits 1. The flag is recorded as
+  `forbid_remote_changes` and `resume` guards every later leg from it; a
+  guarded `state.json` is stamped schema 5 (with or without conventions), so
+  an older binary refuses to resume it rather than drop the guard, while an
+  unguarded one stays 3 (4 with conventions). A guarded leg that cannot read a
+  part of the remote still starts: it names the part at launch and again
+  after the change record (`--forbid-remote-changes: not guarded …`, plus
+  `PR part not guarded: <reason>` for the PR part) and judges only the parts
+  it compared; the end line names every part, and every remote's branches,
+  it did not compare. A guarded leg reads its end snapshot through the fetch
+  URL each remote had at the leg's start (kept in memory only; `state.json`
+  keeps the redacted URL; the URL reaches git through `GIT_CONFIG_*` env,
+  never on the argv of the git process the engine starts, which needs git
+  2.31 or later, else the branches read as not guarded), so removing or
+  re-pointing a remote cannot hide a push; a remote added during the leg is read by name, and a start URL that
+  cannot be read leaves the branches part not compared, which the end line
+  says. A node that makes the repository's config unreadable can make the
+  commit check fail on its own commit, and one that writes `.git/shallow`
+  can hide its commit's parents from it: when a guarded `run` leg's end
+  could not read the config, a check's own git read failed, or the shallow
+  file changed during the leg, the push is recorded `not_attributable` and
+  does not fail the run, and the end line names the branches and pull
+  requests not guarded, `attribution unavailable: repository config
+  unreadable` (only when the config could not be read), `attribution
+  unavailable: attribution check read failed` (any other failure of the
+  check's own git read, a timeout say) or `attribution unavailable: shallow
+  boundary changed`, a reason the record keeps. The check ignores replace refs and grafts
+  (`GIT_NO_REPLACE_OBJECTS=1`, `GIT_GRAFT_FILE=/dev/null`). In a goal loop a
+  guarded failure is a failed cycle. Without the
+  flag nothing else changes.
+  ([#410](https://github.com/jitokim/oh-my-graph/issues/410))
+- **The remote change record now covers the invocation repository's open
+  pull requests.** Each snapshot, before and after every leg of `run`, `auto`
+  and `resume`, also reads `gh pr list --state open --limit 1000` through a
+  fifth exec seam, `remote.GHRunner` (ADR 0046), and the record gains
+  `pr_opened`, `pr_updated` (the head sha moved; a comment, label or
+  `updatedAt` alone is no change) and `pr_no_longer_open`. A PR opened or
+  updated at a commit this run made reads "observed during the run; points at
+  a commit this run made"; every other PR entry reads "observed, not
+  attributable". With `gh` missing or not authenticated, a timeout (30 s),
+  exactly 1000 open PRs (`truncated`), or a repo gh read that cannot be told
+  or is not the one expected (`repo`, `repo_source`; a `gh repo set-default`
+  naming a repo that is no remote counts, and with no GitHub remote and no
+  `GH_REPO` gh is not asked), the part is recorded `unavailable` and printed
+  as `not compared: pull_requests: …`, never as an empty list. Still a report
+  only: no verdict or exit code changes, and the state and feed schemas
+  stay 3.
+  ([#410](https://github.com/jitokim/oh-my-graph/issues/410))
+- **`run`, `auto` and `resume` record what changed on the remote during each
+  leg.** This is the record-only common part of the proposed ADR 0046: the
+  engine snapshots the invocation repository's remotes and remote branch heads
+  before and after each leg, stores the difference as `remote_changes` in
+  `state.json` and prints it after the ledger table, running ssh in BatchMode
+  unless you chose an ssh command, so a remote that would prompt is recorded
+  `unavailable` instead. The record itself never changes a verdict or an exit
+  code. Ctrl-C during either snapshot, start or end, ends the leg as
+  interrupted (exit 1), never as paused at a gate; during the start snapshot
+  it ends the run before any node starts, a resumed run keeping its
+  `state.json` for the same `resume` (still paused at its gate after
+  `--approve <gate>`, its failed records and costs intact after
+  `--retry-failed`), and an interrupted run records its
+  end snapshot as `unavailable` ("interrupted") and prints that record; a
+  resumed leg that cannot write its gate decision after the start snapshot
+  likewise ends before any node starts, its `state.json` unchanged and resumable
+  by the same command.
+  ([#410](https://github.com/jitokim/oh-my-graph/issues/410))
+
+### Changed
+
+- **A planned review loop no longer fails a round over a cosmetic finding.**
+  The planner prompt now tells the node declaring a feedback arc to start its
+  reply with `CLEAN`, `MINOR:` or `FINDINGS:`, graded by whether it would merge
+  the item unfixed — an untrue claim or a behaviour or correctness change is
+  `FINDINGS:`, never `MINOR:` — and gives it the gating `success_check` the shipped review
+  fragments use: `CLEAN` and `MINOR:` pass, with minor items recorded in the
+  reply, and only `FINDINGS:` fails and fires the arc. The planned final
+  check keeps its whole-reply `PASS` pin.
+  ([#288](https://github.com/jitokim/oh-my-graph/issues/288))
+- **`auto --max-cycles` now stops when a done-list command cannot be run by
+  any planned node.** The final check node names each such command on an
+  `UNRUNNABLE: <command>` line of its FAIL reply. The goal loop reads that
+  line from the failed check node's reply file (`failed/<node-id>.out`) —
+  a reply that is never shown to the assessor or to another node. Those
+  lines are copied to the front of that file, so they survive both the
+  256 KiB cut when it is written and the 64 KiB cut when the goal loop
+  reads it, wherever they sit in a long reply. The loop then ends
+  after that cycle with the new stop reason `unrunnable_done_item` instead
+  of planning cycles that could never run it. The goal summary lists the
+  commands and suggests checking them with `--verify-cmd` or a
+  configuration that allows them; the exit code is the usual unmet-goal 1.
+  ([#333](https://github.com/jitokim/oh-my-graph/issues/333))
+- **With `--verify-cmd`, code-changing nodes no longer run the whole suite.** The
+  engine already runs that command once after the final node, so the
+  planner prompt now says no planned node runs the verify command itself,
+  even when the goal names it, and a node that changes code runs only the
+  tests for what it changed (for Go, the changed packages), with the
+  matching Bash pattern in its `allowed_tools`. The planner now sees the
+  verify command's exact text, quoted, and when the goal's done list names
+  a whole-suite command (`make local`, `make test`, `make check`,
+  `go test ./...`) that the verify command does not cover, the final check
+  node runs it once and its PASS requires exit 0. It runs such a command
+  only when an allowed Bash pattern (named in the planner prompt) covers
+  it, and otherwise replies FAIL naming the command (e.g. `npm test`)
+  instead of running it. The match is by exact text: a wrapper that runs
+  the suite inside it (e.g. `sh v.sh` whose
+  script runs `make local`) does not match, so the suite runs twice — the
+  safe direction, and deliberate. Without `--verify-cmd` the prompt is
+  unchanged.
+  ([#392](https://github.com/jitokim/oh-my-graph/issues/392))
+- **The planner no longer splits a medium goal into one node per file.** Every
+  planned node is a fresh session that re-reads the code it works on, so the
+  planner prompt now makes one doing node the default for a small or medium
+  goal (a few files plus their tests and docs). It splits work only where a
+  part is a reviewable, committable slice on its own and the parts do not
+  re-read the same code, never one node per file or per numbered change, and
+  a change's tests and docs stay in the node that makes it. The advice to
+  prefer more, smaller nodes now applies only to substantial implementation
+  (several packages or several independent features). Prompt text only; the
+  validator and schema are unchanged.
+  ([#393](https://github.com/jitokim/oh-my-graph/issues/393))
+- **With `--verify-cmd`, the planner is told to end the graph in a single
+  sink.** The engine runs the verify command at every sink node, so a plan
+  ending in two sinks ran the whole suite twice per cycle, while the
+  planner prompt claimed it ran once after the final node. The prompt now
+  asks for exactly one sink, the final check node, with every other node
+  its ancestor, and says the command runs at each sink node — once, after
+  that final check node. How the command is attached is unchanged, and
+  without `--verify-cmd` the prompt is unchanged.
+  ([#396](https://github.com/jitokim/oh-my-graph/issues/396))
+- **Planner prompt: without `--verify-cmd`, a check node's PASS is described
+  as self-reported even when it ran a done-list command.** The final-check
+  paragraph now says that such a PASS reports what the node observed, not an
+  engine verdict. Follow-up to #403.
+  ([#399](https://github.com/jitokim/oh-my-graph/issues/399))
+- **A parent may have at most one `handoff: session` child.** A graph where one
+  node has two or more `handoff: session` children is now refused at load,
+  because the children would share one session: the later one inherits its
+  sibling's conversation, or both write one session file. To fix it, switch
+  the other children to `handoff: artifact`, or chain them so each continues
+  the previous child's session. A run started before this change whose graph
+  gives one parent two `handoff: session` children cannot be resumed; start a
+  new run with a fixed graph instead.
+  ([#402](https://github.com/jitokim/oh-my-graph/issues/402))
+- **`auto`'s check nodes no longer change repository state.** A planned check
+  node observes and judges: it runs no `git checkout`, `switch`, `reset`,
+  `restore`, `stash`, `commit`, `merge` or `rebase`, creates or deletes no
+  branch and creates no tag, so it never moves HEAD in a checkout other people
+  or runs may be using. It reads another ref with `git show <ref>:<path>` or
+  `git diff <a>..<b>`. A command that would need another ref checked out to
+  run belongs to the node that made the work or to `--verify-cmd`; the check
+  node runs its own commands, done-list ones included, in the tree as it
+  finds it — after confirming, on a branch goal, that `git rev-parse HEAD`
+  equals `git rev-parse <branch>`, and replying `FAIL` without checking
+  anything out when it does not. Both that comparison and the done-list
+  commands run in the tree that holds the work (`git -C <tree>`,
+  `go -C <tree>`, `make -C <tree>`), which covers a git worktree of the same
+  repository as well as another repository; a tree whose path is unknown, or
+  that no planned pattern reaches, means a `FAIL` naming the node that made
+  the work or `--verify-cmd`. Planner prompt only, with and without `--verify-cmd`. ([#427](https://github.com/jitokim/oh-my-graph/issues/427))
+
+### Fixed
+
+- **With `--verify-cmd`, every done-list command now reaches the final
+  check node, not only whole-suite ones.** The planner's done-list rule
+  named only whole-suite commands (`make local`, `go test ./...`), so a
+  done-list script, linter or single-package test slipped past it, the
+  planner wrote a stand-in check and the goal looped "not met". Any
+  done-list command that is not the verify command, character for
+  character, is now run once by the final check node when an allowed Bash
+  pattern covers it, and is otherwise a FAIL naming it. Both planner
+  prompts, with and without `--verify-cmd`, now also say a different
+  command that checks the same thing never satisfies a done item: only
+  the named command running counts.
+  ([#333](https://github.com/jitokim/oh-my-graph/issues/333))
+- **`node --eval=<code>` and `node --print=<expr>` no longer pin the file after
+  them.** Node takes its long inline and runner options (`--eval`, `--print`,
+  `--test`) in the `--opt=value` form too, but the verify pin matched only the
+  bare form, so it pinned the test file that followed as the executed script
+  and a goal that edited it got a false "verify script changed" fault. A long
+  option now counts in either form; the short `-e`/`-p`, which node does not
+  take as `-e=...`, are unchanged. An inline option after the script, which
+  is the script's own argument (`node v.js -e x`, `node v.js --test`,
+  `sh v.sh -c x`, `bash v.sh -ec x`), no longer skips the pin either: the
+  script is pinned, so an edit to it between verifications now faults.
+  ([#375](https://github.com/jitokim/oh-my-graph/issues/375))
+- **A `dontAsk` node granted only scoped Bash rules no longer has its own
+  compound commands denied.** Under `dontAsk` a rule such as `Bash(gh *)`
+  admits a command only when the whole command plainly matches it, so a
+  node's `gh pr ready 379; echo "exit=$?"` was denied though it held `gh`.
+  Such a node (a scoped Bash rule, and no bare `Bash` or `Bash(*)`) is now
+  started with `--append-system-prompt`, telling it to run one command per
+  Bash call: no `;`, `&&`, `||`, pipes, `$(...)`, backticks or redirections,
+  `git -C <dir>` rather than `cd`, no `; echo $?`, and to report a denied
+  command rather than work around it. A resumed invocation carries it too.
+  The `-p` prompt is unchanged, and every other node's argv is byte-for-byte
+  what it was. ([#380](https://github.com/jitokim/oh-my-graph/issues/380))
+- **`merge-shepherd`'s `recheck` no longer halts on a CodeRabbit review that
+  `triage` already answered.** When triage replied to a `CHANGES_REQUESTED`
+  without pushing, the bot re-reviewed the same commit seconds later, but
+  `recheck` had already answered `LATCHED` and halted the run. Triage now ends
+  its report with `coderabbit-answered-through: <T>`, which is the
+  `submittedAt` of the newest bot review it answered, copied from gh. If it
+  answered none, it writes `none`. A bot `CHANGES_REQUESTED` on head with `at`
+  ≤ `<T>` is now waited out. A newer `APPROVED` is green, a newer
+  `CHANGES_REQUESTED` is `LATCHED`, and a `COMMENTED` never settles it. If
+  neither arrives within the budget, the answer is `UNSETTLED`, never
+  `RECHECKED`. A `<T>` that matches no real bot review counts as absent. A
+  review newer than `<T>`, or one with no answered-through line, still latches
+  at once. `result_matches` is unchanged.
+  ([#382](https://github.com/jitokim/oh-my-graph/issues/382))
+- **A planner reply whose prose quotes template braces before the plan is no
+  longer refused as not-loadable YAML.** The plan object used to be cut from
+  the reply's first `{` to its last `}`, so a prose line quoting a template
+  placeholder such as `<<name>>` in braces before the plan pulled that prose
+  into the cut. The planner, the planned-node check and the router now pick
+  out the one JSON object in the reply: the one `json` fenced block that
+  holds a valid object, else the one `{`…`}` span that decodes as a complete
+  object, with stray braces in prose skipped. A reply that holds more than
+  one JSON object, as two objects or two valid `json` fences, is refused as
+  ambiguous rather than guessed at; the planner is not retried, and the
+  router falls back to converse. A cut-off plan still reaches the parser and
+  reports its real JSON syntax error, never a plan built from one of its
+  inner nodes, and a valid object followed by a cut-off one is now refused,
+  since the reply may be truncated, rather than taken as the plan. The goal
+  assessor keeps the strict first-`{`-to-last-`}` cut, since its reply
+  quotes untrusted artifacts by design, so a quoted JSON object in its reply
+  still fails loudly instead of being taken as the verdict.
+  ([#387](https://github.com/jitokim/oh-my-graph/issues/387))
+- **`auto`'s check nodes no longer FAIL a goal for state it forbids changing.**
+  Under a goal that says not to push, not to open or edit a pull request, or
+  not to create a remote, the final check node asserted an open pull request
+  and replied FAIL on work that had landed. It now asserts an open pull
+  request only when the goal's own nodes push the branch and open it, and
+  otherwise — including a goal that says not to push or not to open or edit
+  a pull request — asserts the local branch ref. Forbidding only a new remote
+  keeps the open-PR assertion for a goal whose own nodes push to an existing
+  remote and open the pull request. Every planned check node asserts
+  only what the run's own nodes produce or change, never the absence of
+  something the goal only forbids creating (a remote that already existed is
+  not a violation), and a forbidden action is the operator's next step, never
+  a reason to reply FAIL. Planner prompt only, with and without
+  `--verify-cmd`. ([#388](https://github.com/jitokim/oh-my-graph/issues/388))
+- **`scripts/drift-baseline.sh` names a missing pinned file on macOS too.**
+  It found a missing file only by GNU `sha256sum -c`'s `FAILED open or read`
+  line on stdout, but macOS's `sha256sum` reports one only on stderr, so a
+  deleted design or requirements file came out as `LOCK <lock> unreadable`.
+  The script now checks each file the lock pins itself before the checker
+  runs and prints `LOCK <file> missing` whichever `sha256sum` or `shasum` is
+  installed; a changed file, a malformed lock and a passing lock read as
+  before. ([#395](https://github.com/jitokim/oh-my-graph/issues/395))
+- **A `handoff: session` node is no longer charged for its parent's spend.**
+  claude reports a resumed session's cost as the whole session's running total,
+  so a session child's row, the run and goal totals and its `budget_usd`
+  verdict all counted its ancestors' spend. It is now booked at that total
+  minus its session parent's, and the raw figure is kept as
+  `reported_cost_usd` in `state.json` and terminal node events so the
+  correction survives a `resume`. When the parent's figure is unknown, as in
+  state from an older engine, the child's cost is recorded unknown with a
+  note. Claude runtime only; no schema bump. Since
+  [#402](https://github.com/jitokim/oh-my-graph/issues/402), a graph giving
+  one node two or more sibling session children is refused at load, so
+  siblings no longer over-count each other.
+  ([#398](https://github.com/jitokim/oh-my-graph/issues/398))
+- **Without `--verify-cmd`, a done-list command nothing can run now fails
+  the final check instead of passing it.** When `auto` runs without
+  `--verify-cmd`, the planner prompt now tells the final check node to reply
+  FAIL, naming any command in the goal's done list (e.g. `npm test`) that no
+  allowed Bash pattern covers, instead of letting the check PASS over a done
+  item nothing ran. A covered command is run once, and its PASS requires
+  exit 0. ([#399](https://github.com/jitokim/oh-my-graph/issues/399))
+- **A long artifact beside short ones now reaches the assessor whole.** Each
+  artifact used to be cut to a fixed 2000 bytes even when most of the
+  12000-byte assessor budget sat unused. The budget is now split across all
+  artifacts before any renders: short ones render whole, and what they leave
+  is split evenly among the longer ones, never less than 2000 bytes each. The
+  split does not depend on graph order, so a long artifact renders whole
+  whether it comes before or after the short ones. Once the budget is spent,
+  later artifacts are still omitted loudly. Verification output tails stay
+  capped at 2000 bytes each.
+  ([#405](https://github.com/jitokim/oh-my-graph/issues/405))
+- **The final check node's artifact now reaches the assessor.** With seven or
+  more large artifacts, the goal assessor's 12000-byte artifact budget ran out
+  in graph order before the last node, so the final check node's artifact
+  could be dropped. Every artifact's allowance is now fixed before any
+  renders, the allowances never sum to more than the budget, and the split
+  does not depend on graph order. Artifacts of sink nodes, which no other node
+  depends on, are budgeted first: the sinks together get at most half of the
+  budget, and what is left is shared across every artifact's remaining
+  length, so a single large sink can no longer push the other artifacts out.
+  When the budget cannot give every artifact a 2000-byte floor, non-sinks get
+  it before sinks, then shorter artifacts first. Artifacts of the same kind
+  and the same length are one group. A group that cannot all get the floor
+  shares what is left equally, so equal artifacts get equal shares, but only
+  when each share is at least 1000 bytes, half the floor; node ID then only
+  hands out the few leftover bytes that do not split evenly. Below that, as
+  many members as fit get the floor in node-ID order and the rest of the
+  group is omitted (when not even one fits a floor, the artifacts that
+  render water-fill what is left, and only what they cannot use goes to the
+  first by node ID, when it is at least 1000 bytes; otherwise the first is
+  omitted too), and the budget left below one floor is shared among
+  the artifacts that render, so the allowances end at or near the budget. Each
+  artifact left with nothing is omitted loudly with its own
+  `(artifact of node <id> omitted: material cap reached)` line, where its
+  artifact would have been, instead of one line for all of them. One visible
+  difference: ten equal 9 KB artifacts now each get about 1200 bytes, where
+  before the first six got 2000 bytes and the last four were omitted.
+  ([#408](https://github.com/jitokim/oh-my-graph/issues/408))
+- **`auto`, `design` and `chat` measure a planned node's scope from the commit
+  the run started from.** A planned node could check "only these files" against main,
+  so on a branch with earlier commits it could flag or revert files the goal
+  never touched. All three commands now read the repository's HEAD once at launch
+  and tell the planner that scope and changed-files checks use `<sha>..HEAD`,
+  that no node reverts a file the goal did not ask it to change, and that
+  files changed before that commit are left as they are. Every cycle of a goal
+  uses the same commit, and so does every plan of a `chat` session.
+  `auto --interview` and `design` read it before the interview starts, so a
+  long interview does not move it. No planned check asserts that main has not moved since that
+  commit; to show the run's work is not on main, a check asserts that
+  `git merge-base --is-ancestor <a commit this run made> main` exits non-zero.
+  Outside a git repository the prompt is unchanged.
+  ([#414](https://github.com/jitokim/oh-my-graph/issues/414))
+- **Verification output can no longer push the final check out of the
+  assessor's view.** The engine's verification output tails render before
+  every artifact and shared the goal assessor's 12000-byte material budget,
+  so six 2500-byte tails, kept at 2000 bytes each, used up the whole budget
+  and the final check node's artifact was omitted, even a four-byte `PASS`.
+  The tails together now spend at most half of the budget, after the sink
+  artifacts' minimum share is reserved. That share is split across the tails
+  before any renders, the same order-free way as the artifacts, with failing
+  checks first: which tails keep their output no longer depends on graph
+  position, and a failing check's output is never dropped behind passing
+  ones. A tail cut or omitted says so in its own line, while every block's
+  command, status and exit-code lines still render. The artifacts split what the tails did not use exactly
+  as before. ([#419](https://github.com/jitokim/oh-my-graph/issues/419))
+
 ## [v0.18.0] - 2026-10-09
 
 **Minor, and the through-line is that the check judging the work can no
