@@ -465,6 +465,8 @@ The remote change is **always** recorded and reported, whether or not the flag
 is set. The record costs the same either way, and an operator who did not set
 the flag still learns what changed.
 
+> **Amended 2026-10-28:** in `auto` planned nodes run without engine worktrees, so there are no run branches and the attribution check above never passes for a node's own push; a guarded `auto` fails only on a new remote, and only for its final cycle. See [#438](https://github.com/jitokim/oh-my-graph/issues/438).
+
 ### 5.2 The planner
 
 With the flag set, the planner prompt gains one sentence (*chosen* wording,
@@ -537,6 +539,8 @@ For the operator: every `run`, `auto` and `resume` summary and the assessor
 gain the remote record, and `--forbid-remote-changes` fails on a new branch or
 PR that points at the run's commit, or a new remote (exit 6). A push onto an
 existing branch is reported, not failed.
+
+> **Amended 2026-10-28:** in `auto` planned nodes run without engine worktrees, so there are no run branches and the attribution check above never passes for a node's own push; a guarded `auto` fails only on a new remote, and only for its final cycle. See [#438](https://github.com/jitokim/oh-my-graph/issues/438).
 
 ### 7.1 Cost
 

@@ -171,13 +171,15 @@ remote changes or exit codes that the code does not keep, and compared
 README.md, README.ko.md, docs/EXAMPLES.md, docs/LIMITATIONS.md,
 docs/RUN-FEED.md and the ADR 0046 file in docs/adr/ against
 `exitCodeForError`, `remoteEntryForbidden`, the guard summary reasons and the
-`auto` goal-loop exit. ADR 0046 (§5.1, §7) over-promises that
-`--forbid-remote-changes` fails `auto` on a new branch or PR at a run commit
-with exit 6, and doesn't cover `auto: no run branches`, the final-cycle-only
-exit or the `attribution unavailable` cases; the exit-6 row of
-docs/EXAMPLES.md's `auto` exit table makes the same claim, which the doc
-corrects two lines later. README.md, README.ko.md, docs/LIMITATIONS.md and
-docs/RUN-FEED.md match the code.
+`auto` goal-loop exit. We found that ADR 0046 (§5.1, §7) and the exit-6 row
+of docs/EXAMPLES.md's `auto` exit table promised that `--forbid-remote-changes`
+fails `auto` on a new branch or PR at a run commit, while a guarded `auto`
+fails only on a new remote, and only for its final cycle; the ADR also
+doesn't cover the `attribution unavailable` cases (open, above). This release
+rewrote that EXAMPLES row and added dated notes to ADR 0046 §5.1 and §7; the
+behaviour itself is tracked in
+[#438](https://github.com/jitokim/oh-my-graph/issues/438). README.md,
+README.ko.md, docs/LIMITATIONS.md and docs/RUN-FEED.md match the code.
 
 Release QA: `make smoke` (claude): <<make-smoke-claude-result>> (fresh
 folder, run id, PASS or FAIL); codex smoke skipped: account limit until 10/31.
