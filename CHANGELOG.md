@@ -119,7 +119,9 @@ measure `<sha>..HEAD` and leave earlier commits alone
 short artifacts whole and shares the rest of its budget among long ones
 ([#405](https://github.com/jitokim/oh-my-graph/issues/405),
 [#406](https://github.com/jitokim/oh-my-graph/pull/406)), budgets sink
-artifacts first so the final check's artifact always reaches it
+artifacts first so the final check's artifact is prioritized, though it can
+still be left out when its 2,000-byte floor cannot be given under the
+12,000-byte budget
 ([#408](https://github.com/jitokim/oh-my-graph/issues/408),
 [#418](https://github.com/jitokim/oh-my-graph/pull/418)), and caps
 verification output tails at half its budget, after that sink share is
@@ -323,12 +325,14 @@ v0.18.0.
   or is not the one expected (`repo`, `repo_source`; a `gh repo set-default`
   naming a repo that is no remote counts, and with no GitHub remote and no
   `GH_REPO` gh is not asked), the part is recorded `unavailable` and printed
-  as `not compared: pull_requests: …`, never as an empty list. Still a report
-  only: no verdict or exit code changes, and the state and feed schemas
-  stay 3.
+  as `not compared: pull_requests: …`, never as an empty list. Without
+  `--forbid-remote-changes` it is still a report only: the pull request record
+  changes no verdict or exit code, and the state and feed schemas stay 3; with
+  the flag, a guarded run fails with exit 6 on a `pr_opened` at a run commit
+  and stamps state schema 5, while the feed schema stays 3.
   ([#410](https://github.com/jitokim/oh-my-graph/issues/410))
 - **`run`, `auto` and `resume` record what changed on the remote during each
-  leg.** This is the record-only common part of the proposed ADR 0046: the
+  leg.** This is the record-only common part of ADR 0046: the
   engine snapshots the invocation repository's remotes and remote branch heads
   before and after each leg, stores the difference as `remote_changes` in
   `state.json` and prints it after the ledger table, running ssh in BatchMode
