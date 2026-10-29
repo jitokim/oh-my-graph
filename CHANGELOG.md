@@ -19,18 +19,20 @@ has landed since the last release is the list of files in that directory.
 
 ## [v0.19.0] - 2026-10-29
 
-**If you built oh-my-graph from `main` on 2026-10-26, read this first.**
+**If you built oh-my-graph from `main` between 2026-10-25 20:24 and 23:24 UTC
+(2026-10-26 KST), read this first.**
 Released versions, v0.18.0 and earlier, are not affected. Affected are only
 binaries built from `main` from 1b94972
 ([#431](https://github.com/jitokim/oh-my-graph/pull/431)) up to but not
 including 972d236 ([#435](https://github.com/jitokim/oh-my-graph/pull/435),
-which has the fix), on 2026-10-26, and only runs whose remote URL carried a
-password containing `@`: those builds masked the password in a remote URL only
-up to its first `@`, so the rest of it could be written to the run's record and
-printed. If you ran such a build, delete those runs' folders,
-`~/.oh-my-graph/runs/<run-id>/` (or `$OMG_HOME/runs/<run-id>/`). If you saved
-that run's terminal output to a file, delete or check that file too. If you
-shared or uploaded that `state.json`, change that password.
+which has the fix), that is between 2026-10-25 20:24 and 23:24 UTC, and only
+runs whose remote URL carried a password containing `@`: those builds masked
+the password in a remote URL only up to its first `@`, so the rest of it could
+be written to the run's record and printed. If you ran such a build, delete
+those runs' folders, `~/.oh-my-graph/runs/<run-id>/` (or
+`$OMG_HOME/runs/<run-id>/`). If you saved that run's terminal output to a file,
+delete or check that file too. If you shared or uploaded that `state.json`,
+change that password.
 
 **Minor, and the through-line is that a run now says what it changed on the
 remote, and fails for it only when you ask**
