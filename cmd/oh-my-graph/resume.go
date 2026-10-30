@@ -308,13 +308,19 @@ func interruptedAfterEveryNodePassed(runID string, g *graph.Graph, snap runstate
 // it and was then interrupted, or failed, past the gate (#433). Approving again
 // cannot continue the run, so it names the command that does when a
 // --retry-failed would, and says only that there is nothing to resume when not.
+// A status that cannot be read is said as such, not as nothing to resume: the
+// refusal cannot know whether the run reads FAIL, so it must not claim there is
+// nothing a --retry-failed would continue.
 func alreadyApprovedRefusal(runID, gateID string, snap runstate.Snapshot) error {
 	g, err := graph.Parse(snap.Graph)
 	if err != nil {
 		return reconstructGraphError(runID, err)
 	}
-	status, statusErr := runstatus.Of(runDirFor(runID))
-	if retryContinues(g, snap, statusErr == nil && status == runstatus.Fail) {
+	status, err := runstatus.Of(runDirFor(runID))
+	if err != nil {
+		return fmt.Errorf("run %q is not paused: gate %q was already approved, but the run's status could not be read: %w", runID, gateID, err)
+	}
+	if retryContinues(g, snap, status == runstatus.Fail) {
 		return fmt.Errorf("run %q is not paused: gate %q was already approved, so continue it with `oh-my-graph resume %s --retry-failed`", runID, gateID, runID)
 	}
 	return fmt.Errorf("run %q is not paused: gate %q was already approved (nothing to resume)", runID, gateID)

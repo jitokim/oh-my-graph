@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -125,6 +127,66 @@ func TestResume_AnInterruptAfterTheApprovalWasSavedPointsToRetryFailed(t *testin
 	err = executeResume(parseResumeFlags(t, []string{"run-1", "--approve", "approve"}), fake, nil)
 	if want := `run "run-1" is not paused: gate "approve" was already approved (nothing to resume)`; err == nil || err.Error() != want {
 		t.Errorf("resume --approve on the finished run = %v, want %q", err, want)
+	}
+}
+
+// #433 review: a run not paused past an approved gate whose events.jsonl
+// cannot be read has a status the refusal cannot know, so `resume --approve`
+// says the status could not be read, not that there is nothing to resume, and
+// exits non-zero.
+func TestResume_ApproveAnAlreadyApprovedGateWhenTheStatusCannotBeReadSaysSo(t *testing.T) {
+	isolateRunHome(t)
+	useRemoteObserver(t, originObserver(), remoteBaseSHA)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"a":    {Result: "PASS", ExitCode: 0},
+		"ship": {Result: "PASS", ExitCode: 0},
+	})
+	g := mustParse(t, `{"name":"gate-flow","nodes":[
+		{"id":"a","prompt":"a"},
+		{"id":"approve","type":"gate","depends_on":["a"]},
+		{"id":"ship","prompt":"ship","depends_on":["approve"]}]}`)
+	var err error
+	captureStdout(t, func() {
+		err = executeGraph(context.Background(), "run-1", g, fake, commonRunFlags{inputs: inputFlag{}}, nil, 0, "gate-flow.yaml", []byte("name: gate-flow\n"), false, nil, nil, nil)
+	})
+	var paused *schedule.PausedError
+	if !errors.As(err, &paused) {
+		t.Fatalf("expected the first leg to pause, got %v", err)
+	}
+	captureStdout(t, func() {
+		err = executeResume(parseResumeFlags(t, []string{"run-1", "--approve", "approve"}), startInterrupter{t}, nil)
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want an interrupted leg", err)
+	}
+	if snap := remoteRunSnapshot(t, "run-1"); snap.Gate.PausedAt != "" || snap.Gate.Decisions["approve"] != runstate.GateApprove {
+		t.Fatalf("gate = %+v, want approve saved as approved and no pause", snap.Gate)
+	}
+
+	events := filepath.Join(runDirFor("run-1"), runfeed.FileName)
+	if err := os.Remove(events); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(events, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	firstCalls := len(fake.Calls())
+	err = executeResume(parseResumeFlags(t, []string{"run-1", "--approve", "approve"}), fake, nil)
+	if err == nil {
+		t.Fatal("resume --approve succeeded on a run whose status cannot be read")
+	}
+	if msg := err.Error(); !strings.Contains(msg, "status could not be read") || !strings.Contains(msg, `"run-1"`) || !strings.Contains(msg, `gate "approve" was already approved`) {
+		t.Errorf("err = %v, want it to name run-1, the approved gate and the unreadable status", err)
+	}
+	if strings.Contains(err.Error(), "nothing to resume") {
+		t.Errorf("err = %v, want no claim of nothing to resume", err)
+	}
+	if code := exitCodeForError(err); code == 0 {
+		t.Errorf("exit code = 0 for %v, want non-zero", err)
+	}
+	if calls := fake.Calls(); len(calls) != firstCalls {
+		t.Errorf("the refused --approve ran %v", calls[firstCalls:])
 	}
 }
 
