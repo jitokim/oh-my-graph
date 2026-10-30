@@ -11,11 +11,12 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/remote"
 	"github.com/jitokim/oh-my-graph/internal/runner"
+	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/worktree"
 )
 
 // A guarded run's end line and the goal assessor's ENGINE-OBSERVED remote
-// changes block render one rule (worktree.GuardOfLeg): the operator and the
+// changes block render one rule (runstate.GuardOfLeg): the operator and the
 // assessor are told the same parts guarded and the same parts not guarded,
 // with the same reasons.
 
@@ -83,7 +84,7 @@ func TestRunAuto_TheAssessorIsToldTheGuardTheEndLineNames(t *testing.T) {
 	for i, prompt := range prompts {
 		for _, want := range []string{
 			"\n  guarded: remotes\n",
-			"\n  not guarded: branches (" + worktree.AutoNoRunBranches + "); pull_requests (" + worktree.AutoNoRunBranches + ")\n",
+			"\n  not guarded: branches (" + runstate.AutoNoRunBranches + "); pull_requests (" + runstate.AutoNoRunBranches + ")\n",
 		} {
 			if !strings.Contains(prompt, want) {
 				t.Errorf("assessor prompt %d lacks %q:\n%s", i+1, want, prompt)
@@ -109,9 +110,9 @@ func TestRunGraph_AnUnreadableConfigIsNamedAlikeOnTheEndLineAndToTheAssessor(t *
 		reason string
 	}{
 		{"config unreadable", func(o *worktree.FakeRemoteObserver) { o.SetRepoConfig("", errors.New("exit status 128")) },
-			worktree.AttributionConfigUnreadable},
+			runstate.AttributionConfigUnreadable},
 		{"check read failed", func(o *worktree.FakeRemoteObserver) { o.SetAttributionErr(errors.New("signal: killed")) },
-			worktree.AttributionCheckReadFailed},
+			runstate.AttributionCheckReadFailed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			isolateRunHome(t)

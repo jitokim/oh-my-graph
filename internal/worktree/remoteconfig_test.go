@@ -186,7 +186,7 @@ func TestGuardedRemoteLeg_ABrokenRepoConfigCannotHideAPush(t *testing.T) {
 			if !hasBranchCreated(leg.diff, leg.runCommit, want) {
 				t.Fatalf("diff = %+v, want feat/run's %s branch_created", leg.diff, want)
 			}
-			wantUnavailable := AttributionConfigUnreadable
+			wantUnavailable := runstate.AttributionConfigUnreadable
 			if tc.checkReads {
 				wantUnavailable = ""
 			}
@@ -444,12 +444,12 @@ func TestTakeGuardedRemoteSnapshot_ReadsOutsideTheRepositoryOnlyWhenItsConfigMov
 		// checkFailed is the reason when the commit check's own read fails.
 		checkFailed string
 	}{
-		{"unchanged", func(*FakeRemoteObserver) {}, false, "", AttributionCheckReadFailed},
-		{"changed", func(obs *FakeRemoteObserver) { obs.SetRepoConfig("other", nil) }, true, "", AttributionCheckReadFailed},
+		{"unchanged", func(*FakeRemoteObserver) {}, false, "", runstate.AttributionCheckReadFailed},
+		{"changed", func(obs *FakeRemoteObserver) { obs.SetRepoConfig("other", nil) }, true, "", runstate.AttributionCheckReadFailed},
 		{"unreadable", func(obs *FakeRemoteObserver) { obs.SetRepoConfig("", errors.New("exit status 128")) }, true,
-			AttributionConfigUnreadable, AttributionConfigUnreadable},
+			runstate.AttributionConfigUnreadable, runstate.AttributionConfigUnreadable},
 		{"remote -v fails", func(obs *FakeRemoteObserver) { obs.SetRemotes(nil, errors.New("exit status 128")) }, true, "",
-			AttributionCheckReadFailed},
+			runstate.AttributionCheckReadFailed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -644,8 +644,8 @@ func TestGuardedBefore_AShallowBoundaryChangedMakesAttributionUnavailable(t *tes
 	}{
 		{"absent", "", "", ""},
 		{"shallow from the start", "base", "", ""},
-		{"written during the leg", "", "run", AttributionShallowChanged},
-		{"changed during the leg", "base", "run", AttributionShallowChanged},
+		{"written during the leg", "", "run", runstate.AttributionShallowChanged},
+		{"changed during the leg", "base", "run", runstate.AttributionShallowChanged},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newRemoteFixture(t)
@@ -687,11 +687,11 @@ func TestNoteAttributionUnavailable_NamesTheObservedRunBranchParts(t *testing.T)
 	if got := len(c.Legs[0].Changes.NotCompared); got != 1 {
 		t.Fatalf("an empty reason added not-compared items: %d", got)
 	}
-	NoteAttributionUnavailable(&c, AttributionConfigUnreadable)
+	NoteAttributionUnavailable(&c, runstate.AttributionConfigUnreadable)
 	d := c.Legs[0].Changes
 	want := []runstate.RemoteNotCompared{
 		{Part: runstate.RemotePartPullRequests, Reason: "gh not logged in"},
-		{Part: runstate.RemotePartBranches, Reason: AttributionConfigUnreadable},
+		{Part: runstate.RemotePartBranches, Reason: runstate.AttributionConfigUnreadable},
 	}
 	if !reflect.DeepEqual(d.NotCompared, want) {
 		t.Errorf("not compared = %+v, want %+v", d.NotCompared, want)

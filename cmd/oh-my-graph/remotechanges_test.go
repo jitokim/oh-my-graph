@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -93,17 +95,88 @@ func useRemoteObserver(t *testing.T, obs worktree.RemoteObserver, base string) {
 }
 
 // hookRunner is a FakeRunner that calls before ahead of each node — where a
-// test scripts what a node does to the remote while it runs.
+// test scripts what a node does to the remote while it runs. before runs on
+// the node's goroutine, where t.Fatal would end only that goroutine, so it
+// returns its setup error instead: hookRunner keeps the first, and the test
+// fails at it through mustSetUp once the run returns.
 type hookRunner struct {
 	*runner.FakeRunner
-	before func(spec runner.NodeInvocation)
+	before func(spec runner.NodeInvocation) error
+
+	mu       sync.Mutex
+	setupErr error
 }
 
-func (h hookRunner) Run(ctx context.Context, spec runner.NodeInvocation) (runner.NodeOutcome, error) {
+func (h *hookRunner) Run(ctx context.Context, spec runner.NodeInvocation) (runner.NodeOutcome, error) {
 	if h.before != nil {
-		h.before(spec)
+		if err := h.before(spec); err != nil {
+			h.mu.Lock()
+			if h.setupErr == nil {
+				h.setupErr = fmt.Errorf("setting up the node prompted %q: %w", spec.Prompt, err)
+			}
+			h.mu.Unlock()
+		}
 	}
 	return h.FakeRunner.Run(ctx, spec)
+}
+
+// firstSetupErr is the first error a before returned, nil if none did.
+func (h *hookRunner) firstSetupErr() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.setupErr
+}
+
+// mustSetUp fails the test at the first setup error a before returned. Call
+// it on the test goroutine as soon as the run returns, before asserting the
+// run's exit code or output.
+func (h *hookRunner) mustSetUp(t *testing.T) {
+	t.Helper()
+	if err := h.firstSetupErr(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A before whose git fails records that git's error, and only the first
+// setup error is kept: the run itself passes, so an exit-code assertion alone
+// would never name the failure that mustSetUp reports.
+func TestHookRunner_KeepsTheFirstSetupErrorAGitInABeforeReturned(t *testing.T) {
+	isolateRunHome(t)
+	notARepo := t.TempDir()
+	nodeRunner := &hookRunner{
+		FakeRunner: runner.NewFakeRunner(map[string]runner.NodeOutcome{
+			"a": {Result: "PASS", ExitCode: 0},
+			"b": {Result: "PASS", ExitCode: 0},
+		}),
+		before: func(spec runner.NodeInvocation) error {
+			if spec.Prompt == "b" {
+				return errors.New("a later setup error")
+			}
+			_, err := gitOutput(notARepo, "rev-parse", "--verify", "refs/heads/omg-no-such-branch")
+			return err
+		},
+	}
+	path := writeGraphFile(t, "name: setup\nnodes:\n  - { id: a, prompt: a }\n  - { id: b, prompt: b, depends_on: [a] }\n")
+	var err error
+	captureStdout(t, func() {
+		err = runGraphWith([]string{path}, nodeRunner, browser.NewFakeOpener(), os.Stdout)
+	})
+
+	setupErr := nodeRunner.firstSetupErr()
+	if setupErr == nil {
+		t.Fatal("a before whose git failed recorded no setup error")
+	}
+	for _, want := range []string{`setting up the node prompted "a": `, "git [rev-parse --verify refs/heads/omg-no-such-branch] in " + notARepo} {
+		if !strings.Contains(setupErr.Error(), want) {
+			t.Errorf("setup error = %q, want it to name %q", setupErr, want)
+		}
+	}
+	if strings.Contains(setupErr.Error(), "a later setup error") {
+		t.Errorf("setup error = %q, want the first, not a later one", setupErr)
+	}
+	if code := exitCodeForError(err); code != 0 {
+		t.Errorf("exit code = %d (%v), want 0: the run itself passed", code, err)
+	}
 }
 
 const (
@@ -122,7 +195,8 @@ func originObserver() *worktree.FakeRemoteObserver {
 }
 
 // runOneNodeGraph runs a one-node graph through `run`'s real argv path and
-// returns its stdout and error.
+// returns its stdout and error, failing the test first at a hookRunner's
+// setup error.
 func runOneNodeGraph(t *testing.T, nodeRunner runner.NodeRunner) (string, error) {
 	t.Helper()
 	path := writeGraphFile(t, "name: remote\nnodes:\n  - { id: work, prompt: work }\n")
@@ -130,6 +204,9 @@ func runOneNodeGraph(t *testing.T, nodeRunner runner.NodeRunner) (string, error)
 	out := captureStdout(t, func() {
 		err = runGraphWith([]string{path}, nodeRunner, browser.NewFakeOpener(), os.Stdout)
 	})
+	if h, ok := nodeRunner.(*hookRunner); ok {
+		h.mustSetUp(t)
+	}
 	return out, err
 }
 
@@ -161,12 +238,13 @@ func TestRunGraph_ABranchPushedDuringTheLegIsRecordedAndPrintedWithItsAttributio
 	obs := originObserver()
 	obs.SetRunCommit(remoteRunSHA)
 	useRemoteObserver(t, obs, remoteBaseSHA)
-	nodeRunner := hookRunner{FakeRunner: passingWork(), before: func(runner.NodeInvocation) {
+	nodeRunner := &hookRunner{FakeRunner: passingWork(), before: func(runner.NodeInvocation) error {
 		obs.SetHeads("origin", []worktree.RemoteHead{
 			{Branch: "main", SHA: remoteMainSHA},
 			{Branch: "feat/x", SHA: remoteRunSHA},
 			{Branch: "human", SHA: remoteHumaSHA},
 		}, nil)
+		return nil
 	}}
 
 	out, err := runOneNodeGraph(t, nodeRunner)
@@ -207,11 +285,12 @@ func TestRunGraph_ARemoteAddedDuringTheLegIsRemoteAdded(t *testing.T) {
 	isolateRunHome(t)
 	obs := originObserver()
 	useRemoteObserver(t, obs, remoteBaseSHA)
-	nodeRunner := hookRunner{FakeRunner: passingWork(), before: func(runner.NodeInvocation) {
+	nodeRunner := &hookRunner{FakeRunner: passingWork(), before: func(runner.NodeInvocation) error {
 		obs.SetRemotes([]worktree.Remote{
 			{Name: "origin", FetchURL: "https://example.com/o.git", PushURL: "https://example.com/o.git"},
 			{Name: "mirror", FetchURL: "https://example.com/m.git", PushURL: "https://example.com/m.git"},
 		}, nil)
+		return nil
 	}}
 
 	out, err := runOneNodeGraph(t, nodeRunner)
@@ -259,10 +338,11 @@ func TestRunAuto_RecordsAndPrintsTheRemoteChanges(t *testing.T) {
 		"plan-1": {Result: cycleSpec, TotalCostUSD: 0.0417},
 		"work-1": {SessionID: "s-work", Result: "PASS", ExitCode: 0, TotalCostUSD: 0.50},
 	})
-	nodeRunner := hookRunner{FakeRunner: fake, before: func(spec runner.NodeInvocation) {
+	nodeRunner := &hookRunner{FakeRunner: fake, before: func(spec runner.NodeInvocation) error {
 		if strings.HasPrefix(spec.Prompt, "work") {
 			obs.SetHeads("origin", []worktree.RemoteHead{{Branch: "main", SHA: remoteMainSHA}, {Branch: "feat/x", SHA: remoteRunSHA}}, nil)
 		}
+		return nil
 	}}
 
 	var err error
@@ -270,6 +350,7 @@ func TestRunAuto_RecordsAndPrintsTheRemoteChanges(t *testing.T) {
 		err = runAutoWith([]string{"add a README section", "--accept-no-build-evidence",
 			"--no-agent-mapping", "--no-skill-activation"}, nodeRunner, browser.NewFakeOpener(), os.Stdout)
 	})
+	nodeRunner.mustSetUp(t)
 	if err != nil {
 		t.Fatalf("auto: %v", err)
 	}
@@ -374,12 +455,13 @@ func TestResume_RecordsAndPrintsTheRemoteChanges(t *testing.T) {
 		"a":    {Result: "PASS", ExitCode: 0},
 		"ship": {Result: "PASS", ExitCode: 0},
 	})
-	nodeRunner := hookRunner{FakeRunner: fake, before: func(spec runner.NodeInvocation) {
+	nodeRunner := &hookRunner{FakeRunner: fake, before: func(spec runner.NodeInvocation) error {
 		if spec.Prompt == "ship" {
 			obs.SetHeads("origin", []worktree.RemoteHead{
 				{Branch: "main", SHA: remoteMainSHA}, {Branch: "paused", SHA: remoteRunSHA}, {Branch: "shipped", SHA: remoteRunSHA},
 			}, nil)
 		}
+		return nil
 	}}
 	g := mustParse(t, `{"name":"gate-flow","nodes":[
 		{"id":"a","prompt":"a"},
@@ -389,6 +471,7 @@ func TestResume_RecordsAndPrintsTheRemoteChanges(t *testing.T) {
 	firstOut := captureStdout(t, func() {
 		err = executeGraph(context.Background(), "run-1", g, nodeRunner, commonRunFlags{inputs: inputFlag{}}, nil, 0, "gate-flow.yaml", []byte("name: gate-flow\n"), false, nil, nil, nil)
 	})
+	nodeRunner.mustSetUp(t)
 	var paused *schedule.PausedError
 	if !errors.As(err, &paused) {
 		t.Fatalf("expected the first leg to pause, got %v", err)
@@ -404,6 +487,7 @@ func TestResume_RecordsAndPrintsTheRemoteChanges(t *testing.T) {
 	out := captureStdout(t, func() {
 		err = executeResume(parseResumeFlags(t, []string{"run-1", "--approve", "approve"}), nodeRunner, nil)
 	})
+	nodeRunner.mustSetUp(t)
 	if err != nil {
 		t.Fatalf("resume: %v", err)
 	}
@@ -999,14 +1083,21 @@ func TestResume_RetryFailedWritesTheRetainedRecordsOnceTheRemoteSnapshotComplete
 
 	fake.SetOutcome("impl: ", runner.NodeOutcome{Result: "FAIL", ExitCode: 1})
 	var atFirstNode map[string]runstate.NodeRecord
-	hooked := hookRunner{FakeRunner: fake, before: func(runner.NodeInvocation) {
-		if atFirstNode == nil {
-			atFirstNode = remoteRunSnapshot(t, "run-1").Nodes
+	hooked := &hookRunner{FakeRunner: fake, before: func(runner.NodeInvocation) error {
+		if atFirstNode != nil {
+			return nil
 		}
+		snap, err := runstate.Load(filepath.Join(runDirFor("run-1"), stateFileName))
+		if err != nil {
+			return err
+		}
+		atFirstNode = snap.Nodes
+		return nil
 	}}
 	out := captureStdout(t, func() {
 		err = executeResume(parseResumeFlags(t, []string{"run-1", "--retry-failed"}), hooked, nil)
 	})
+	hooked.mustSetUp(t)
 	if !errors.As(err, &halted) {
 		t.Fatalf("expected the retry leg to halt at impl, got %v", err)
 	}
@@ -1197,7 +1288,7 @@ func TestRunGraph_PullRequestsChangedDuringTheLegArePrintedWithTheirAttribution(
 		{Number: 10, HeadRefName: "gone", HeadRefOid: remoteMainSHA},
 	}))
 	usePRLister(t, prs)
-	nodeRunner := hookRunner{FakeRunner: passingWork(), before: func(runner.NodeInvocation) {
+	nodeRunner := &hookRunner{FakeRunner: passingWork(), before: func(runner.NodeInvocation) error {
 		prs.Set(onGHRepo([]remote.OpenPR{
 			{Number: 7, HeadRefName: "feat/seven", HeadRefOid: remoteRunSHA},
 			{Number: 8, HeadRefName: "feat/eight", HeadRefOid: remoteHumaSHA},
@@ -1205,6 +1296,7 @@ func TestRunGraph_PullRequestsChangedDuringTheLegArePrintedWithTheirAttribution(
 			{Number: 11, HeadRefName: "omg-out", HeadRefOid: remoteRunSHA},
 			{Number: 12, HeadRefName: "human", HeadRefOid: remoteHumaSHA},
 		}))
+		return nil
 	}}
 
 	out, err := runOneNodeGraph(t, nodeRunner)
@@ -1284,9 +1376,9 @@ func TestRunGraph_AnUnreadablePRListIsNotComparedAndNeverChangesTheOutcome(t *te
 						prs.Set(tc.before)
 						after = tc.after
 					}
-					return runOneNodeGraph(t, hookRunner{
+					return runOneNodeGraph(t, &hookRunner{
 						FakeRunner: runner.NewFakeRunner(map[string]runner.NodeOutcome{"work": outcome}),
-						before:     func(runner.NodeInvocation) { prs.Set(after) },
+						before:     func(runner.NodeInvocation) error { prs.Set(after); return nil },
 					})
 				}
 				var quietErr, err error
@@ -1370,13 +1462,14 @@ func TestEveryLegReadsTheOpenPullRequests(t *testing.T) {
 			"a":    {Result: "PASS", ExitCode: 0},
 			"ship": {Result: "PASS", ExitCode: 0},
 		})
-		nodeRunner := hookRunner{FakeRunner: fake, before: func(spec runner.NodeInvocation) {
+		nodeRunner := &hookRunner{FakeRunner: fake, before: func(spec runner.NodeInvocation) error {
 			if spec.Prompt == "ship" {
 				prs.Set(onGHRepo([]remote.OpenPR{
 					{Number: 1, HeadRefName: "paused", HeadRefOid: remoteRunSHA},
 					{Number: 2, HeadRefName: "shipped", HeadRefOid: remoteRunSHA},
 				}))
 			}
+			return nil
 		}}
 		g := mustParse(t, `{"name":"gate-flow","nodes":[
 			{"id":"a","prompt":"a"},
@@ -1386,6 +1479,7 @@ func TestEveryLegReadsTheOpenPullRequests(t *testing.T) {
 		captureStdout(t, func() {
 			err = executeGraph(context.Background(), "run-1", g, nodeRunner, commonRunFlags{inputs: inputFlag{}}, nil, 0, "gate-flow.yaml", []byte("name: gate-flow\n"), false, nil, nil, nil)
 		})
+		nodeRunner.mustSetUp(t)
 		var paused *schedule.PausedError
 		if !errors.As(err, &paused) {
 			t.Fatalf("expected the first leg to pause, got %v", err)
@@ -1396,6 +1490,7 @@ func TestEveryLegReadsTheOpenPullRequests(t *testing.T) {
 		out := captureStdout(t, func() {
 			err = executeResume(parseResumeFlags(t, []string{"run-1", "--approve", "approve"}), nodeRunner, nil)
 		})
+		nodeRunner.mustSetUp(t)
 		if err != nil {
 			t.Fatalf("resume: %v", err)
 		}
