@@ -42,14 +42,21 @@ const configToken = "omg-config-token-9876"
 // appendTo appends text to path.
 func appendTo(t *testing.T, path, text string) {
 	t.Helper()
+	if err := appendFile(path, text); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// appendFile is appendTo returning its error, for a node's before, where a
+// test may not be failed.
+func appendFile(path, text string) error {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o644)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 	defer f.Close()
-	if _, err := f.WriteString(text); err != nil {
-		t.Fatal(err)
-	}
+	_, err = f.WriteString(text)
+	return err
 }
 
 // laneGraph is a one-node graph whose node runs in the engine's own worktree
@@ -68,24 +75,39 @@ func useRealRemoteObserver(t *testing.T) {
 
 // commitAndPushFromLane is a node's own push: it commits in the worktree the
 // engine gave it (spec.Cwd) and pushes that commit to feat/x on origin, the
-// repository at originPath.
-func commitAndPushFromLane(t *testing.T, spec runner.NodeInvocation, originPath string) {
-	t.Helper()
+// repository at originPath. It runs in a node's before, so it returns its
+// error.
+func commitAndPushFromLane(spec runner.NodeInvocation, originPath string) error {
 	if spec.Cwd == "" {
-		t.Fatal("the node ran without its engine worktree")
+		return errors.New("the node ran without its engine worktree")
 	}
-	launchCommitWork(t, spec.Cwd, "work.md")
-	mustGit(t, spec.Cwd, "push", "-q", originPath, "HEAD:refs/heads/feat/x")
+	if err := commitFile(spec.Cwd, "work.md"); err != nil {
+		return err
+	}
+	_, err := gitOutput(spec.Cwd, "push", "-q", originPath, "HEAD:refs/heads/feat/x")
+	return err
 }
 
 // originPath is the absolute path of dir's origin, a local bare repository.
 func originPath(t *testing.T, dir string) string {
 	t.Helper()
-	origin := mustGit(t, dir, "remote", "get-url", "origin")
+	origin, err := originPathOf(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return origin
+}
+
+// originPathOf is originPath returning its error, for a node's before.
+func originPathOf(dir string) (string, error) {
+	origin, err := gitOutput(dir, "remote", "get-url", "origin")
+	if err != nil {
+		return "", err
+	}
 	if !filepath.IsAbs(origin) {
 		origin = filepath.Join(dir, origin)
 	}
-	return origin
+	return origin, nil
 }
 
 // gitArgvLog is a git on PATH that appends the argv of every git started
@@ -116,16 +138,24 @@ func logGitArgv(t *testing.T) gitArgvLog {
 
 func (l gitArgvLog) pause(t *testing.T) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(l.dir, "paused"), nil, 0o644); err != nil {
+	if err := l.setPaused(true); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func (l gitArgvLog) resume(t *testing.T) {
 	t.Helper()
-	if err := os.Remove(filepath.Join(l.dir, "paused")); err != nil {
+	if err := l.setPaused(false); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// setPaused is pause or resume returning its error, for a node's before.
+func (l gitArgvLog) setPaused(paused bool) error {
+	if paused {
+		return os.WriteFile(filepath.Join(l.dir, "paused"), nil, 0o644)
+	}
+	return os.Remove(filepath.Join(l.dir, "paused"))
 }
 
 // read is every argv logged, one per line.
@@ -155,17 +185,27 @@ type realRun struct {
 // guardedRealRun runs a one-node guarded graph against dir, the production
 // GitManager reading it and attributing through the real §5.1 check, whose
 // node commits on its run branch, pushes the commit to feat/x on origin,
-// then runs change.
-func guardedRealRun(t *testing.T, dir string, change func()) realRun {
+// then runs change. change runs on the node's goroutine, so it returns its
+// setup error, and the test fails at it before anything about the run is
+// asserted.
+func guardedRealRun(t *testing.T, dir string, change func() error) realRun {
 	t.Helper()
 	useRealRemoteObserver(t)
 	origin := originPath(t, dir)
 	argv := logGitArgv(t)
-	nodeRunner := hookRunner{FakeRunner: passingWork(), before: func(spec runner.NodeInvocation) {
-		argv.pause(t)
-		defer argv.resume(t)
-		commitAndPushFromLane(t, spec, origin)
-		change()
+	nodeRunner := &hookRunner{FakeRunner: passingWork(), before: func(spec runner.NodeInvocation) (err error) {
+		if err := argv.setPaused(true); err != nil {
+			return err
+		}
+		defer func() {
+			if resumeErr := argv.setPaused(false); err == nil {
+				err = resumeErr
+			}
+		}()
+		if err := commitAndPushFromLane(spec, origin); err != nil {
+			return err
+		}
+		return change()
 	}}
 	path := writeGraphFile(t, laneGraph)
 	var run realRun
@@ -177,6 +217,7 @@ func guardedRealRun(t *testing.T, dir string, change func()) realRun {
 		})
 		return runErr
 	})
+	nodeRunner.mustSetUp(t)
 	argv.pause(t)
 	run.argv = argv.read(t)
 	run.cwd = argv.readLog(t, "cwd")
@@ -329,15 +370,13 @@ func TestRunGraph_ABrokenRepoConfigCannotHideAGuardedPush(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		readable bool
-		apply    func(t *testing.T, config string)
+		apply    func(t *testing.T, config string) error
 	}{
-		{"garbage line", false, func(t *testing.T, config string) { appendTo(t, config, "this is not config\n") }},
-		{"remote with a bare url", true, func(t *testing.T, config string) { appendTo(t, config, "[remote \"x\"]\n\turl\n") }},
-		{"chmod 000", false, func(t *testing.T, config string) {
-			if err := os.Chmod(config, 0); err != nil {
-				t.Fatal(err)
-			}
+		{"garbage line", false, func(_ *testing.T, config string) error { return appendFile(config, "this is not config\n") }},
+		{"remote with a bare url", true, func(_ *testing.T, config string) error { return appendFile(config, "[remote \"x\"]\n\turl\n") }},
+		{"chmod 000", false, func(t *testing.T, config string) error {
 			t.Cleanup(func() { _ = os.Chmod(config, 0o644) })
+			return os.Chmod(config, 0)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -347,7 +386,7 @@ func TestRunGraph_ABrokenRepoConfigCannotHideAGuardedPush(t *testing.T) {
 			isolateRunHome(t)
 			dir := remoteRepo(t)
 			origin := originPath(t, dir)
-			run := guardedRealRun(t, dir, func() { tc.apply(t, filepath.Join(dir, ".git", "config")) })
+			run := guardedRealRun(t, dir, func() error { return tc.apply(t, filepath.Join(dir, ".git", "config")) })
 			if tc.readable {
 				assertGuardedPushFailed(t, run.err)
 				if strings.Contains(run.out, configUnreadableReason) {
@@ -370,12 +409,18 @@ func TestRunGraph_AnUnreadableConfigWithSomeoneElsesBranchIsReportedOnly(t *test
 	isolateRunHome(t)
 	dir := remoteRepo(t)
 	origin := originPath(t, dir)
-	run := guardedRealRun(t, dir, func() {
-		other := filepath.Join(t.TempDir(), "other")
-		mustGit(t, filepath.Dir(other), "clone", "-q", origin, other)
-		launchCommitWork(t, other, "theirs.md")
-		mustGit(t, other, "push", "-q", "origin", "HEAD:refs/heads/feat/theirs")
-		appendTo(t, filepath.Join(dir, ".git", "config"), "this is not config\n")
+	other := filepath.Join(t.TempDir(), "other")
+	run := guardedRealRun(t, dir, func() error {
+		if _, err := gitOutput(filepath.Dir(other), "clone", "-q", origin, other); err != nil {
+			return err
+		}
+		if err := commitFile(other, "theirs.md"); err != nil {
+			return err
+		}
+		if _, err := gitOutput(other, "push", "-q", "origin", "HEAD:refs/heads/feat/theirs"); err != nil {
+			return err
+		}
+		return appendFile(filepath.Join(dir, ".git", "config"), "this is not config\n")
 	})
 	assertAttributionUnavailable(t, run, configUnreadableReason)
 	if !hasBranchCreated(t, "feat/theirs", runstate.AttributionNotAttributable) {
@@ -388,10 +433,18 @@ func TestRunGraph_AnUnreadableConfigWithSomeoneElsesBranchIsReportedOnly(t *test
 
 // ancestryOf is what the guardedRealRun node's change needs to rewrite the
 // ancestry the §5.1 check reads: the run's base, dir's HEAD, and the node's
-// own commit, origin's feat/x.
-func ancestryOf(t *testing.T, dir string) (base, own string) {
-	t.Helper()
-	return mustGit(t, dir, "rev-parse", "HEAD"), mustGit(t, originPath(t, dir), "rev-parse", "refs/heads/feat/x")
+// own commit, origin's feat/x. It runs in that change, so it returns its
+// error.
+func ancestryOf(dir string) (base, own string, err error) {
+	if base, err = gitOutput(dir, "rev-parse", "HEAD"); err != nil {
+		return "", "", err
+	}
+	origin, err := originPathOf(dir)
+	if err != nil {
+		return "", "", err
+	}
+	own, err = gitOutput(origin, "rev-parse", "refs/heads/feat/x")
+	return base, own, err
 }
 
 // A node that pushes its own commit and then makes the base read as its
@@ -401,26 +454,36 @@ func ancestryOf(t *testing.T, dir string) (base, own string) {
 func TestRunGraph_ARewrittenAncestryCannotHideAGuardedPush(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
-		rewrite func(t *testing.T, dir, base, own string)
+		rewrite func(dir, base, own string) error
 	}{
-		{"git replace", func(t *testing.T, dir, base, own string) {
-			fake := mustGit(t, dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false",
+		{"git replace", func(dir, base, own string) error {
+			fake, err := gitOutput(dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false",
 				"commit-tree", base+"^{tree}", "-p", own, "-m", "fake")
-			mustGit(t, dir, "replace", "-f", base, fake)
+			if err != nil {
+				return err
+			}
+			_, err = gitOutput(dir, "replace", "-f", base, fake)
+			return err
 		}},
-		{".git/info/grafts", func(t *testing.T, dir, base, own string) {
-			appendTo(t, filepath.Join(dir, ".git", "info", "grafts"), base+" "+own+"\n")
+		{".git/info/grafts", func(dir, base, own string) error {
+			return appendFile(filepath.Join(dir, ".git", "info", "grafts"), base+" "+own+"\n")
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			isolateRunHome(t)
 			dir := remoteRepo(t)
-			run := guardedRealRun(t, dir, func() {
-				base, own := ancestryOf(t, dir)
-				tc.rewrite(t, dir, base, own)
+			run := guardedRealRun(t, dir, func() error {
+				base, own, err := ancestryOf(dir)
+				if err != nil {
+					return err
+				}
+				if err := tc.rewrite(dir, base, own); err != nil {
+					return err
+				}
 				// The rewrite took: to a plain git, the node's commit is now
-				// in the base's history (mustGit fails the test on exit 1).
-				mustGit(t, dir, "merge-base", "--is-ancestor", own, base)
+				// in the base's history (the setup fails on exit 1).
+				_, err = gitOutput(dir, "merge-base", "--is-ancestor", own, base)
+				return err
 			})
 			assertGuardedPushFailed(t, run.err)
 		})
@@ -436,13 +499,24 @@ func TestRunGraph_ARewrittenAncestryCannotHideAGuardedPush(t *testing.T) {
 func TestRunGraph_AShallowBoundaryWrittenDuringTheLegIsNotGuarded(t *testing.T) {
 	isolateRunHome(t)
 	dir := remoteRepo(t)
-	run := guardedRealRun(t, dir, func() {
-		_, own := ancestryOf(t, dir)
-		child := mustGit(t, dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false",
+	run := guardedRealRun(t, dir, func() error {
+		_, own, err := ancestryOf(dir)
+		if err != nil {
+			return err
+		}
+		child, err := gitOutput(dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false",
 			"commit-tree", own+"^{tree}", "-p", own, "-m", "child")
-		lane := mustGit(t, dir, "for-each-ref", "--format=%(refname)", "refs/heads/omg/")
-		mustGit(t, dir, "update-ref", lane, child)
-		appendTo(t, filepath.Join(dir, ".git", "shallow"), child+"\n")
+		if err != nil {
+			return err
+		}
+		lane, err := gitOutput(dir, "for-each-ref", "--format=%(refname)", "refs/heads/omg/")
+		if err != nil {
+			return err
+		}
+		if _, err := gitOutput(dir, "update-ref", lane, child); err != nil {
+			return err
+		}
+		return appendFile(filepath.Join(dir, ".git", "shallow"), child+"\n")
 	})
 	assertAttributionUnavailable(t, run, shallowChangedReason)
 }
@@ -497,8 +571,8 @@ func TestRunGraph_AnInsteadOfCannotRedirectAGuardedRead(t *testing.T) {
 					appendTo(t, target, "")
 					mustGit(t, dir, "config", "include.path", target)
 				}
-				run := guardedRealRun(t, dir, func() {
-					appendTo(t, target, "[url \""+decoy+"\"]\n\tinsteadOf = "+origin+"\n[omg]\n\ttoken = "+configToken+"\n")
+				run := guardedRealRun(t, dir, func() error {
+					return appendFile(target, "[url \""+decoy+"\"]\n\tinsteadOf = "+origin+"\n[omg]\n\ttoken = "+configToken+"\n")
 				})
 				if got := mustGit(t, dir, "remote", "get-url", "origin"); got != decoy {
 					t.Fatalf("the insteadOf did not take: origin reads as %s", got)
@@ -547,8 +621,8 @@ func TestRunGraph_ARepositoryRemoteOfTheEnginesNameWithAChangedConfig(t *testing
 	isolateRunHome(t)
 	dir := remoteRepo(t)
 	mustGit(t, dir, "remote", "add", "omg-before-snapshot", mustGit(t, dir, "remote", "get-url", "origin"))
-	run := guardedRealRun(t, dir, func() {
-		appendTo(t, filepath.Join(dir, ".git", "config"), "[omg]\n\ttoken = "+configToken+"\n")
+	run := guardedRealRun(t, dir, func() error {
+		return appendFile(filepath.Join(dir, ".git", "config"), "[omg]\n\ttoken = "+configToken+"\n")
 	})
 	assertGuardedPushFailed(t, run.err)
 	if strings.Contains(run.out, "not guarded (not compared): branches") {
@@ -575,10 +649,11 @@ func TestRunGraph_ARelativePathOriginIsReadByAGuardedAfter(t *testing.T) {
 				t.Fatal(relErr)
 			}
 			mustGit(t, dir, "remote", "set-url", "origin", rel)
-			run := guardedRealRun(t, dir, func() {
-				if changed {
-					appendTo(t, filepath.Join(dir, ".git", "config"), "[omg]\n\ttoken = "+configToken+"\n")
+			run := guardedRealRun(t, dir, func() error {
+				if !changed {
+					return nil
 				}
+				return appendFile(filepath.Join(dir, ".git", "config"), "[omg]\n\ttoken = "+configToken+"\n")
 			})
 			assertGuardedPushFailed(t, run.err)
 			if strings.Contains(run.out, "not guarded") {

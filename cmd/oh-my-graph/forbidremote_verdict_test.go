@@ -68,11 +68,12 @@ func guardedRemote(t *testing.T, prsBefore []remote.OpenPR) (*worktree.FakeRemot
 func runWithRemoteChange(t *testing.T, obs *worktree.FakeRemoteObserver, prs *remote.FakePRLister, change remoteChange, extra ...string) (string, error) {
 	t.Helper()
 	path := writeGraphFile(t, "name: remote\nnodes:\n  - { id: work, prompt: work }\n")
-	nodeRunner := hookRunner{FakeRunner: passingWork(), before: func(runner.NodeInvocation) { change(obs, prs) }}
+	nodeRunner := &hookRunner{FakeRunner: passingWork(), before: func(runner.NodeInvocation) error { change(obs, prs); return nil }}
 	var err error
 	out := captureStdout(t, func() {
 		err = runGraphWith(append([]string{path}, extra...), nodeRunner, browser.NewFakeOpener(), os.Stdout)
 	})
+	nodeRunner.mustSetUp(t)
 	return out, err
 }
 
@@ -366,15 +367,17 @@ func TestResume_AForbiddenRemoteChangeOnAResumedLegFailsIt(t *testing.T) {
 	fake := gateFlowFake()
 	pauseGateFlow(t, fake, commonRunFlags{inputs: inputFlag{}, forbidRemoteChanges: true})
 
-	nodeRunner := hookRunner{FakeRunner: fake, before: func(spec runner.NodeInvocation) {
+	nodeRunner := &hookRunner{FakeRunner: fake, before: func(spec runner.NodeInvocation) error {
 		if spec.Prompt == "ship" {
 			pushBranch("feat/x", remoteRunSHA)(obs, prs)
 		}
+		return nil
 	}}
 	var err error
 	captureStdout(t, func() {
 		err = executeResume(parseResumeFlags(t, []string{"run-1", "--approve", "approve"}), nodeRunner, nil)
 	})
+	nodeRunner.mustSetUp(t)
 	var forbidden *RemoteChangeForbiddenError
 	if !errors.As(err, &forbidden) || exitCodeForError(err) != 6 {
 		t.Fatalf("resume = %v (exit %d), want a *RemoteChangeForbiddenError and exit 6", err, exitCodeForError(err))
@@ -396,15 +399,17 @@ func TestRunGraph_ContinueOnFailReportsANodeFailureAndAForbiddenChange(t *testin
 		"bad":  {Result: "nope", ExitCode: 1},
 		"push": {Result: "PASS", ExitCode: 0},
 	})
-	nodeRunner := hookRunner{FakeRunner: fake, before: func(spec runner.NodeInvocation) {
+	nodeRunner := &hookRunner{FakeRunner: fake, before: func(spec runner.NodeInvocation) error {
 		if spec.Prompt == "push" {
 			pushBranch("feat/x", remoteRunSHA)(obs, prs)
 		}
+		return nil
 	}}
 	var err error
 	captureStdout(t, func() {
 		err = runGraphWith([]string{path, "--forbid-remote-changes", "--continue-on-fail"}, nodeRunner, browser.NewFakeOpener(), os.Stdout)
 	})
+	nodeRunner.mustSetUp(t)
 
 	var forbidden *RemoteChangeForbiddenError
 	if !errors.As(err, &forbidden) {
@@ -457,16 +462,18 @@ func TestRunGraph_AForbiddenRemoteChangeOnAPausedLegFailsItAndWithdrawsThePause(
 		t.Run(tc.name, func(t *testing.T) {
 			isolateRunHome(t)
 			obs, prs := guardedRemote(t, nil)
-			nodeRunner := hookRunner{FakeRunner: tc.fake, before: func(spec runner.NodeInvocation) {
+			nodeRunner := &hookRunner{FakeRunner: tc.fake, before: func(spec runner.NodeInvocation) error {
 				if spec.Prompt == "a" {
 					pushBranch("feat/x", remoteRunSHA)(obs, prs)
 				}
+				return nil
 			}}
 			var err error
 			out := captureStdout(t, func() {
 				err = executeGraph(context.Background(), "run-1", mustParse(t, tc.graph), nodeRunner,
 					commonRunFlags{inputs: inputFlag{}, forbidRemoteChanges: true}, nil, 0, "g.yaml", []byte("name: g\n"), false, nil, nil, nil)
 			})
+			nodeRunner.mustSetUp(t)
 			var forbidden *RemoteChangeForbiddenError
 			if !errors.As(err, &forbidden) {
 				t.Fatalf("err = %v, want a *RemoteChangeForbiddenError", err)
