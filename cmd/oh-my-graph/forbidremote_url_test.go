@@ -135,12 +135,13 @@ func TestRunGraph_AGuardedLegWhoseBeforeURLIsUnreachable(t *testing.T) {
 				o.SetURLHeads(originURL, nil, errUnreachable)
 			}
 			path := writeGraphFile(t, "name: remote\nnodes:\n  - { id: work, prompt: work }\n")
-			nodeRunner := hookRunner{FakeRunner: runner.NewFakeRunner(map[string]runner.NodeOutcome{"work": tc.outcome}),
-				before: func(runner.NodeInvocation) { change(obs, prs) }}
+			nodeRunner := &hookRunner{FakeRunner: runner.NewFakeRunner(map[string]runner.NodeOutcome{"work": tc.outcome}),
+				before: func(runner.NodeInvocation) error { change(obs, prs); return nil }}
 			var err error
 			out := captureStdout(t, func() {
 				err = runGraphWith([]string{path, "--forbid-remote-changes"}, nodeRunner, browser.NewFakeOpener(), os.Stdout)
 			})
+			nodeRunner.mustSetUp(t)
 			if got := exitCodeForError(err); got != tc.exit {
 				t.Fatalf("err = %v (exit %d), want exit %d", err, got, tc.exit)
 			}
@@ -224,11 +225,12 @@ func TestResume_AGuardedLegReadsThroughItsOwnBeforesRawURL(t *testing.T) {
 	isolateRunHome(t)
 	obs := credentialObserver(t)
 	fake := gateFlowFake()
-	nodeRunner := hookRunner{FakeRunner: fake, before: func(spec runner.NodeInvocation) {
+	nodeRunner := &hookRunner{FakeRunner: fake, before: func(spec runner.NodeInvocation) error {
 		if spec.Prompt == "ship" {
 			obs.SetHeads("origin", []worktree.RemoteHead{{Branch: "main", SHA: remoteMainSHA}, {Branch: "feat/x", SHA: remoteRunSHA}}, nil)
 			obs.SetRemotes(nil, nil)
 		}
+		return nil
 	}}
 	pauseGateFlow(t, fake, commonRunFlags{inputs: inputFlag{}, forbidRemoteChanges: true})
 	if calls := obs.URLCalls(); len(calls) != 1 || calls[0] != credentialURL {
@@ -240,6 +242,7 @@ func TestResume_AGuardedLegReadsThroughItsOwnBeforesRawURL(t *testing.T) {
 	out := captureStdout(t, func() {
 		err = executeResume(parseResumeFlags(t, []string{"run-1", "--approve", "approve"}), nodeRunner, nil)
 	})
+	nodeRunner.mustSetUp(t)
 	if got := exitCodeForError(err); got != 6 {
 		t.Fatalf("resume = %v (exit %d), want exit 6", err, got)
 	}
@@ -292,16 +295,17 @@ func TestRunGraph_AGuardedLegNeverWritesTheRawURL(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			isolateRunHome(t)
 			obs := credentialObserver(t)
+			nodeRunner := &hookRunner{FakeRunner: passingWork(), before: func(runner.NodeInvocation) error { tc.change(obs, nil); return nil }}
 			var out string
 			stderr, err := captureStderr(t, func() error {
 				var runErr error
 				out = captureStdout(t, func() {
 					path := writeGraphFile(t, "name: remote\nnodes:\n  - { id: work, prompt: work }\n")
-					nodeRunner := hookRunner{FakeRunner: passingWork(), before: func(runner.NodeInvocation) { tc.change(obs, nil) }}
 					runErr = runGraphWith([]string{path, "--forbid-remote-changes"}, nodeRunner, browser.NewFakeOpener(), os.Stdout)
 				})
 				return runErr
 			})
+			nodeRunner.mustSetUp(t)
 			if calls := obs.URLCalls(); len(calls) != 1 || calls[0] != credentialURL {
 				t.Fatalf("URL reads = %v, want one, of the raw before URL", calls)
 			}
@@ -370,9 +374,12 @@ func TestRunGraph_TheBeforeURLReadAgainstARealRepository(t *testing.T) {
 				dir := remoteRepo(t)
 				useRealRemoteObserver(t)
 				origin := originPath(t, dir)
-				nodeRunner := hookRunner{FakeRunner: passingWork(), before: func(spec runner.NodeInvocation) {
-					commitAndPushFromLane(t, spec, origin)
-					mustGit(t, dir, tc.hide...)
+				nodeRunner := &hookRunner{FakeRunner: passingWork(), before: func(spec runner.NodeInvocation) error {
+					if err := commitAndPushFromLane(spec, origin); err != nil {
+						return err
+					}
+					_, err := gitOutput(dir, tc.hide...)
+					return err
 				}}
 				path := writeGraphFile(t, laneGraph)
 				args := []string{path}
@@ -383,6 +390,7 @@ func TestRunGraph_TheBeforeURLReadAgainstARealRepository(t *testing.T) {
 				captureStdout(t, func() {
 					err = runGraphWith(args, nodeRunner, browser.NewFakeOpener(), os.Stdout)
 				})
+				nodeRunner.mustSetUp(t)
 				d := lastLegChanges(t, remoteRunSnapshot(t, soleRunID(t)))
 				pushed := false
 				for _, e := range d.Entries {

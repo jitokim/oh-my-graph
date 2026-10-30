@@ -17,7 +17,6 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/runner"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
-	"github.com/jitokim/oh-my-graph/internal/worktree"
 )
 
 // The assessor's material caps (ADR 0011 §2). Everything the assessor reads is
@@ -177,7 +176,7 @@ type CycleEvidence struct {
 	// NoRunBranches is an auto run's (its snapshot holds tool policies): its
 	// planned nodes create no run branch, so its guard never covers branches
 	// or pull requests — the rule the CLI's end line applies
-	// (worktree.GuardOfLeg), so both name the same parts with the same reasons.
+	// (runstate.GuardOfLeg), so both name the same parts with the same reasons.
 	NoRunBranches bool
 }
 
@@ -882,7 +881,7 @@ type remoteDiffSource struct {
 	// ownLeg is true for a leg's own diff, the only kind a guard checks: a
 	// between-legs entry never fails a run (ADR 0046 §3.1).
 	ownLeg bool
-	// leg is an own diff's leg, its Changes the diff, for worktree.GuardOfLeg.
+	// leg is an own diff's leg, its Changes the diff, for runstate.GuardOfLeg.
 	leg runstate.RemoteLeg
 }
 
@@ -931,11 +930,11 @@ var remoteParts = []runstate.RemotePart{runstate.RemotePartRemotes, runstate.Rem
 // closed vocabulary only — counts and part names: how many entries there are
 // and how many were left out, which parts were compared, which were not, and
 // on a guarded run which parts the guard covered and which it did not, with
-// why — worktree.GuardOfLeg's rule for each leg, the one the CLI's end line
+// why — runstate.GuardOfLeg's rule for each leg, the one the CLI's end line
 // renders (noRunBranches is an auto run's). A part not compared is
 // named there whatever the caps leave out, so the block never reads as "no
 // changes" where the engine could not see. A part whose attribution was
-// unavailable (worktree.IsAttributionUnavailable) was seen and compared, and
+// unavailable (runstate.IsAttributionUnavailable) was seen and compared, and
 // its entries are quoted: only its guard judgement names the reason.
 //
 // Everything that carries repository or gh text — a remote or branch name, a
@@ -965,7 +964,7 @@ func writeRemoteChangesBlock(b *strings.Builder, c *runstate.RemoteChanges, guar
 	for _, src := range sources {
 		seen := map[runstate.RemotePart]bool{}
 		for _, nc := range src.diff.NotCompared {
-			if src.ownLeg && worktree.IsAttributionUnavailable(nc) {
+			if src.ownLeg && runstate.IsAttributionUnavailable(nc) {
 				// Compared, only not attributable: GuardOfLeg names it
 				// not guarded, with its reason, below.
 				continue
@@ -984,7 +983,7 @@ func writeRemoteChangesBlock(b *strings.Builder, c *runstate.RemoteChanges, guar
 			}
 		}
 		if src.ownLeg {
-			g, _ := worktree.GuardOfLeg(src.leg, noRunBranches)
+			g, _ := runstate.GuardOfLeg(src.leg, noRunBranches)
 			for _, p := range remoteParts {
 				if !slices.Contains(g.Guarded, p) {
 					guardedEverywhere[p] = false
@@ -1059,12 +1058,12 @@ func writeRemoteChangesBlock(b *strings.Builder, c *runstate.RemoteChanges, guar
 
 // assessNotGuarded is ng as the block's engine lines name it: "<part>
 // (<reason>)" word for word as the CLI's end line says it
-// (worktree.NotGuardedPart.Describe) when the reason is the engine's own — an
+// (runstate.NotGuardedPart.Describe) when the reason is the engine's own — an
 // auto run's or an unavailable attribution's. A part not compared names
 // neither its remote nor its reason there, since both are repository or gh
 // text: the reason is quoted inside the fence.
-func assessNotGuarded(ng worktree.NotGuardedPart) string {
-	if ng.Cause == worktree.NotGuardedNotCompared {
+func assessNotGuarded(ng runstate.NotGuardedPart) string {
+	if ng.Cause == runstate.NotGuardedNotCompared {
 		return string(ng.Part) + " (not compared: its reason is quoted below)"
 	}
 	return ng.Describe(true)

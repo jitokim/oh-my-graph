@@ -4336,7 +4336,7 @@ single-cycle in v1: it calls `planAndExecute` with `singleCycle`
   text) inside a nonce fence, each line cut to 300 bytes; with no record it is
   one line saying the remote state is unknown, not "no changes". The block
   names its guarded and not-guarded parts with the CLI end line's own rule
-  and reasons (`worktree.GuardOfLeg`): a guarded `auto` run reads `guarded:
+  and reasons (`runstate.GuardOfLeg`): a guarded `auto` run reads `guarded:
   remotes` and `branches` and `pull_requests` not guarded, `auto: no run
   branches`, and an `attribution unavailable: …` reason reads word for word
   as on the end line.

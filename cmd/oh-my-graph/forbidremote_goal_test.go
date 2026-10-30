@@ -44,14 +44,15 @@ func runGuardedGoalFake(t *testing.T, pushCycle int, assess1, assess2 string, ex
 		"assess-2": {Result: assess2},
 	})
 	works := 0
-	nodeRunner := hookRunner{FakeRunner: fake, before: func(spec runner.NodeInvocation) {
+	nodeRunner := &hookRunner{FakeRunner: fake, before: func(spec runner.NodeInvocation) error {
 		if !strings.HasPrefix(spec.Prompt, "work") {
-			return
+			return nil
 		}
 		works++
 		if works == pushCycle {
 			pushBranch("feat/x", remoteRunSHA)(obs, prs)
 		}
+		return nil
 	}}
 	args := append([]string{"add a README section", "--accept-no-build-evidence",
 		"--no-agent-mapping", "--no-skill-activation"}, extra...)
@@ -59,6 +60,7 @@ func runGuardedGoalFake(t *testing.T, pushCycle int, assess1, assess2 string, ex
 	out := captureStdout(t, func() {
 		err = runAutoWith(args, nodeRunner, browser.NewFakeOpener(), os.Stdout)
 	})
+	nodeRunner.mustSetUp(t)
 	var ids []string
 	for _, snap := range goalSnapshots(t) {
 		ids = append(ids, snap.RunID)
