@@ -905,6 +905,89 @@ func TestExitCode_AgreesWithTheStatusForASingleRunInvocation(t *testing.T) {
 	}
 }
 
+// TestExitCode_AgreesWithTheStatusWhenAResumedLegIsInterruptedInItsStartSnapshot
+// is the table above for a resumed leg a Ctrl-C ends in its before remote
+// snapshot (#433). Nothing the leg decided is saved, so the run reads as it
+// did: still paused at its gate after --approve, --reject, or a
+// --retry-failed of a run paused at one — exit 2, as the pause — and FAIL
+// after a --retry-failed of a run paused at no gate — exit 1, as the
+// interrupt.
+func TestExitCode_AgreesWithTheStatusWhenAResumedLegIsInterruptedInItsStartSnapshot(t *testing.T) {
+	gated := `{"name":"g","nodes":[
+		{"id":"a","prompt":"a"},
+		{"id":"approve","type":"gate","depends_on":["a"]},
+		{"id":"ship","prompt":"ship","depends_on":["approve"]}]}`
+	// continue-on-fail lets the gate pause beside the failed flaky, so the
+	// run holds a failure to retry and a pending gate at once.
+	failedAndGated := `{"name":"g","nodes":[
+		{"id":"approve","type":"gate"},
+		{"id":"flaky","prompt":"flaky","success_check":{"exit_zero":true}},
+		{"id":"ship","prompt":"ship","depends_on":["approve"]}]}`
+	failed := `{"name":"g","nodes":[{"id":"flaky","prompt":"flaky","success_check":{"exit_zero":true}}]}`
+	outcomes := map[string]runner.NodeOutcome{
+		"a":     {SessionID: "s", Result: "PASS", ExitCode: 0},
+		"flaky": {SessionID: "s", Result: "nope", ExitCode: 1},
+		"ship":  {SessionID: "s", Result: "PASS", ExitCode: 0},
+	}
+	for _, tc := range []struct {
+		name           string
+		graph          string
+		continueOnFail bool
+		resume         []string
+		// unsaved names the decision the still-paused line says was not
+		// saved; "" when the run is paused at no gate and says nothing.
+		unsaved    string
+		wantExit   int
+		wantStatus runstatus.Status
+	}{
+		{"resume --approve", gated, false, []string{"--approve", "approve"}, "approval", 2, runstatus.Paused},
+		{"resume --reject", gated, false, []string{"--reject", "approve"}, "rejection", 2, runstatus.Paused},
+		{"resume --retry-failed of a run paused at a gate", failedAndGated, true, []string{"--retry-failed"}, "retry", 2, runstatus.Paused},
+		{"resume --retry-failed of a run paused at no gate", failed, false, []string{"--retry-failed"}, "", 1, runstatus.Fail},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateRunHome(t)
+			runID := "run-exit"
+			useRemoteObserver(t, originObserver(), remoteBaseSHA)
+			fake := runner.NewFakeRunner(outcomes)
+			captureStdout(t, func() {
+				_ = executeGraph(context.Background(), runID, mustParse(t, tc.graph), fake,
+					commonRunFlags{inputs: inputFlag{}, continueOnFail: tc.continueOnFail}, nil, 0, "g.yaml", []byte(tc.graph), false, nil, nil, nil)
+			})
+			firstCalls := len(fake.Calls())
+
+			useRemoteObserver(t, &interruptingObserver{FakeRemoteObserver: originObserver(), interrupt: sigint(t), during: true}, remoteBaseSHA)
+			var runErr error
+			out := captureStdout(t, func() {
+				runErr = executeResume(parseResumeFlags(t, append([]string{runID}, tc.resume...)), fake, nil)
+			})
+			if !errors.Is(runErr, context.Canceled) {
+				t.Fatalf("err = %v, want the interrupt as its cause", runErr)
+			}
+			if calls := fake.Calls(); len(calls) != firstCalls {
+				t.Errorf("nodes ran after the interrupt: %v", calls[firstCalls:])
+			}
+			if got := exitCodeForError(runErr); got != tc.wantExit {
+				t.Errorf("exit code = %d, want %d (error %v)", got, tc.wantExit, runErr)
+			}
+			status, err := runstatus.Of(runDirFor(runID))
+			if err != nil {
+				t.Fatalf("runstatus.Of: %v", err)
+			}
+			if status != tc.wantStatus {
+				t.Errorf("status = %v, want %v", status, tc.wantStatus)
+			}
+			if tc.unsaved == "" {
+				if runErr.Error() != "context canceled" || strings.Contains(out, "still paused") || strings.Contains(out, "Resume with") {
+					t.Errorf("a run paused at no gate ended as a pause (err %v):\n%s", runErr, out)
+				}
+				return
+			}
+			assertStillPausedPrinted(t, out, tc.unsaved, runID, "approve", `"approve"`)
+		})
+	}
+}
+
 // TestExitCode_DoesNotAgreeWithStatusForTheGoalLoop is the assertion ADR 0023
 // §2.6 adds BECAUSE the broad claim was the trap: an earlier draft claimed the
 // exit code and the status agree unconditionally, and §9 turns that paragraph

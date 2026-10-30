@@ -682,11 +682,11 @@ has no open issue behind it.
   each of those points, and `gh pr list` has its own 30 s timeout (recorded
   `unavailable`, `timeout`), so an unreachable GitHub adds up to 30 s more at
   each. Ctrl-C during either snapshot, start or end, ends
-  the leg as interrupted (exit 1, never paused); during the start snapshot
-  it ends the leg before any node starts, a resumed run keeping its
-  `state.json` for the same `resume` (still paused at its gate after
-  `--approve <gate>`, its failed records and costs intact after
-  `--retry-failed`), and an interrupted leg records
+  the leg as interrupted (exit 1); during the start snapshot it ends the leg
+  before any node starts, a resumed run keeping its `state.json` for the
+  same `resume` (its failed records and costs intact after
+  `--retry-failed`), and a resumed run still paused at its gate ends as that
+  pause instead (exit 2, `still paused at gate`), and an interrupted leg records
   its end snapshot as `unavailable` ("interrupted") instead of waiting for
   it. During the end snapshot a pause the nodes reached is withdrawn, so
   the leg resumes with `--retry-failed` and its gate pauses again. A leg
@@ -694,7 +694,10 @@ has no open issue behind it.
   dashboard, matching the invocation's exit 1, guarded or not, as a guarded
   run failed with exit 6 with every node `PASS` does. On an unguarded run
   `resume --retry-failed` then runs a leg that launches no node, and the run
-  reads `PASS`. ssh
+  reads `PASS`. A guarded run (`--forbid-remote-changes`) that reads `FAIL`
+  this way is not turned into `PASS`: `resume --retry-failed` prints
+  `has no failed nodes to retry` and exits 0, since its failed close may be a
+  forbidden remote change (exit 6). ssh
   remotes run in BatchMode unless you chose an ssh command
   (`GIT_SSH_COMMAND`, `GIT_SSH` or `core.sshCommand`): an unknown host key or
   an encrypted key without an agent makes that part `unavailable` instead of

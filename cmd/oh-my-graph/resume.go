@@ -200,6 +200,9 @@ func resumeGateLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner
 		if snap.LimitPause != nil {
 			return fmt.Errorf("run %q is paused on a %s, not at a gate (resume it with --retry-failed)", flags.runID, limitPauseSummary(snap.LimitPause))
 		}
+		if snap.Gate.Decisions[flags.approveGate] == runstate.GateApprove {
+			return alreadyApprovedRefusal(flags.runID, flags.approveGate, snap)
+		}
 		return fmt.Errorf("run %q is not paused (nothing to resume; a failed run is retried with --retry-failed)", flags.runID)
 	}
 	// Read once — the copy the pause stored, which the web live view also
@@ -298,6 +301,76 @@ func interruptedAfterEveryNodePassed(runID string, g *graph.Graph, snap runstate
 		return false, fmt.Errorf("resume run %q: cannot read the run's status: %w", runID, err)
 	}
 	return status == runstatus.Fail, nil
+}
+
+// alreadyApprovedRefusal is the refusal of a `resume --approve` naming a gate
+// whose approval is already saved while the run is not paused: a leg that saved
+// it and was then interrupted, or failed, past the gate (#433). Approving again
+// cannot continue the run, so it names the command that does when a
+// --retry-failed would, and says only that there is nothing to resume when not.
+// A status that cannot be read is said as such, not as nothing to resume: the
+// refusal cannot know whether the run reads FAIL, so it must not claim there is
+// nothing a --retry-failed would continue.
+func alreadyApprovedRefusal(runID, gateID string, snap runstate.Snapshot) error {
+	g, err := graph.Parse(snap.Graph)
+	if err != nil {
+		return reconstructGraphError(runID, err)
+	}
+	status, err := runstatus.Of(runDirFor(runID))
+	if err != nil {
+		return fmt.Errorf("run %q is not paused: gate %q was already approved, but the run's status could not be read: %w", runID, gateID, err)
+	}
+	if retryContinues(g, snap, status == runstatus.Fail) {
+		return fmt.Errorf("run %q is not paused: gate %q was already approved, so continue it with `oh-my-graph resume %s --retry-failed`", runID, gateID, runID)
+	}
+	return fmt.Errorf("run %q is not paused: gate %q was already approved (nothing to resume)", runID, gateID)
+}
+
+// approvedGatesToRetry names, sorted, the gates whose approval a run that reads
+// FAIL has saved, when a --retry-failed would continue it — nil otherwise. It
+// is what `runs list` and `show` point at --retry-failed with, so a run that
+// failed or was interrupted past an approved gate is never sent back to an
+// --approve the gate no longer needs (#433). Display only: it decides no
+// status.
+func approvedGatesToRetry(g *graph.Graph, snap runstate.Snapshot) []string {
+	if snap.Gate.PausedAt != "" || !retryContinues(g, snap, true) {
+		return nil
+	}
+	var gates []string
+	for id, d := range snap.Gate.Decisions {
+		if d == runstate.GateApprove {
+			gates = append(gates, id)
+		}
+	}
+	sort.Strings(gates)
+	return gates
+}
+
+// approvedRetryHint is the sentence `runs list` and `show` print beside a FAIL
+// run with approvedGatesToRetry's gates.
+func approvedRetryHint(runID string, gates []string) string {
+	quoted := make([]string, len(gates))
+	for i, id := range gates {
+		quoted[i] = fmt.Sprintf("%q", id)
+	}
+	named := "gate " + quoted[0] + " was"
+	if len(gates) > 1 {
+		named = "gates " + strings.Join(quoted, ", ") + " were"
+	}
+	return fmt.Sprintf("run %s is FAIL and not paused: %s already approved, so continue it with `oh-my-graph resume %s --retry-failed` (not --approve).",
+		runID, named, runID)
+}
+
+// retryContinues reports whether a --retry-failed of this run would open a leg
+// rather than answer that there is nothing to retry: it clears a failed node,
+// has an unfinished one to launch, or — readsFail, unguarded, every node passed
+// — closes the leg an interrupt ended failed (interruptedAfterEveryNodePassed).
+func retryContinues(g *graph.Graph, snap runstate.Snapshot, readsFail bool) bool {
+	retained, cleared := partitionForRetry(g, snap)
+	if len(cleared) > 0 || hasUnfinishedWork(g, retained) {
+		return true
+	}
+	return readsFail && !snap.ForbidRemoteChanges && len(snap.CompletedNodes()) == len(g.Nodes)
 }
 
 // hasUnfinishedWork reports whether a retry leg carrying exactly the retained
@@ -869,11 +942,16 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// An interrupt during the before snapshot ends the leg before any node
 	// starts, its record printed, as in executeGraph, and before this leg's
 	// gate decisions and carried records are written, so the run is still
-	// paused, or still holds its failed records, as it was.
+	// paused, or still holds its failed records, as it was. A run still
+	// paused at a gate ends as that pause (exit 2, #433), so the exit agrees
+	// with the PAUSED the run reads; any other run ends interrupted (exit 1).
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		remote.end(ctx)
-		remote.print(os.Stdout)
-		return ctxErr
+		if snap.Gate.PausedAt == "" {
+			remote.print(os.Stdout)
+			return ctxErr
+		}
+		return stillPausedAfterInterrupt(flags, snap, decided, remote, ctxErr)
 	}
 	// A guarded leg names the parts it starts without (ADR 0046 §5.2).
 	remote.printLaunchNotice(os.Stdout)
@@ -912,6 +990,37 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	printDescribedPauseHint(os.Stdout, runID, runErr, verifyCmd, description, recordedLimitPause(runID, runErr))
 
 	return runErr
+}
+
+// stillPausedAfterInterrupt ends a resumed leg interrupted during its before
+// remote snapshot while the run is still paused at a gate: nothing this leg
+// decided was saved, so it says so first, prints its remote record, and then
+// the hint a gate pause prints. The error carries a *schedule.PausedError, so
+// exitCodeForError maps it to 2 as it does a gate pause, and wraps ctxErr so
+// the interrupt is still the cause. decided is the gate a gate resume decided
+// (its description already read); a retry leg reads the stored one.
+func stillPausedAfterInterrupt(flags *resumeFlags, snap runstate.Snapshot, decided decidedGate, remote *remoteLeg, ctxErr error) error {
+	gateID := snap.Gate.PausedAt
+	description := decided.description
+	if decided.id != gateID {
+		var err error
+		if description, err = decidedGateDescription(flags.runID, snap); err != nil {
+			remote.print(os.Stdout)
+			return fmt.Errorf("resume run %q: %w", flags.runID, err)
+		}
+	}
+	unsaved := "retry"
+	switch {
+	case flags.approveGate != "":
+		unsaved = "approval"
+	case flags.rejectGate != "":
+		unsaved = "rejection"
+	}
+	fmt.Fprintf(os.Stdout, "interrupted before the %s was saved; still paused at gate %s\n", unsaved, describedGate(gateID, description))
+	remote.print(os.Stdout)
+	paused := &schedule.PausedError{GateID: gateID}
+	printDescribedPauseHint(os.Stdout, flags.runID, paused, flags.verifyCommand(), description, nil)
+	return fmt.Errorf("%w: %w", paused, ctxErr)
 }
 
 // legGateWriteError is the error a resumed leg ends with when its gate

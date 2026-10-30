@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jitokim/oh-my-graph/internal/graph"
 	"github.com/jitokim/oh-my-graph/internal/ledger"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runstate"
@@ -137,6 +138,16 @@ func showRun(w io.Writer, runDir, runID string) error {
 			InputTokens: snap.PlanningUsage.InputTokens, CachedInputTokens: snap.PlanningUsage.CachedInputTokens,
 			OutputTokens: snap.PlanningUsage.OutputTokens, ReasoningOutputTokens: snap.PlanningUsage.ReasoningOutputTokens,
 		})
+	// The hint `runs list` prints under a FAIL row past an approved gate, here
+	// for the same run (#433). A graph that does not parse gets no hint: the
+	// table above does not need the graph, and `resume` reports the parse.
+	if word == runstatus.Fail.String() {
+		if g, err := graph.Parse(snap.Graph); err == nil {
+			if gates := approvedGatesToRetry(g, snap); len(gates) > 0 {
+				fmt.Fprintf(w, "\n%s\n", approvedRetryHint(runID, gates))
+			}
+		}
+	}
 	return nil
 }
 
