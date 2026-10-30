@@ -110,20 +110,14 @@ func TestDerive_IsTotalOverTheSixValues(t *testing.T) {
 			want:  Fail,
 		},
 		{
-			// On a guarded run "failed" answers before the completed-count: a
-			// leg that observed a forbidden remote change exits 6 with every
-			// node PASS (ADR 0046 §5.1) and reads FAIL, as the exit says.
-			name:  "a guarded run's failed outcome beats the completed count",
-			facts: Facts{LastOutcome: runfeed.OutcomeFailed, HasSnapshot: true, CompletedNodes: 3, TotalNodes: 3, Guarded: true},
-			want:  Fail,
-		},
-		{
-			// An unguarded run reads what it read before the guard existed
-			// (ADR 0046 §8.4): an interrupt on a passed leg's after snapshot
-			// exits 1 with every node PASS, and the run still reads PASS.
-			name:  "an unguarded run's failed outcome does not beat the completed count",
+			// "failed" answers before the completed-count: a guarded leg that
+			// observed a forbidden remote change exits 6 with every node PASS
+			// (ADR 0046 §5.1), and an interrupt on a passed leg's after remote
+			// snapshot exits 1 with every node PASS, guarded or not. Both read
+			// FAIL, as their exits say (#434).
+			name:  "a failed outcome beats the completed count",
 			facts: Facts{LastOutcome: runfeed.OutcomeFailed, HasSnapshot: true, CompletedNodes: 3, TotalNodes: 3},
-			want:  Pass,
+			want:  Fail,
 		},
 		{
 			// §2.1.1's newest cell, and the one §3 makes the shape of every
@@ -316,8 +310,9 @@ func TestOf_ComposesTheStreamWithTheLock(t *testing.T) {
 		{name: "a refused plan: two events, no graph.json, no state.json", events: refusedPlan, lock: "free", want: Fail},
 		{name: "a paused leg, snapshot present but incomplete", events: pausedLeg, lock: "free", snap: "a", want: Paused},
 		{name: "a paused leg with no snapshot at all", events: pausedLeg, lock: "free", want: Paused},
-		// ADR 0046: the snapshot's guard is the one fact that moves this cell.
-		{name: "an unguarded leg closed failed with every node passed", events: failedPassedLeg, lock: "free", snap: "a", want: Pass},
+		// The snapshot's guard does not move this cell (#434): either leg's
+		// exit is not 0, so either reads FAIL.
+		{name: "an unguarded leg closed failed with every node passed", events: failedPassedLeg, lock: "free", snap: "a", want: Fail},
 		{name: "a guarded leg closed failed with every node passed", events: failedPassedLeg, lock: "free", snap: "a", guarded: true, want: Fail},
 	}
 	for _, tc := range cases {
@@ -540,7 +535,6 @@ func factsOf(t *testing.T, runDir string) Facts {
 	facts.HasSnapshot = true
 	facts.CompletedNodes = len(snap.CompletedNodes())
 	facts.TotalNodes = len(g.Nodes)
-	facts.Guarded = snap.ForbidRemoteChanges
 	return facts
 }
 

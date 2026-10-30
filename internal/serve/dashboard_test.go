@@ -296,16 +296,16 @@ func TestDashboard_ARunDirectoryThatHasSaidNothingIsPendingNotFailed(t *testing.
 }
 
 func TestDashboard_AFailedLegWithEveryNodePassedReadsAsTheSharedRuleSays(t *testing.T) {
-	// A leg that closed failed with every node PASS (ADR 0046): unguarded it
-	// is an interrupt on the after remote snapshot and still reads PASS, as
-	// before the guard existed; guarded it is exit 6 and reads FAIL. The card
-	// reads the snapshot's guard itself, so it must land where runstatus.Of
-	// does, or the dashboard and `runs list` disagree about the same bytes.
+	// A leg that closed failed with every node PASS: an interrupt on the after
+	// remote snapshot (exit 1, guarded or not), or a guarded leg's forbidden
+	// remote change (exit 6, ADR 0046). Either reads FAIL (#434), and the card
+	// must land where runstatus.Of does whatever the snapshot's guard says, or
+	// the dashboard and `runs list` disagree about the same bytes.
 	for _, tc := range []struct {
 		guarded bool
 		want    string
 	}{
-		{guarded: false, want: statePassed},
+		{guarded: false, want: stateFailed},
 		{guarded: true, want: stateFailed},
 	} {
 		root := runsRootWith(t, "run-x")
@@ -334,8 +334,8 @@ func TestDashboard_AFailedLegWithEveryNodePassedReadsAsTheSharedRuleSays(t *test
 		if err != nil {
 			t.Fatalf("runstatus.Of: %v", err)
 		}
-		if wantStatus := map[bool]runstatus.Status{false: runstatus.Pass, true: runstatus.Fail}[tc.guarded]; status != wantStatus {
-			t.Errorf("guarded=%v: runstatus.Of = %v, want %v", tc.guarded, status, wantStatus)
+		if status != runstatus.Fail {
+			t.Errorf("guarded=%v: runstatus.Of = %v, want %v", tc.guarded, status, runstatus.Fail)
 		}
 	}
 }

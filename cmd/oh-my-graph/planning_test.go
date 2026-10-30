@@ -12,6 +12,7 @@ import (
 	"github.com/jitokim/oh-my-graph/internal/coordinator"
 	"github.com/jitokim/oh-my-graph/internal/runfeed"
 	"github.com/jitokim/oh-my-graph/internal/runner"
+	"github.com/jitokim/oh-my-graph/internal/runstate"
 	"github.com/jitokim/oh-my-graph/internal/runstatus"
 	"github.com/jitokim/oh-my-graph/internal/serve"
 )
@@ -788,11 +789,11 @@ func TestPlanAndExecuteCycles_EveryCyclesPlanningPhaseIsVisible(t *testing.T) {
 // invariant, and the NARROW version is the whole invariant. An exit code is the
 // writer's answer about the process it just ran; a status is a reader's answer
 // about a directory on disk. Where they can be made to agree, the agreement is
-// asserted rather than assumed — and where they cannot, the next two tests say
-// so: the goal loop, and the one single-run exception, an interrupt during the
-// after remote snapshot of a leg whose every node had already passed (#410).
-// That exception is an unguarded run's only: a guarded leg that closes failed
-// reads FAIL whatever its node count (ADR 0046 §5.1), and the table pins it.
+// asserted rather than assumed — and where they cannot, the goal-loop test
+// below says so. A leg that closes failed reads FAIL whatever its node count,
+// guarded or not (ADR 0046 §5.1, #434), and the table pins both: an interrupt
+// during the after remote snapshot of a leg whose every node had already passed
+// exits 1 and reads FAIL, as does the same interrupt on a guarded leg.
 func TestExitCode_AgreesWithTheStatusForASingleRunInvocation(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -831,9 +832,19 @@ func TestExitCode_AgreesWithTheStatusForASingleRunInvocation(t *testing.T) {
 			wantStatus: runstatus.Paused,
 		},
 		{
-			// The unguarded run's exception (the next test but one) does not
-			// carry over: a guarded leg that closes failed reads FAIL whatever
-			// the node count (ADR 0046 §5.1).
+			// A leg that closes failed reads FAIL whatever the node count, so
+			// an interrupt that turned a passed leg into an exit 1 reads FAIL
+			// too (#434).
+			name:           "every node passed and an interrupt landed on an unguarded leg's after snapshot",
+			graph:          `{"name":"g","nodes":[{"id":"a","prompt":"a"}]}`,
+			outcomes:       map[string]runner.NodeOutcome{"a": {SessionID: "s", Result: "PASS", ExitCode: 0}},
+			interruptAfter: true,
+			wantExit:       1,
+			wantStatus:     runstatus.Fail,
+		},
+		{
+			// ...and so does the same interrupt on a guarded leg (ADR 0046
+			// §5.1): the guard is not a fact the status reads.
 			name:           "every node passed and an interrupt landed on a guarded leg's after snapshot",
 			graph:          `{"name":"g","nodes":[{"id":"a","prompt":"a"}]}`,
 			outcomes:       map[string]runner.NodeOutcome{"a": {SessionID: "s", Result: "PASS", ExitCode: 0}},
@@ -942,16 +953,15 @@ func TestExitCode_DoesNotAgreeWithStatusForTheGoalLoop(t *testing.T) {
 	}
 }
 
-// TestExitCode_DoesNotAgreeWithStatusWhenAnInterruptLandsOnAPassedLegsAfterSnapshot
-// is the one single-run case where the exit code and the status disagree: an
-// exception to ADR 0023 §2.6 (#410). A Ctrl-C during the after remote snapshot
-// ends the leg interrupted — exit 1, run_finished "failed" — but when every
-// node had already passed, state.json holds every node PASS, and the status
-// counts settled nodes, so the run reads PASS. A leg that paused does not
-// disagree: its pause is withdrawn and it reads FAIL (the agreement test
-// above). Pinned here, next to that test, so the invariant and the exception
-// cannot silently contradict each other.
-func TestExitCode_DoesNotAgreeWithStatusWhenAnInterruptLandsOnAPassedLegsAfterSnapshot(t *testing.T) {
+// TestExitCode_AgreesWithTheStatusWhenAnInterruptLandsOnAPassedLegsAfterSnapshot
+// is the case that used to be the one single-run exception to ADR 0023 §2.6
+// (#410, #434). A Ctrl-C during the after remote snapshot of an unguarded leg
+// ends it interrupted — exit 1, run_finished "failed" — while state.json holds
+// every node PASS. The closed leg's failed outcome answers before the node
+// count, so the run reads FAIL, as its exit says. It pins the stream and the
+// snapshot as well as the status, so the agreement is the rule's and not an
+// accident of a missing record.
+func TestExitCode_AgreesWithTheStatusWhenAnInterruptLandsOnAPassedLegsAfterSnapshot(t *testing.T) {
 	isolateRunHome(t)
 	runID := "run-exit"
 	graphJSON := `{"name":"g","nodes":[{"id":"a","prompt":"a"}]}`
@@ -979,12 +989,19 @@ func TestExitCode_DoesNotAgreeWithStatusWhenAnInterruptLandsOnAPassedLegsAfterSn
 	if leg.LastOutcome != runfeed.OutcomeFailed {
 		t.Errorf("run_finished outcome = %q, want %q: the leg ended interrupted", leg.LastOutcome, runfeed.OutcomeFailed)
 	}
+	snap, err := runstate.Load(filepath.Join(runDirFor(runID), runstate.SnapshotFileName))
+	if err != nil {
+		t.Fatalf("runstate.Load: %v", err)
+	}
+	if rec := snap.Nodes["a"]; rec.Verdict != runstate.VerdictPass {
+		t.Errorf("node a's verdict = %q, want %q: every node passed before the interrupt", rec.Verdict, runstate.VerdictPass)
+	}
 	status, err := runstatus.Of(runDirFor(runID))
 	if err != nil {
 		t.Fatalf("runstatus.Of: %v", err)
 	}
-	if status != runstatus.Pass {
-		t.Errorf("status = %v, want %v: every node passed before the interrupt", status, runstatus.Pass)
+	if status != runstatus.Fail {
+		t.Errorf("status = %v, want %v, as the exit 1 says", status, runstatus.Fail)
 	}
 }
 
