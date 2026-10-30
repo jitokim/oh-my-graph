@@ -2776,8 +2776,13 @@ continues a run whose snapshot actually recorded a gate pause
 (`Gate.PausedAt != ""`) and refuses anything else with "run is not paused"
 — or, when the snapshot holds a `limit_pause` record, names that limit and
 points to `--retry-failed`, or, when the named gate's approval is already
-saved (a leg interrupted or failed past it), says so and names
-`resume <run> --retry-failed` (#433; see `resumeGateLeg`'s guard) — while `--retry-failed` continues a run whose
+saved (a leg interrupted or failed past it), says the gate "was already
+approved" and then, by the run's status: names
+`oh-my-graph resume <run> --retry-failed` when a retry would continue the
+run, adds "(nothing to resume)" when it would not, or says "the run's status
+could not be read" with the cause when it cannot be read; every case exits
+non-zero and starts no node (#433; see `alreadyApprovedRefusal`) — while
+`--retry-failed` continues a run whose
 snapshot recorded failures (see the CLI contract below). A Ctrl-C'd or
 crashed run that recorded neither a pause nor a failure is still neither
 mode's business — resuming that is future work. A snapshot
