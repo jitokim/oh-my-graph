@@ -1126,7 +1126,9 @@ leaves the run paused as it was, resumable by the same `resume --approve
 reads, its first line `interrupted before the approval was saved; still
 paused at gate <id> (<description>)` (`the rejection`, `the retry`), then
 its record, then the gate pause's `Paused at gate … Resume with:` hint. A
-leg whose run is paused at no gate still exits 1; once a leg is
+leg whose run is paused at no gate still exits 1 — one interrupted after
+its approval was saved included, which reads `FAIL`, and `runs list` and
+`show` point it at `resume <run> --retry-failed`, never `--approve`; once a leg is
 interrupted its *after* snapshot is not taken, or is cut short, and is
 recorded with all three parts unavailable, reason `interrupted`, the record
 printed either way. A leg's `run_finished` is therefore written after its
@@ -2773,7 +2775,9 @@ crashed run's progress. Two resume modes read that file: the gate mode only
 continues a run whose snapshot actually recorded a gate pause
 (`Gate.PausedAt != ""`) and refuses anything else with "run is not paused"
 — or, when the snapshot holds a `limit_pause` record, names that limit and
-points to `--retry-failed` (see `resumeGateLeg`'s guard) — while `--retry-failed` continues a run whose
+points to `--retry-failed`, or, when the named gate's approval is already
+saved (a leg interrupted or failed past it), says so and names
+`resume <run> --retry-failed` (#433; see `resumeGateLeg`'s guard) — while `--retry-failed` continues a run whose
 snapshot recorded failures (see the CLI contract below). A Ctrl-C'd or
 crashed run that recorded neither a pause nor a failure is still neither
 mode's business — resuming that is future work. A snapshot

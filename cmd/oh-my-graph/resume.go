@@ -200,6 +200,9 @@ func resumeGateLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner
 		if snap.LimitPause != nil {
 			return fmt.Errorf("run %q is paused on a %s, not at a gate (resume it with --retry-failed)", flags.runID, limitPauseSummary(snap.LimitPause))
 		}
+		if snap.Gate.Decisions[flags.approveGate] == runstate.GateApprove {
+			return alreadyApprovedRefusal(flags.runID, flags.approveGate, snap)
+		}
 		return fmt.Errorf("run %q is not paused (nothing to resume; a failed run is retried with --retry-failed)", flags.runID)
 	}
 	// Read once — the copy the pause stored, which the web live view also
@@ -298,6 +301,70 @@ func interruptedAfterEveryNodePassed(runID string, g *graph.Graph, snap runstate
 		return false, fmt.Errorf("resume run %q: cannot read the run's status: %w", runID, err)
 	}
 	return status == runstatus.Fail, nil
+}
+
+// alreadyApprovedRefusal is the refusal of a `resume --approve` naming a gate
+// whose approval is already saved while the run is not paused: a leg that saved
+// it and was then interrupted, or failed, past the gate (#433). Approving again
+// cannot continue the run, so it names the command that does when a
+// --retry-failed would, and says only that there is nothing to resume when not.
+func alreadyApprovedRefusal(runID, gateID string, snap runstate.Snapshot) error {
+	g, err := graph.Parse(snap.Graph)
+	if err != nil {
+		return reconstructGraphError(runID, err)
+	}
+	status, statusErr := runstatus.Of(runDirFor(runID))
+	if retryContinues(g, snap, statusErr == nil && status == runstatus.Fail) {
+		return fmt.Errorf("run %q is not paused: gate %q was already approved, so continue it with `oh-my-graph resume %s --retry-failed`", runID, gateID, runID)
+	}
+	return fmt.Errorf("run %q is not paused: gate %q was already approved (nothing to resume)", runID, gateID)
+}
+
+// approvedGatesToRetry names, sorted, the gates whose approval a run that reads
+// FAIL has saved, when a --retry-failed would continue it — nil otherwise. It
+// is what `runs list` and `show` point at --retry-failed with, so a run that
+// failed or was interrupted past an approved gate is never sent back to an
+// --approve the gate no longer needs (#433). Display only: it decides no
+// status.
+func approvedGatesToRetry(g *graph.Graph, snap runstate.Snapshot) []string {
+	if snap.Gate.PausedAt != "" || !retryContinues(g, snap, true) {
+		return nil
+	}
+	var gates []string
+	for id, d := range snap.Gate.Decisions {
+		if d == runstate.GateApprove {
+			gates = append(gates, id)
+		}
+	}
+	sort.Strings(gates)
+	return gates
+}
+
+// approvedRetryHint is the sentence `runs list` and `show` print beside a FAIL
+// run with approvedGatesToRetry's gates.
+func approvedRetryHint(runID string, gates []string) string {
+	quoted := make([]string, len(gates))
+	for i, id := range gates {
+		quoted[i] = fmt.Sprintf("%q", id)
+	}
+	named := "gate " + quoted[0] + " was"
+	if len(gates) > 1 {
+		named = "gates " + strings.Join(quoted, ", ") + " were"
+	}
+	return fmt.Sprintf("run %s is FAIL and not paused: %s already approved, so continue it with `oh-my-graph resume %s --retry-failed` (not --approve).",
+		runID, named, runID)
+}
+
+// retryContinues reports whether a --retry-failed of this run would open a leg
+// rather than answer that there is nothing to retry: it clears a failed node,
+// has an unfinished one to launch, or — readsFail, unguarded, every node passed
+// — closes the leg an interrupt ended failed (interruptedAfterEveryNodePassed).
+func retryContinues(g *graph.Graph, snap runstate.Snapshot, readsFail bool) bool {
+	retained, cleared := partitionForRetry(g, snap)
+	if len(cleared) > 0 || hasUnfinishedWork(g, retained) {
+		return true
+	}
+	return readsFail && !snap.ForbidRemoteChanges && len(snap.CompletedNodes()) == len(g.Nodes)
 }
 
 // hasUnfinishedWork reports whether a retry leg carrying exactly the retained

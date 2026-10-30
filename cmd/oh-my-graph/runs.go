@@ -130,6 +130,10 @@ type runSummary struct {
 	// stopped, under the table, and never feeds the status or the in-flight
 	// count.
 	limitPause *runstate.LimitPause
+	// approvedGates is approvedGatesToRetry for a FAIL row: display only, it
+	// points the row at --retry-failed rather than an --approve its saved
+	// approval no longer needs (#433).
+	approvedGates []string
 }
 
 // runsInFlightError is the answer `runs list --exit-in-flight` gives on the
@@ -399,6 +403,10 @@ func summarizeRun(root, runID string) (runSummary, error) {
 		usage.OutputTokens += rec.Usage.OutputTokens
 		usage.ReasoningOutputTokens += rec.Usage.ReasoningOutputTokens
 	}
+	var approvedGates []string
+	if status == runstatus.Fail {
+		approvedGates = approvedGatesToRetry(g, snap)
+	}
 	return runSummary{
 		// The directory name, not snap.RunID: the directory name is the handle
 		// `resume <run-id>` actually takes, so it is the one worth printing
@@ -414,6 +422,7 @@ func summarizeRun(root, runID string) (runSummary, error) {
 		hasSnapshot:   true,
 		hasAccounting: cost != 0 || costUnknown || usage != (runner.TokenUsage{}),
 		limitPause:    snap.LimitPause,
+		approvedGates: approvedGates,
 	}, nil
 }
 
@@ -436,7 +445,8 @@ func statusCell(row runSummary) string {
 // one line saying how much of the run home this table actually covers and how
 // many of the runs in it are in flight, from the shared accumulator
 // (runstatus.Skipped.Line) — and then one recovery hint per
-// abandoned run and one resume hint per paused run. Coverage sits directly under
+// abandoned run, one resume hint per paused run, and one --retry-failed hint
+// per failed run past an approved gate (approvedGatesToRetry). Coverage sits directly under
 // the footer and above the hints because it is about the table, and because the
 // hints are unbounded: a reader with forty abandoned runs would otherwise scroll
 // past forty sentences to learn how many rows they were owed. The
@@ -501,7 +511,9 @@ func printRuns(w io.Writer, rows []runSummary, coverage string) {
 
 	// The per-row hints, under the table rather than interleaved between rows:
 	// ABANDONED and PAUSED are the two rows a reader cannot act on without
-	// being told how, and each hint is a sentence, not a column. Keeping the
+	// being told how — and a FAIL past an approved gate, whose reader would
+	// otherwise reach for the --approve that gate no longer takes — and each
+	// hint is a sentence, not a column. Keeping the
 	// table itself uniform is also what lets a human — or the `awk`-shaped
 	// script ADR 0015 declines to promise anything to — keep reading it as a
 	// table.
@@ -526,6 +538,10 @@ func printRuns(w io.Writer, rows []runSummary, coverage string) {
 			// tell them apart; the record can, so a limit pause says why.
 			if row.limitPause != nil {
 				fmt.Fprintf(w, "  paused on a %s\n", limitPauseSummary(row.limitPause))
+			}
+		case runstatus.Fail:
+			if len(row.approvedGates) > 0 {
+				fmt.Fprintf(w, "\n%s\n", approvedRetryHint(row.runID, row.approvedGates))
 			}
 		}
 	}
