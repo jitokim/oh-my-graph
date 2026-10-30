@@ -169,7 +169,6 @@ func buildCard(runsRoot, runID string) runCard {
 		facts.HasSnapshot = true
 		facts.CompletedNodes = len(snap.CompletedNodes())
 		facts.TotalNodes = len(g.Nodes)
-		facts.Guarded = snap.ForbidRemoteChanges
 	case errors.Is(err, fs.ErrNotExist):
 		// The legitimate snapshot-less run, and there are now several: state.json
 		// is written only after a node's terminal verdict, so a fresh run has no

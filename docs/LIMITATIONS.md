@@ -690,11 +690,11 @@ has no open issue behind it.
   its end snapshot as `unavailable` ("interrupted") instead of waiting for
   it. During the end snapshot a pause the nodes reached is withdrawn, so
   the leg resumes with `--retry-failed` and its gate pauses again. A leg
-  whose every node had already passed still reads `PASS` in `runs` while
-  the invocation exits 1: the one single-run exception to ADR 0023 §2.6
-  (exit 2 ↔ `PAUSED`, exit 1 ↔ `FAIL`, exit 0 ↔ `PASS`). Only a
-  `--forbid-remote-changes` run reads `FAIL` there, as it does when it fails
-  with exit 6 with every node `PASS`; unguarded statuses are unchanged. ssh
+  whose every node had already passed reads `FAIL` in `runs`, `show` and the
+  dashboard, matching the invocation's exit 1, guarded or not, as a guarded
+  run failed with exit 6 with every node `PASS` does. On an unguarded run
+  `resume --retry-failed` then runs a leg that launches no node, and the run
+  reads `PASS`. ssh
   remotes run in BatchMode unless you chose an ssh command
   (`GIT_SSH_COMMAND`, `GIT_SSH` or `core.sshCommand`): an unknown host key or
   an encrypted key without an agent makes that part `unavailable` instead of

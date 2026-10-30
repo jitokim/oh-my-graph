@@ -451,10 +451,10 @@ file in the common git dir changed during the leg, the reason is
 `attribution unavailable: shallow boundary changed`. The entries keep the
 attribution the check answered, nothing more is forbidden, and the run's end
 line names those parts not guarded with the reason; no field is added. A run a forbidden
-entry failed derives `FAIL` even with every node `PASS`: on a guarded run a
-closed leg whose outcome is `"failed"` reads `FAIL` before the node count is
-looked at. An unguarded run derives exactly
-what it did before the flag existed. **A snapshot carrying the flag is stamped `schema:
+entry failed derives `FAIL` even with every node `PASS`: a closed leg whose
+outcome is `"failed"` reads `FAIL` before the node count is looked at, guarded
+or not, so an unguarded leg an interrupt closed `"failed"` during its after
+remote snapshot derives `FAIL` too (#434). **A snapshot carrying the flag is stamped `schema:
 5`**, the second conditional stamp, conventions or not: the flag alone would be
 additive, and an older binary would drop it and finish the run unguarded, so
 the bump makes that binary refuse it by name. An unguarded snapshot keeps 3
