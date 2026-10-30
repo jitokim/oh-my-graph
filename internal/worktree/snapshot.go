@@ -66,25 +66,17 @@ type GuardedBefore struct {
 	configUnreadable bool
 }
 
-// The reasons a guarded leg's branches and pull-request parts are not
-// guarded when its §5.1 check could not run (AttributionUnavailable).
-const (
-	AttributionConfigUnreadable = "attribution unavailable: repository config unreadable"
-	AttributionCheckReadFailed  = "attribution unavailable: attribution check read failed"
-	AttributionShallowChanged   = "attribution unavailable: shallow boundary changed"
-)
-
 // AttributionUnavailable is why the leg's §5.1 check, run after the after
 // taken against b, could not attribute a commit, or "" when it could. The
 // check reads the repository and its config: when that config could not be
 // read at the after — its RepoConfigFingerprint failed — it is
-// AttributionConfigUnreadable; when it could, but checkFailed — a check's own
-// git read failed, such as a timeout, not a proven false — it is
-// AttributionCheckReadFailed. When the repository's
-// shallow file is not what it was at the before — its digest differs, a
-// file absent then exists now, or either read failed — it is
-// AttributionShallowChanged: a shallow boundary a node wrote hides its
-// commit's parents from the check. A repository shallow at the before, and
+// runstate.AttributionConfigUnreadable; when it could, but checkFailed — a
+// check's own git read failed, such as a timeout, not a proven false — it is
+// runstate.AttributionCheckReadFailed. When the repository's shallow file is
+// not what it was at the before — its digest differs, a file absent then
+// exists now, or either read failed — it is
+// runstate.AttributionShallowChanged: a shallow boundary a node wrote hides
+// its commit's parents from the check. A repository shallow at the before, and
 // unchanged, is attributed as any other.
 //
 // It changes no attribution and fails nothing: a guarded leg reports its
@@ -96,16 +88,16 @@ func (b *GuardedBefore) AttributionUnavailable(obs RemoteObserver, checkFailed b
 		return ""
 	}
 	if b.configUnreadable {
-		return AttributionConfigUnreadable
+		return runstate.AttributionConfigUnreadable
 	}
 	if checkFailed {
-		return AttributionCheckReadFailed
+		return runstate.AttributionCheckReadFailed
 	}
 	if !b.shallowRead {
-		return AttributionShallowChanged
+		return runstate.AttributionShallowChanged
 	}
 	if shallow, err := obs.ShallowFingerprint(b.shallowPath); err != nil || shallow != b.shallow {
-		return AttributionShallowChanged
+		return runstate.AttributionShallowChanged
 	}
 	return ""
 }

@@ -81,9 +81,9 @@ func beginRemoteLeg(ctx context.Context, runID string, recorder *runstate.Snapsh
 }
 
 // autoNoRunBranches is the reason a guarded auto leg names its branches and
-// pull requests not guarded (worktree.AutoNoRunBranches): its planned nodes
+// pull requests not guarded (runstate.AutoNoRunBranches): its planned nodes
 // run without engine worktrees (validatePlannedNodeWorktree).
-const autoNoRunBranches = worktree.AutoNoRunBranches
+const autoNoRunBranches = runstate.AutoNoRunBranches
 
 // withoutRunBranches marks the leg as an auto run's, whose planned nodes
 // create no run branch: its guard notices then never claim the branches or
@@ -94,9 +94,9 @@ func (l *remoteLeg) withoutRunBranches(auto bool) *remoteLeg {
 }
 
 // runBranchPart reports whether part's guard rests on the run's own branches
-// (worktree.RunBranchPart).
+// (runstate.RunBranchPart).
 func runBranchPart(part runstate.RemotePart) bool {
-	return worktree.RunBranchPart(part)
+	return runstate.RunBranchPart(part)
 }
 
 // snapshot reads the remote state: by remote name on an unguarded leg, as
@@ -392,14 +392,14 @@ func (l *remoteLeg) printLaunchNotice(w io.Writer) {
 // with autoNoRunBranches, and what was not compared says so in its reason.
 // A part whose attribution was unavailable (worktree.NoteAttributionUnavailable)
 // is named with that reason the same way: it was compared, but not guarded.
-// The rule is worktree.GuardOfLeg's, which the goal assessor's block renders
+// The rule is runstate.GuardOfLeg's, which the goal assessor's block renders
 // too, so the operator and the assessor are told the same thing.
 func printGuardSummary(w io.Writer, c *runstate.RemoteChanges, noRunBranches bool) {
 	n := len(c.Legs)
 	if n == 0 {
 		return
 	}
-	g, ok := worktree.GuardOfLeg(c.Legs[n-1], noRunBranches)
+	g, ok := runstate.GuardOfLeg(c.Legs[n-1], noRunBranches)
 	if !ok || len(g.NotGuarded) == 0 {
 		return
 	}
@@ -407,7 +407,7 @@ func printGuardSummary(w io.Writer, c *runstate.RemoteChanges, noRunBranches boo
 	prReason := ""
 	for i, ng := range g.NotGuarded {
 		unguarded[i] = ng.Describe(g.Plain)
-		if ng.Part == runstate.RemotePartPullRequests && ng.Remote == "" && ng.Cause != worktree.NotGuardedNoRunBranches {
+		if ng.Part == runstate.RemotePartPullRequests && ng.Remote == "" && ng.Cause != runstate.NotGuardedNoRunBranches {
 			prReason = ng.Reason
 		}
 	}
@@ -423,7 +423,7 @@ func printGuardSummary(w io.Writer, c *runstate.RemoteChanges, noRunBranches boo
 
 // remotePartReason is part's reason in s, and whether s observed it.
 func remotePartReason(s runstate.RemoteSnapshot, part runstate.RemotePart) (string, bool) {
-	return worktree.RemotePartReason(s, part)
+	return runstate.RemotePartReason(s, part)
 }
 
 // joinParts names parts in order, "none" for no part.

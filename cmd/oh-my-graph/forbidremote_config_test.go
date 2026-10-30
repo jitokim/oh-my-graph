@@ -28,7 +28,7 @@ import (
 // not guarded, with why.
 
 // The reasons the end line names a part not guarded with, spelled out as an
-// operator reads them, so a change to worktree's constants shows here.
+// operator reads them, so a change to runstate's constants shows here.
 const (
 	configUnreadableReason = "attribution unavailable: repository config unreadable"
 	checkReadFailedReason  = "attribution unavailable: attribution check read failed"
