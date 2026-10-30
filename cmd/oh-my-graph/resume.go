@@ -869,11 +869,16 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	// An interrupt during the before snapshot ends the leg before any node
 	// starts, its record printed, as in executeGraph, and before this leg's
 	// gate decisions and carried records are written, so the run is still
-	// paused, or still holds its failed records, as it was.
+	// paused, or still holds its failed records, as it was. A run still
+	// paused at a gate ends as that pause (exit 2, #433), so the exit agrees
+	// with the PAUSED the run reads; any other run ends interrupted (exit 1).
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		remote.end(ctx)
-		remote.print(os.Stdout)
-		return ctxErr
+		if snap.Gate.PausedAt == "" {
+			remote.print(os.Stdout)
+			return ctxErr
+		}
+		return stillPausedAfterInterrupt(flags, snap, decided, remote, ctxErr)
 	}
 	// A guarded leg names the parts it starts without (ADR 0046 §5.2).
 	remote.printLaunchNotice(os.Stdout)
@@ -912,6 +917,37 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 	printDescribedPauseHint(os.Stdout, runID, runErr, verifyCmd, description, recordedLimitPause(runID, runErr))
 
 	return runErr
+}
+
+// stillPausedAfterInterrupt ends a resumed leg interrupted during its before
+// remote snapshot while the run is still paused at a gate: nothing this leg
+// decided was saved, so it says so first, prints its remote record, and then
+// the hint a gate pause prints. The error carries a *schedule.PausedError, so
+// exitCodeForError maps it to 2 as it does a gate pause, and wraps ctxErr so
+// the interrupt is still the cause. decided is the gate a gate resume decided
+// (its description already read); a retry leg reads the stored one.
+func stillPausedAfterInterrupt(flags *resumeFlags, snap runstate.Snapshot, decided decidedGate, remote *remoteLeg, ctxErr error) error {
+	gateID := snap.Gate.PausedAt
+	description := decided.description
+	if decided.id != gateID {
+		var err error
+		if description, err = decidedGateDescription(flags.runID, snap); err != nil {
+			remote.print(os.Stdout)
+			return fmt.Errorf("resume run %q: %w", flags.runID, err)
+		}
+	}
+	unsaved := "retry"
+	switch {
+	case flags.approveGate != "":
+		unsaved = "approval"
+	case flags.rejectGate != "":
+		unsaved = "rejection"
+	}
+	fmt.Fprintf(os.Stdout, "interrupted before the %s was saved; still paused at gate %s\n", unsaved, describedGate(gateID, description))
+	remote.print(os.Stdout)
+	paused := &schedule.PausedError{GateID: gateID}
+	printDescribedPauseHint(os.Stdout, flags.runID, paused, flags.verifyCommand(), description, nil)
+	return fmt.Errorf("%w: %w", paused, ctxErr)
 }
 
 // legGateWriteError is the error a resumed leg ends with when its gate

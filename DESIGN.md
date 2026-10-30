@@ -1120,7 +1120,13 @@ any node starts — so only an `auto` run, whose planning `run_started` is
 already written, gets that `run_finished`, while a `run` or resumed leg
 writes neither event — and on a resumed leg
 leaves the run paused as it was, resumable by the same `resume --approve
-<gate>`; once a leg is
+<gate>`. A resumed leg so interrupted while its run is paused at a gate —
+`resume --approve` or `--reject`, or `--retry-failed` of a run paused at one
+— ends as that pause instead (#433): exit 2, matching the `PAUSED` the run
+reads, its first line `interrupted before the approval was saved; still
+paused at gate <id> (<description>)` (`the rejection`, `the retry`), then
+its record, then the gate pause's `Paused at gate … Resume with:` hint. A
+leg whose run is paused at no gate still exits 1; once a leg is
 interrupted its *after* snapshot is not taken, or is cut short, and is
 recorded with all three parts unavailable, reason `interrupted`, the record
 printed either way. A leg's `run_finished` is therefore written after its
