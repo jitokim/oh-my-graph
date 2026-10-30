@@ -695,8 +695,8 @@ has no open issue behind it.
   run failed with exit 6 with every node `PASS` does. On an unguarded run
   `resume --retry-failed` then runs a leg that launches no node, and the run
   reads `PASS`. A guarded run (`--forbid-remote-changes`) that reads `FAIL`
-  this way is not turned into `PASS`: `resume --retry-failed` prints `has no
-  failed nodes to retry` and exits 0, since its failed close may be a
+  this way is not turned into `PASS`: `resume --retry-failed` prints
+  `has no failed nodes to retry` and exits 0, since its failed close may be a
   forbidden remote change (exit 6). ssh
   remotes run in BatchMode unless you chose an ssh command
   (`GIT_SSH_COMMAND`, `GIT_SSH` or `core.sshCommand`): an unknown host key or
