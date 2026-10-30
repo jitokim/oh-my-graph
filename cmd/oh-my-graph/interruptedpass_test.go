@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -137,4 +139,47 @@ func TestResume_RetryFailedAfterAnInterruptedLimitPauseReRunsTheLimitedNode(t *t
 		t.Errorf("b = %+v, want PASS", b)
 	}
 	assertRunReads(t, "run-1", runstatus.Pass, runfeed.OutcomePassed)
+}
+
+// #434 review: an unguarded run whose every node passed but whose events.jsonl
+// cannot be read has a status the retry cannot know, so `resume --retry-failed`
+// fails, naming the run, instead of reporting nothing to retry and exiting 0,
+// and it starts no node.
+func TestResume_RetryFailedWhenEveryNodePassedButTheStatusCannotBeReadFails(t *testing.T) {
+	isolateRunHome(t)
+	fake := runner.NewFakeRunner(map[string]runner.NodeOutcome{
+		"a": {SessionID: "s-a", Result: "PASS", ExitCode: 0},
+		"b": {SessionID: "s-b", Result: "PASS", ExitCode: 0},
+	})
+	interruptAfterSnapshot(t, fake, false)
+	firstCalls := len(fake.Calls())
+
+	events := filepath.Join(runDirFor("run-1"), runfeed.FileName)
+	if err := os.Remove(events); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(events, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	useRemoteObserver(t, originObserver(), remoteBaseSHA)
+	var err error
+	out := captureStdout(t, func() {
+		err = executeResume(parseResumeFlags(t, []string{"run-1", "--retry-failed"}), fake, nil)
+	})
+	if err == nil {
+		t.Fatalf("resume --retry-failed succeeded on a run whose status cannot be read:\n%s", out)
+	}
+	if msg := err.Error(); !strings.Contains(msg, "cannot read the run's status") || !strings.Contains(msg, `"run-1"`) {
+		t.Errorf("err = %v, want it to name run-1 and say its status cannot be read", err)
+	}
+	if code := exitCodeForError(err); code == 0 {
+		t.Errorf("exit code = 0 for %v, want non-zero", err)
+	}
+	if strings.Contains(out, "has no failed nodes to retry") {
+		t.Errorf("the retry reported nothing to retry on a run whose status cannot be read:\n%s", out)
+	}
+	if calls := fake.Calls()[firstCalls:]; len(calls) != 0 {
+		t.Errorf("resume --retry-failed started %v, want no node", calls)
+	}
 }

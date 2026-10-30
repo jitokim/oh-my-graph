@@ -237,7 +237,10 @@ func resumeGateLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner
 // the run directory is left untouched (no new run_started bracket, no spawn)
 // and the command exits 0 — except for an unguarded run whose last leg closed
 // failed after every node passed, which gets a leg that launches nothing so it
-// stops reading FAIL (interruptedAfterEveryNodePassed). A gate-paused run is redirected to its own resume
+// stops reading FAIL (interruptedAfterEveryNodePassed). When every node passed
+// but the run's status cannot be read, the command fails instead of reporting
+// nothing to retry, since it cannot tell whether the run reads FAIL; no node is
+// started. A gate-paused run is redirected to its own resume
 // mode rather than run — the pending gate needs a human decision, which a
 // retry leg must never sneak past.
 func resumeRetryLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runner.NodeRunner, web browser.Opener) error {
@@ -258,14 +261,18 @@ func resumeRetryLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runne
 				describedGate(snap.Gate.PausedAt, description), snap.Gate.PausedAt, snap.Gate.PausedAt)
 			return nil
 		}
-		switch {
-		case hasUnfinishedWork(g, retained):
+		if hasUnfinishedWork(g, retained) {
 			banner = fmt.Sprintf("Resuming run %q (running unfinished nodes)", flags.runID)
-		case interruptedAfterEveryNodePassed(flags.runID, g, snap):
+		} else {
+			closeFailedLeg, err := interruptedAfterEveryNodePassed(flags.runID, g, snap)
+			if err != nil {
+				return err
+			}
+			if !closeFailedLeg {
+				fmt.Fprintf(os.Stdout, "run %q has no failed nodes to retry.\n", flags.runID)
+				return nil
+			}
 			banner = fmt.Sprintf("Resuming run %q (every node passed; closing the leg an interrupt ended failed)", flags.runID)
-		default:
-			fmt.Fprintf(os.Stdout, "run %q has no failed nodes to retry.\n", flags.runID)
-			return nil
 		}
 	}
 	return continueRun(flags, snap, retained, snap.Gate.Decisions, cleared, decidedGate{}, banner, nodeRunner, web)
@@ -279,12 +286,18 @@ func resumeRetryLeg(flags *resumeFlags, snap runstate.Snapshot, nodeRunner runne
 // run_finished passed is what makes the run read PASS, as the exit says. A
 // guarded run is left as it was, since its failed close may be a forbidden
 // remote change (exit 6, ADR 0046 §5.1) that an empty leg must not paper over.
-func interruptedAfterEveryNodePassed(runID string, g *graph.Graph, snap runstate.Snapshot) bool {
+// The status is read only for an unguarded run whose every node passed; if it
+// cannot be read, that is an error, not a no-op: the retry cannot know whether
+// the run reads FAIL, so it must not claim there is nothing to retry.
+func interruptedAfterEveryNodePassed(runID string, g *graph.Graph, snap runstate.Snapshot) (bool, error) {
 	if snap.ForbidRemoteChanges || len(snap.CompletedNodes()) != len(g.Nodes) {
-		return false
+		return false, nil
 	}
 	status, err := runstatus.Of(runDirFor(runID))
-	return err == nil && status == runstatus.Fail
+	if err != nil {
+		return false, fmt.Errorf("resume run %q: cannot read the run's status: %w", runID, err)
+	}
+	return status == runstatus.Fail, nil
 }
 
 // hasUnfinishedWork reports whether a retry leg carrying exactly the retained
