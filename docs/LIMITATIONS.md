@@ -682,11 +682,11 @@ has no open issue behind it.
   each of those points, and `gh pr list` has its own 30 s timeout (recorded
   `unavailable`, `timeout`), so an unreachable GitHub adds up to 30 s more at
   each. Ctrl-C during either snapshot, start or end, ends
-  the leg as interrupted (exit 1, never paused); during the start snapshot
-  it ends the leg before any node starts, a resumed run keeping its
-  `state.json` for the same `resume` (still paused at its gate after
-  `--approve <gate>`, its failed records and costs intact after
-  `--retry-failed`), and an interrupted leg records
+  the leg as interrupted (exit 1); during the start snapshot it ends the leg
+  before any node starts, a resumed run keeping its `state.json` for the
+  same `resume` (its failed records and costs intact after
+  `--retry-failed`), and a resumed run still paused at its gate ends as that
+  pause instead (exit 2, `still paused at gate`), and an interrupted leg records
   its end snapshot as `unavailable` ("interrupted") instead of waiting for
   it. During the end snapshot a pause the nodes reached is withdrawn, so
   the leg resumes with `--retry-failed` and its gate pauses again. A leg

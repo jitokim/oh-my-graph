@@ -10,3 +10,11 @@
   run says the same (still exit 1), or `(nothing to resume)` when a retry
   would run nothing.
   ([#433](https://github.com/jitokim/oh-my-graph/issues/433))
+- **Ctrl-C during a resumed leg's start remote snapshot no longer exits 1
+  while the run is still paused.** An interrupt that lands before `resume
+  --approve`, `--reject` or `--retry-failed` has saved its decision leaves the
+  run paused at its gate, yet the command exited 1. It now exits 2, says the
+  run is still paused at its gate, and prints the gate's own hint, so the
+  same `resume` can be run again. A resumed run not paused at a gate, and a
+  fresh `run` or `auto`, still exit 1.
+  ([#433](https://github.com/jitokim/oh-my-graph/issues/433))
