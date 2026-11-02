@@ -32,11 +32,11 @@ var verdictDemands = []string{
 //     the node was asked for a merge commit SHA, replied with a promise to
 //     merge once a review concluded, exited 0, and wrote a PASS row into the
 //     ledger with nothing merged. A prompt is not a mechanism;
-//   - `result_matches` is set but `exit_zero` is not. Exit-zero is only the
-//     default while a node declares NO check at all (`SuccessCheck.IsZero`),
-//     so adding a result predicate to a node that had no check silently
-//     deletes its exit-code guard — a fix that removes a guard while adding
-//     one. Any node that wants both must name both.
+//   - `result_matches` or `result_min_bytes` is set but `exit_zero` is not.
+//     Exit-zero is only the default while a node declares NO check at all
+//     (`SuccessCheck.IsZero`), so adding a result predicate to a node that had
+//     no check silently deletes its exit-code guard — a fix that removes a
+//     guard while adding one. Any node that wants both must name both.
 //
 // Both stay warnings rather than load errors because both are expressible on
 // purpose: a node may demand a token purely so a DOWNSTREAM node can read it
@@ -54,11 +54,11 @@ func LintVerdicts(g *graph.Graph) []Warning {
 				Detail: "prompt demands a verdict token but success_check has no result_matches — nothing reads the answer, so a reply that promises the work instead of doing it passes (DESIGN.md \"Verdict patterns\")",
 			})
 		}
-		if check.ResultMatches != "" && !check.ExitZero {
+		if (check.ResultMatches != "" || check.ResultMinBytes > 0) && !check.ExitZero {
 			warnings = append(warnings, Warning{
 				NodeID: node.ID,
 				Field:  "success_check",
-				Detail: "result_matches without exit_zero — exit-zero is the default only for a node with NO success_check, so this node's exit code is now unchecked; add `exit_zero: true` to keep it",
+				Detail: "result_matches or result_min_bytes without exit_zero — exit-zero is the default only for a node with NO success_check, so this node's exit code is now unchecked; add `exit_zero: true` to keep it",
 			})
 		}
 	}

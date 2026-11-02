@@ -749,7 +749,12 @@ from (the same field, and the same never-sum rule, as in `state.json`),
 `usage` carries input/cached-input/output/reasoning-output token
 counts, `session_id` is the selected runtime's session/thread, and `detail`
 is the same short note the run ledger records (the failure cause on a FAIL;
-the retry/budget note, possibly empty, on a PASS). The producer caps the
+the retry/budget note, possibly empty, on a PASS). Which `success_check`
+predicate failed is recorded only inside that text, never as a field of its
+own, in `state.json` or here: the cause reads `node "<id>" failed
+success_check <predicate>: <detail>`, so a too-short reply is `node "report"
+failed success_check result_min_bytes: result is 51 bytes, below the minimum
+of 200`. The reply itself is never quoted. The producer caps the
 *cause* text at one shared bound (240 runes, keeping the tail), so a line
 stays tailable even when the underlying error was arbitrarily long. That bound
 is not a hard bound on the field: a body node inside a feedback loop gets its
@@ -770,7 +775,7 @@ totals zero dollars for work that was paid for. A gate spawns no subprocess, so 
 | `provenance` | the PASS was reached by |
 |---|---|
 | `verified` | a `success_check.verify` command the ENGINE ran and whose exit code — and `output_matches`, when declared — it judged. |
-| `self-reported` | `result_matches` — the node emitted the right words. Nothing outside the node observed anything. |
+| `self-reported` | `result_matches` or `result_min_bytes` — the node emitted the right words, or enough bytes of them. Nothing outside the node observed anything. |
 | `exit-only` | a subprocess ran and exited 0, with no predicate over what it did. |
 | `approved` | a human approved a `type: gate` node — no subprocess, and the strongest provenance in the set. |
 

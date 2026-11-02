@@ -279,6 +279,29 @@ func TestPairExitZero_ExplicitFalseIsNormalised_371(t *testing.T) {
 	}
 }
 
+// #446: result_min_bytes is a result predicate too — a check holding only the
+// byte floor is non-empty, so it loses the exit-zero default exactly as a lone
+// result_matches does, and a planned one gets exit_zero with the floor kept.
+func TestPairExitZero_PairsResultMinBytesAlone_446(t *testing.T) {
+	g, err := graph.Parse([]byte(`{"name":"g","version":"1","nodes":[` +
+		`{"id":"report","prompt":"write the report","allowed_tools":["Read"],"success_check":{"result_min_bytes":200}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, spec, added, err := pairExitZero(g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := graph.SuccessCheck{ExitZero: true, ResultMinBytes: 200}
+	if got := out.Nodes[0].SuccessCheck; !reflect.DeepEqual(got, want) || !reflect.DeepEqual(added, []string{"report"}) {
+		t.Errorf("result_min_bytes alone: got %+v, added %q; want %+v and the node listed", got, added, want)
+	}
+	check, ok := specCheck(t, specNodes(t, spec), "report")
+	if !ok || string(check["exit_zero"]) != "true" || string(check["result_min_bytes"]) != "200" {
+		t.Errorf("spec node \"report\" = %v, want exit_zero true beside result_min_bytes 200", check)
+	}
+}
+
 // #371: the graph handed in is never mutated — the rebuilt one comes back
 // through graph.Parse, as attachVerification's does — so a caller still
 // holding the validated graph sees what validation saw.

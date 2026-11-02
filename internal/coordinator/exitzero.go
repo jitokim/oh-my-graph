@@ -1,6 +1,6 @@
 // The exit-code guard for a planned verdict (#371): trusted code that, after
 // validation, sets `exit_zero` on every planned node whose success_check
-// declares a `result_matches` and no `exit_zero`.
+// declares a `result_matches` or a `result_min_bytes` and no `exit_zero`.
 //
 // Exit-zero is the engine's default only while a node declares NO check at all
 // (graph.SuccessCheck.IsZero). The moment a node names a result predicate, its
@@ -14,9 +14,10 @@
 //
 // The direction is the whole safety argument, as it is for attachVerifyCommand:
 // this step only ever makes a check STRICTER. It adds `exit_zero` and nothing
-// else — `result_matches` is never removed or rewritten, a node with no
-// success_check is never touched (exit-zero is already its default), and a node
-// that already sets `exit_zero` is left exactly as it is.
+// else — `result_matches` and `result_min_bytes` are never removed or
+// rewritten, a node with no success_check is never touched (exit-zero is
+// already its default), and a node that already sets `exit_zero` is left
+// exactly as it is.
 package coordinator
 
 import (
@@ -28,10 +29,10 @@ import (
 
 // requireExitZero is the post-validation step itself. It runs on the
 // planned-graph path only — a hand-written run graph is the user's own
-// reviewed artifact, and its `result_matches` without `exit_zero` stays a lint
-// advisory rather than something trusted code rewrites. Every Plan, the
-// bounded re-plan and the goal loop's continuation all reach it, because all
-// three go through attemptPlan.
+// reviewed artifact, and its `result_matches` or `result_min_bytes` without
+// `exit_zero` stays a lint advisory rather than something trusted code
+// rewrites. Every Plan, the bounded re-plan and the goal loop's continuation
+// all reach it, because all three go through attemptPlan.
 //
 // A plan with nothing to add keeps its Spec byte for byte: nothing is
 // re-encoded, and ExitZeroAdded stays nil.
@@ -50,9 +51,10 @@ func (c *Coordinator) requireExitZero(plan *Plan) error {
 }
 
 // pairExitZero sets ExitZero on every node of g whose SuccessCheck has a
-// non-empty ResultMatches and no ExitZero, and returns the rebuilt graph, its
-// JSON spec and the ids it changed, in the graph's declared order. When no node
-// needs it, it returns g itself, a nil spec and no ids.
+// non-empty ResultMatches or a positive ResultMinBytes and no ExitZero, and
+// returns the rebuilt graph, its JSON spec and the ids it changed, in the
+// graph's declared order. When no node needs it, it returns g itself, a nil
+// spec and no ids.
 //
 // graph.SuccessCheck.ExitZero is a plain bool, so an explicit
 // `"exit_zero": false` decodes to the same value as an absent key and cannot be
@@ -71,7 +73,7 @@ func pairExitZero(g *graph.Graph) (*graph.Graph, []byte, []string, error) {
 	out.Nodes = append([]graph.Node(nil), g.Nodes...)
 	for i := range out.Nodes {
 		check := &out.Nodes[i].SuccessCheck
-		if check.ResultMatches == "" || check.ExitZero {
+		if (check.ResultMatches == "" && check.ResultMinBytes <= 0) || check.ExitZero {
 			continue
 		}
 		check.ExitZero = true

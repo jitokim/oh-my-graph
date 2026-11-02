@@ -27,7 +27,7 @@ const (
 	// exitZeroReviewPattern is the review node's verdict, which must come out
 	// of every artifact exactly as the planner wrote it.
 	exitZeroReviewPattern = "^APPROVED"
-	uncheckedVerdictLint  = "result_matches without exit_zero"
+	uncheckedVerdictLint  = "result_matches or result_min_bytes without exit_zero"
 )
 
 // unpairedVerdictSpec is a typical planned graph from before #371's prompt

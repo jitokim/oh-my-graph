@@ -39,7 +39,7 @@ func TestPrintPlan_SweepsThePlannedGraph(t *testing.T) {
 	for _, want := range []string{
 		"warning: /tmp/graph.json: ",
 		`node "check"`,
-		"result_matches without exit_zero",
+		"result_matches or result_min_bytes without exit_zero",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("plan screen does not carry %q:\n%s", want, got)

@@ -1723,6 +1723,7 @@ after the runner returns an outcome. **All configured predicates must pass.**
 | predicate | judges | trusts the node? |
 |---|---|---|
 | `exit_zero` | the subprocess exit code | no |
+| `result_min_bytes` | the byte length of the node's `.result` text | **yes — self-report** |
 | `result_matches` | a regex over the node's `.result` text | **yes — self-report** |
 | `verify` | a command the ENGINE runs, by its own exit code/output | no |
 
@@ -1735,9 +1736,27 @@ by emitting "PASS", which is narration, not evidence. `verify` is the only
 predicate that observes state outside the LLM's own account of itself, and it is
 what a node whose success is externally observable should carry.
 
+`result_min_bytes` is a floor on the length, in bytes, of that same `.result`
+string `result_matches` reads (`len(outcome.Result)`, before any regex). A
+node's result is its whole artifact — its final assistant message, nothing
+earlier — so a closing remark that points at work "above" can pass a regex
+while handing dependents nothing (#446). The field is a non-negative integer:
+`0`, or leaving it unset, means no minimum, and a negative value is a load
+error (`GraphValidationError`, `success_check result_min_bytes -1 must not be
+negative (0 means no minimum)`). It runs after `exit_zero` and before
+`result_matches`. A miss is a `NodeCheckError` with predicate
+`result_min_bytes` and the detail `result is N bytes, below the minimum of M`,
+which names the two sizes and never quotes the reply. It maps to the same retry
+cause as a `result_matches` miss, `result_mismatch`, so `retry.on`, the retry's
+quote of the previous reply (ADR 0020) and a `feedback:` arc all treat it
+exactly as they treat a `result_matches` miss. Like `result_matches` it
+measures what the node said, so a PASS it decides alone is `self-reported`,
+not `exit-only`.
+
 ```yaml
 success_check:
   exit_zero: true
+  result_min_bytes: 200                  # optional; bytes of .result, 0/unset = no minimum
   result_matches: '^[*_`\s]*PASS'        # optional, secondary — see "Verdict patterns"
   verify:
     command: "go test ./... -run TestFoo" # required; run via the platform shell (`sh -c` on unix, `cmd /c` on Windows)
@@ -1776,9 +1795,10 @@ means (see "Gate nodes and `resume`", on why the flag pair is registered on
 
 ```go
 type SuccessCheck struct {
-	ExitZero      bool          `yaml:"exit_zero" json:"exit_zero,omitempty"`
-	ResultMatches string        `yaml:"result_matches" json:"result_matches,omitempty"`
-	Verify        *Verification `yaml:"verify" json:"verify,omitempty"` // nil = no evidence check
+	ExitZero       bool          `yaml:"exit_zero" json:"exit_zero,omitempty"`
+	ResultMatches  string        `yaml:"result_matches" json:"result_matches,omitempty"`
+	ResultMinBytes int           `yaml:"result_min_bytes" json:"result_min_bytes,omitempty"` // 0 = no minimum; negative = load error
+	Verify         *Verification `yaml:"verify" json:"verify,omitempty"`                     // nil = no evidence check
 }
 
 // Verification is a pointer field so "absent" and "zero" are distinguishable,
@@ -1803,8 +1823,9 @@ the graph the second leg executes would quietly differ from the one the first
 leg did. `graph.go` states this at the struct itself; copy the pair, not just
 the `yaml` half.
 
-`SuccessCheck.IsZero()` must also test `Verify == nil`, and `Validate` must
-reject an uncompilable `result_matches`, an empty `command`, an unparseable
+`SuccessCheck.IsZero()` must also test `ResultMinBytes == 0` and
+`Verify == nil`, and `Validate` must reject a negative `result_min_bytes`, an
+uncompilable `result_matches`, an empty `command`, an unparseable
 `timeout`, a timeout over the ceiling, and an uncompilable `output_matches` — at
 load, naming the node (`GraphValidationError`), never mid-run. Changing this
 struct touches loader, validator, shipped example graphs and tests together.
@@ -2284,14 +2305,15 @@ The rule is stated here and swept for by `lint` and `run --dry-run`
 "a prompt is not a mechanism" shape one level up. Two advisories, both cheap
 and both drawn from a real miss: a prompt that demands a token (`START your
 reply with…`) under a `success_check` with no `result_matches`, and a
-`result_matches` declared without `exit_zero` — which silently deletes the
-exit-code guard a node had for free while it declared no check at all
-(`SuccessCheck.IsZero`), so a "fix" that adds a predicate can remove one.
+`result_matches` or `result_min_bytes` declared without `exit_zero` — which
+silently deletes the exit-code guard a node had for free while it declared no
+check at all (`SuccessCheck.IsZero`), so a "fix" that adds a predicate can
+remove one.
 They stay advisories: neither can judge whether a payload is shaped tightly
 enough to reject a promise, which is the part that still needs a reader.
 The second never fires on a graph `auto` planned: trusted code gives every
-planned `result_matches` its `exit_zero` after validation
-(`coordinator.requireExitZero`, #371), so the warning is left to a
+planned `result_matches` or `result_min_bytes` its `exit_zero` after
+validation (`coordinator.requireExitZero`, #371), so the warning is left to a
 hand-written graph, which nothing rewrites.
 
 The engine's matching semantics stay deliberately dumb — normalizing the reply
@@ -2300,7 +2322,8 @@ in Go (trim, strip emphasis, case-fold) would change what every existing
 Until such an ADR exists, the idiom above is the fix.
 
 **Where it runs in the node lifecycle** (`schedule.runNode`):
-`Handoff.ResolveInputs → NodeRunner.Run → exit_zero → result_matches → verify →
+`Handoff.ResolveInputs → NodeRunner.Run → exit_zero → result_min_bytes →
+result_matches → verify →
 Handoff.PersistOutput → budget_usd → RunState.RecordNode + RunLedger.Record →
 enqueue dependents` (the same order `schedule.runNode`'s own doc comment
 fixes). Ordering is
@@ -4176,7 +4199,8 @@ the user-supplied `--verify-cmd` string, and does
 
 Trusted code also adds one predicate of its own after validation, and only in
 the stricter direction. A planned node whose `success_check` declares a
-`result_matches` and no `exit_zero` would leave its exit code unchecked —
+`result_matches` or a `result_min_bytes` and no `exit_zero` would leave its
+exit code unchecked —
 exit-zero is the default only while a node declares no check at all
 (`SuccessCheck.IsZero`) — so `coordinator.requireExitZero`
 (`internal/coordinator/exitzero.go`, #371) sets `exit_zero: true` on every such
@@ -4194,7 +4218,8 @@ the ids, and the plan screen prints one line per node
 (`noteExitZeroAdded`), just before the verify-attachment notes —
 `note: node <id>: exit_zero: true added beside its result_matches (a planned
 check is never weaker than the exit code)`. A hand-written graph is never
-rewritten; its `result_matches` without `exit_zero` stays a lint advisory.
+rewritten; its `result_matches` or `result_min_bytes` without `exit_zero` stays
+a lint advisory.
 
 The general rule, because this class of hole recurs every time the schema grows:
 **every field on `graph.Node` must have an explicit disposition in
@@ -4216,7 +4241,7 @@ turns that rule into a build failure. Current dispositions:
 | `cwd` | rejected |
 | `agent` | **rejected** |
 | `worktree` | **rejected** (the engine would run `git worktree add` on an unreviewed plan's say-so — see "Worktree isolation") |
-| `success_check.verify` | **rejected when planner-authored** (`exit_zero`/`result_matches` allowed; a `result_matches` without `exit_zero` gains `exit_zero: true` after validation, `coordinator.requireExitZero`, #371); trusted code may set it strictly after validation, from the user-supplied `--verify-cmd` string (`coordinator.attachVerifyCommand`, ADR 0016 §2) |
+| `success_check.verify` | **rejected when planner-authored** (`exit_zero`/`result_matches` allowed; a `result_matches` or `result_min_bytes` without `exit_zero` gains `exit_zero: true` after validation, `coordinator.requireExitZero`, #371); trusted code may set it strictly after validation, from the user-supplied `--verify-cmd` string (`coordinator.attachVerifyCommand`, ADR 0016 §2) |
 | `use` | **rejected** — a planner-emitted `use:` would let unreviewed output pick which local file's prompt text, tool grant and verify command get spliced in, and a fragment file in the run's repo is attacker-influencable whenever the repo is untrusted (ADR 0013: trusted code resolves files, the planner never names local resources). Refused at the coordinator's `graph.Parse` boundary |
 | `with` | **rejected** — `use`'s substitution bindings, on the same grounds: dead without a `use:`, and a `with:` on a planned node means the plan tried to reference a fragment at all |
 | `reuse` | constrained — written only by a planned node citing a menu entry: the id of a reusable shape from the menu the plan's prompt showed (ADR 0038), checked against the offered set held from that render, never a re-scan: a file name, a path or an unlisted id is refused, naming the id and listing the menu. The planner picks an id from a menu trusted code built; trusted code resolves the file. A citing node writes no `prompt` and no `allowed_tools` (each is refused beside it), and is exempt from those two emptiness checks and no other; one citing a multi-node shape is also refused any key outside `graph.MultiNodeCitingKeys`, naming the key. **Rejected** when nothing was offered. Validated by admission (`coordinator/reusecatalog.go`, `admitInspection`: no nested `use:` — a nested file's bytes are not pinned by the digest, so a fragment citing another is skipped as `nested use` and nested fragments are not offered in this slice — then prompt-only slots, `allowed_tools` within the read-only set `Read`, `Glob`, `Grep`, no `permission_mode`, no planner-refused field) and by the splice (`coordinator/reusesplice.go`: re-hash, re-admit, `graph.SpliceReuse` refusing pinned bytes that hold a nested `use:` before any nested file is read, then `checkSplicedNodes`, which runs the read-only tool check again and refuses any `permission_mode` on every spliced node). `graph.json` never holds it: the splice replaces it with the resolved node(s) before the save. Legal in a planner reply only: `graph.ParsePlannerReply` lets it through for `validatePlannedNodeReuse`, and `graph.Validate`'s `validateReuseSpliced` refuses it in a graph file, a saved `graph.json` or a resumed run. **Residual:** nothing confines `Read`, `Glob` and `Grep` to the working directory, so a planted admitted fragment can make its read-only node read any file the user can read (e.g. `~/.ssh/config`) into its report, which stays local in the run directory and flows downstream as an artifact path (see "Auto mode", what admission does not bound) |
@@ -4718,7 +4743,8 @@ for the 1.0.0 gate; an `auto --interview` graph does (ADR 0044 §2.4).
   disagree about it. A FAIL carries none — its cause is in `DETAIL`.
 
 Node lifecycle: Scheduler ready → Handoff.ResolveInputs → NodeRunner.Run →
-exit_zero → result_matches → Verifier.Verify → pass: Handoff.PersistOutput →
+exit_zero → result_min_bytes → result_matches → Verifier.Verify → pass:
+Handoff.PersistOutput →
 budget_usd check → pass: RunState.RecordNode + RunLedger.Record + enqueue
 dependents; fail (any check, Verifier, OR budget): retry or Record(FAIL) +
 cancel if halt; gate pause: drain in flight, snapshot, exit 2. Output is

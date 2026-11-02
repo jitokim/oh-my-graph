@@ -101,6 +101,39 @@ nodes:
 	}
 }
 
+// TestLintVerdicts_ResultMinBytesDropsExitZero is the same class for the other
+// result predicate (#446): `result_min_bytes` alone makes the check non-empty,
+// so exit-zero is no longer implied and a crashed node with a long enough last
+// message would pass. A result_matches written alone must still warn beside it.
+func TestLintVerdicts_ResultMinBytesDropsExitZero(t *testing.T) {
+	g := parseGraph(t, `
+name: dropped-guard
+nodes:
+  - id: floor
+    prompt: gains a byte floor and loses its exit code
+    success_check: { result_min_bytes: 200 }
+  - id: pattern
+    prompt: gains a pattern and loses its exit code
+    success_check: { result_matches: '^DONE' }
+  - id: both
+    prompt: names both predicates
+    success_check: { exit_zero: true, result_min_bytes: 200 }
+`)
+	warnings := LintVerdicts(g)
+	if len(warnings) != 2 {
+		t.Fatalf("expected exactly two warnings, got %v", warnings)
+	}
+	for i, id := range []string{"floor", "pattern"} {
+		w := warnings[i]
+		if w.NodeID != id || w.Field != "success_check" {
+			t.Fatalf("warning %d = %+v, want node %s field success_check", i, w, id)
+		}
+		if !strings.Contains(w.Detail, "result_matches or result_min_bytes without exit_zero") {
+			t.Fatalf("detail %q should name both result predicates", w.Detail)
+		}
+	}
+}
+
 // TestLintVerdicts_ShippedGraphsAreClean is the sweep's own regression test:
 // every graph this repo ships must already satisfy both rules, so a node that
 // demands a verdict nothing reads fails here rather than in a paid run. It
