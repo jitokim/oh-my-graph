@@ -190,8 +190,8 @@ plus, for a `handoff: session` node, a `cwd`/`worktree` that differs from
 its session-parent's, or a `retry` block (a retried attempt starts cold) —
 plus, for any node, a verdict nothing reads: a prompt that demands a token
 (`START your reply with …`) under a `success_check` with no `result_matches`,
-or a `result_matches` written without `exit_zero` (which drops the exit-code
-guard a node has for free only while it declares no check at all) —
+or a `result_matches` or `result_min_bytes` written without `exit_zero`
+(which drops the exit-code guard a node has for free only while it declares no check at all) —
 plus, for a node that declares neither `allowed_tools` nor a
 `success_check.verify`, that nothing it does can observe a tool denial: a tool
 your Claude Code settings do not pre-authorise is refused, the node says so in
@@ -1436,8 +1436,9 @@ on the first pass) — at most `max` times, every round priced in the ledger.
 The token goes in the **re-run** node's prompt, not the declarer's: `lint`
 skips the declarer when it looks for the quote, because the node that has to
 read the findings is the one being re-run. `exit_zero: true` is spelled out for
-the same reason it is everywhere else — a `result_matches` written alone drops
-the exit-code guard the node had for free.
+the same reason it is everywhere else — a `result_matches` (or a
+`result_min_bytes`) written alone drops the exit-code guard the node had for
+free.
 
 Demo: `graphs/review-loop.yaml`. Spec:
 [DESIGN.md § Execution engine](../DESIGN.md#execution-engine) ·

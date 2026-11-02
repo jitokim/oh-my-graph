@@ -2305,14 +2305,15 @@ The rule is stated here and swept for by `lint` and `run --dry-run`
 "a prompt is not a mechanism" shape one level up. Two advisories, both cheap
 and both drawn from a real miss: a prompt that demands a token (`START your
 reply with…`) under a `success_check` with no `result_matches`, and a
-`result_matches` declared without `exit_zero` — which silently deletes the
-exit-code guard a node had for free while it declared no check at all
-(`SuccessCheck.IsZero`), so a "fix" that adds a predicate can remove one.
+`result_matches` or `result_min_bytes` declared without `exit_zero` — which
+silently deletes the exit-code guard a node had for free while it declared no
+check at all (`SuccessCheck.IsZero`), so a "fix" that adds a predicate can
+remove one.
 They stay advisories: neither can judge whether a payload is shaped tightly
 enough to reject a promise, which is the part that still needs a reader.
 The second never fires on a graph `auto` planned: trusted code gives every
-planned `result_matches` its `exit_zero` after validation
-(`coordinator.requireExitZero`, #371), so the warning is left to a
+planned `result_matches` or `result_min_bytes` its `exit_zero` after
+validation (`coordinator.requireExitZero`, #371), so the warning is left to a
 hand-written graph, which nothing rewrites.
 
 The engine's matching semantics stay deliberately dumb — normalizing the reply
@@ -4198,7 +4199,8 @@ the user-supplied `--verify-cmd` string, and does
 
 Trusted code also adds one predicate of its own after validation, and only in
 the stricter direction. A planned node whose `success_check` declares a
-`result_matches` and no `exit_zero` would leave its exit code unchecked —
+`result_matches` or a `result_min_bytes` and no `exit_zero` would leave its
+exit code unchecked —
 exit-zero is the default only while a node declares no check at all
 (`SuccessCheck.IsZero`) — so `coordinator.requireExitZero`
 (`internal/coordinator/exitzero.go`, #371) sets `exit_zero: true` on every such
@@ -4216,7 +4218,8 @@ the ids, and the plan screen prints one line per node
 (`noteExitZeroAdded`), just before the verify-attachment notes —
 `note: node <id>: exit_zero: true added beside its result_matches (a planned
 check is never weaker than the exit code)`. A hand-written graph is never
-rewritten; its `result_matches` without `exit_zero` stays a lint advisory.
+rewritten; its `result_matches` or `result_min_bytes` without `exit_zero` stays
+a lint advisory.
 
 The general rule, because this class of hole recurs every time the schema grows:
 **every field on `graph.Node` must have an explicit disposition in
@@ -4238,7 +4241,7 @@ turns that rule into a build failure. Current dispositions:
 | `cwd` | rejected |
 | `agent` | **rejected** |
 | `worktree` | **rejected** (the engine would run `git worktree add` on an unreviewed plan's say-so — see "Worktree isolation") |
-| `success_check.verify` | **rejected when planner-authored** (`exit_zero`/`result_matches` allowed; a `result_matches` without `exit_zero` gains `exit_zero: true` after validation, `coordinator.requireExitZero`, #371); trusted code may set it strictly after validation, from the user-supplied `--verify-cmd` string (`coordinator.attachVerifyCommand`, ADR 0016 §2) |
+| `success_check.verify` | **rejected when planner-authored** (`exit_zero`/`result_matches` allowed; a `result_matches` or `result_min_bytes` without `exit_zero` gains `exit_zero: true` after validation, `coordinator.requireExitZero`, #371); trusted code may set it strictly after validation, from the user-supplied `--verify-cmd` string (`coordinator.attachVerifyCommand`, ADR 0016 §2) |
 | `use` | **rejected** — a planner-emitted `use:` would let unreviewed output pick which local file's prompt text, tool grant and verify command get spliced in, and a fragment file in the run's repo is attacker-influencable whenever the repo is untrusted (ADR 0013: trusted code resolves files, the planner never names local resources). Refused at the coordinator's `graph.Parse` boundary |
 | `with` | **rejected** — `use`'s substitution bindings, on the same grounds: dead without a `use:`, and a `with:` on a planned node means the plan tried to reference a fragment at all |
 | `reuse` | constrained — written only by a planned node citing a menu entry: the id of a reusable shape from the menu the plan's prompt showed (ADR 0038), checked against the offered set held from that render, never a re-scan: a file name, a path or an unlisted id is refused, naming the id and listing the menu. The planner picks an id from a menu trusted code built; trusted code resolves the file. A citing node writes no `prompt` and no `allowed_tools` (each is refused beside it), and is exempt from those two emptiness checks and no other; one citing a multi-node shape is also refused any key outside `graph.MultiNodeCitingKeys`, naming the key. **Rejected** when nothing was offered. Validated by admission (`coordinator/reusecatalog.go`, `admitInspection`: no nested `use:` — a nested file's bytes are not pinned by the digest, so a fragment citing another is skipped as `nested use` and nested fragments are not offered in this slice — then prompt-only slots, `allowed_tools` within the read-only set `Read`, `Glob`, `Grep`, no `permission_mode`, no planner-refused field) and by the splice (`coordinator/reusesplice.go`: re-hash, re-admit, `graph.SpliceReuse` refusing pinned bytes that hold a nested `use:` before any nested file is read, then `checkSplicedNodes`, which runs the read-only tool check again and refuses any `permission_mode` on every spliced node). `graph.json` never holds it: the splice replaces it with the resolved node(s) before the save. Legal in a planner reply only: `graph.ParsePlannerReply` lets it through for `validatePlannedNodeReuse`, and `graph.Validate`'s `validateReuseSpliced` refuses it in a graph file, a saved `graph.json` or a resumed run. **Residual:** nothing confines `Read`, `Glob` and `Grep` to the working directory, so a planted admitted fragment can make its read-only node read any file the user can read (e.g. `~/.ssh/config`) into its report, which stays local in the run directory and flows downstream as an artifact path (see "Auto mode", what admission does not bound) |
