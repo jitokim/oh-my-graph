@@ -692,6 +692,10 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 			case <-ctx.Done():
 				return ctx.Err()
 			}
+			// A cancel landing between the check above and the select, with a
+			// slot free, leaves both cases ready and Go picks one at random, so
+			// check again. No test can pin this window: a goroutine already
+			// waiting in the select wakes on ctx.Done before the slot frees.
 			if err := ctx.Err(); err != nil {
 				<-sem
 				return err
