@@ -106,6 +106,26 @@ func TestLintGraph_MalformedYAMLFails(t *testing.T) {
 	}
 }
 
+// TestLintGraph_FractionalResultMinBytesFails pins #446's QA finding at the
+// lint seam: yaml.v3 would truncate 2.5 to 2 and lint would print `valid`.
+func TestLintGraph_FractionalResultMinBytesFails(t *testing.T) {
+	path := writeGraphFile(t, `
+name: min-bytes
+nodes:
+  - id: plan
+    prompt: p
+    success_check: { exit_zero: true, result_min_bytes: 2.5 }
+`)
+	var out strings.Builder
+	err := lintGraph(&out, io.Discard, path)
+	if err == nil {
+		t.Fatalf("result_min_bytes: 2.5 must fail lint:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "result_min_bytes must be a whole number of bytes") {
+		t.Errorf("report should name result_min_bytes:\n%s", out.String())
+	}
+}
+
 func TestRunLint_ArgvErrors(t *testing.T) {
 	if err := runLint(nil); err == nil || !strings.Contains(err.Error(), "usage") {
 		t.Errorf("missing graph file should show usage, got: %v", err)

@@ -184,12 +184,57 @@ type SuccessCheck struct {
 	// the same string ResultMatches is matched against — may hold. The result
 	// is the node's whole artifact, so a short closing remark that points at
 	// work "above" passes a regex while handing dependents nothing (#446).
-	// Zero means "no length predicate"; a negative value is a load error.
+	// Zero means "no length predicate"; a negative value is a load error,
+	// and so is any value that is not a YAML integer — a float like 2.5 is
+	// refused at decode (UnmarshalYAML) rather than truncated to 2.
 	// Self-reported like ResultMatches: it measures what the node said.
 	ResultMinBytes int `yaml:"result_min_bytes" json:"result_min_bytes,omitempty"`
 	// Verify, when non-nil, is a command the engine runs and judges itself.
 	// A pointer so "absent" and "declared but zero-valued" stay distinguishable.
 	Verify *Verification `yaml:"verify" json:"verify,omitempty"`
+}
+
+// UnmarshalYAML decodes a success_check exactly as the default decoder would,
+// except that result_min_bytes must be a YAML integer. Left to the default,
+// yaml.v3 truncates a float into an int field, so `result_min_bytes: 2.5`
+// loaded as 2 with no word said. The refusal is a *yaml.TypeError, so it
+// joins the decoder's other type errors under the same "parse graph YAML"
+// wrapping. Every other key decodes through the alias, which carries the tags
+// but not this method; a refused value is left out of that decode so the
+// field is reported once, in these words, not also as "cannot unmarshal".
+func (c *SuccessCheck) UnmarshalYAML(value *yaml.Node) error {
+	type plain SuccessCheck
+	var errs []string
+	rest := value
+	if value.Kind == yaml.MappingNode {
+		kept := *value
+		kept.Content = make([]*yaml.Node, 0, len(value.Content))
+		for i := 0; i+1 < len(value.Content); i += 2 {
+			key, v := value.Content[i], value.Content[i+1]
+			if key.Value == "result_min_bytes" {
+				if v.Kind == yaml.AliasNode && v.Alias != nil {
+					v = v.Alias
+				}
+				if tag := v.ShortTag(); v.Kind == yaml.ScalarNode && tag != "!!int" && tag != "!!null" {
+					errs = append(errs, fmt.Sprintf("line %d: success_check result_min_bytes must be a whole number of bytes, got %s %q", v.Line, tag, v.Value))
+					continue
+				}
+			}
+			kept.Content = append(kept.Content, key, value.Content[i+1])
+		}
+		rest = &kept
+	}
+	if err := rest.Decode((*plain)(c)); err != nil {
+		var terr *yaml.TypeError
+		if !errors.As(err, &terr) {
+			return err
+		}
+		errs = append(terr.Errors, errs...)
+	}
+	if len(errs) > 0 {
+		return &yaml.TypeError{Errors: errs}
+	}
+	return nil
 }
 
 // IsZero reports whether no predicate was configured at all — the caller then
