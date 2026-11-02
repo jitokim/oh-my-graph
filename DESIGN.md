@@ -1398,9 +1398,12 @@ Scheduler = Kahn on `depends_on`, but maintains a **ready set** run concurrently
    with `GraphValidationError` naming the node.
 2. in-degree per node; seed ready set with in-degree 0.
 3. Launch every ready node as a goroutine under `errgroup`, gated by a buffered
-   semaphore (size = min(graph.concurrency, globalCap=10), default 4); a node
-   is never started once the run's context is cancelled — its goroutine checks
-   the context before and after taking a slot (#432). On each SUCCESS,
+   semaphore (size = min(graph.concurrency, globalCap=10), default 4); the
+   scheduler admits no node whose run's context is already cancelled at its
+   launch check — the goroutine checks the context before and after taking a
+   slot (#432). A cancel that lands after that last check reaches `runNode`
+   with the context already cancelled, and the node's own cancellation
+   handling applies. On each SUCCESS,
    decrement dependents' in-degree; newly-0 join ready set.
 4. Node failure → retry policy; still failed → **halt (default)**: cancel shared
    context → kills in-flight children → exit non-zero naming the failing node.
