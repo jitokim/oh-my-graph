@@ -4216,10 +4216,10 @@ the re-plan and every goal-loop cycle. A plan that needs nothing keeps its
 spec byte for byte. The change is never silent: `Plan.ExitZeroAdded` records
 the ids, and the plan screen prints one line per node
 (`noteExitZeroAdded`), just before the verify-attachment notes —
-`note: node <id>: exit_zero: true added beside its result_matches (a planned
-check is never weaker than the exit code)`. A hand-written graph is never
-rewritten; its `result_matches` or `result_min_bytes` without `exit_zero` stays
-a lint advisory.
+`note: node <id>: exit_zero: true added beside its result_matches or
+result_min_bytes (a planned check is never weaker than the exit code)`. A
+hand-written graph is never rewritten; its `result_matches` or
+`result_min_bytes` without `exit_zero` stays a lint advisory.
 
 The general rule, because this class of hole recurs every time the schema grows:
 **every field on `graph.Node` must have an explicit disposition in
