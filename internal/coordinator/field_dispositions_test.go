@@ -201,8 +201,9 @@ var nodeFieldDispositions = map[string]fieldRule{
 // outside every guard the coordinator builds, so it cannot be waved through by
 // SuccessCheck being "constrained" at the Node level.
 var successCheckFieldDispositions = map[string]fieldRule{
-	"ExitZero":      {disposition: allowed, why: "judges the subprocess exit code; grants no capability"},
-	"ResultMatches": {disposition: allowed, why: "a regex over the node's own text — a weak signal, but it grants no capability"},
+	"ExitZero":       {disposition: allowed, why: "judges the subprocess exit code; grants no capability"},
+	"ResultMatches":  {disposition: allowed, why: "a regex over the node's own text — a weak signal, but it grants no capability"},
+	"ResultMinBytes": {disposition: allowed, why: "a length floor over the node's own text — it can only make a check stricter and grants no capability; not advertised to the planner (#446)"},
 	"Verify": {
 		disposition:    rejected,
 		why:            "arbitrary shell run by the ENGINE: no permission mode, no tool ceiling, no cwd restriction. Since ADR 0016 §2 the disposition is precisely: rejected when PLANNER-AUTHORED (this probe, unchanged), settable by trusted code strictly AFTER validation from a string the user typed at invocation (--verify-cmd, attachVerifyCommand) — the same shape as Agent, which validatePlannedNodeAgent rejects while applyAgentMapping sets. The plan the validator saw never contains one",

@@ -180,6 +180,13 @@ type SuccessCheck struct {
 	// load time by Validate, like OutputMatches, so a bad regex is a load
 	// error rather than a verdict handed down after the node was paid for.
 	ResultMatches string `yaml:"result_matches" json:"result_matches,omitempty"`
+	// ResultMinBytes, when positive, is the fewest bytes the node's .result —
+	// the same string ResultMatches is matched against — may hold. The result
+	// is the node's whole artifact, so a short closing remark that points at
+	// work "above" passes a regex while handing dependents nothing (#446).
+	// Zero means "no length predicate"; a negative value is a load error.
+	// Self-reported like ResultMatches: it measures what the node said.
+	ResultMinBytes int `yaml:"result_min_bytes" json:"result_min_bytes,omitempty"`
 	// Verify, when non-nil, is a command the engine runs and judges itself.
 	// A pointer so "absent" and "declared but zero-valued" stay distinguishable.
 	Verify *Verification `yaml:"verify" json:"verify,omitempty"`
@@ -190,7 +197,7 @@ type SuccessCheck struct {
 // check carrying only a verify would otherwise be read as "empty" and the
 // evidence command would never run.
 func (c SuccessCheck) IsZero() bool {
-	return !c.ExitZero && c.ResultMatches == "" && c.Verify == nil
+	return !c.ExitZero && c.ResultMatches == "" && c.ResultMinBytes == 0 && c.Verify == nil
 }
 
 // Retry cause tokens — the closed set of values a node's retry.on may list.

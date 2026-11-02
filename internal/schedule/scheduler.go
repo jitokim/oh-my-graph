@@ -72,6 +72,10 @@ const (
 // verify_failed retry cause must all agree on.
 const predicateVerify = "verify"
 
+// predicateResultMinBytes is the success_check predicate name of a result
+// shorter than its result_min_bytes floor (#446).
+const predicateResultMinBytes = "result_min_bytes"
+
 // maxDetailRunes is the one shared bound on a detail string — applied, after
 // capDetail has sanitised the string for the terminal, at every point a
 // message becomes a ledger/snapshot/event Detail: a verification
@@ -880,7 +884,7 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 // runNode executes one node under the run policy and records exactly one ledger
 // row for it. The lifecycle is fixed:
 //
-//	NodeRunner.Run → exit_zero → result_matches → Verifier.Verify →
+//	NodeRunner.Run → exit_zero → result_min_bytes → result_matches → Verifier.Verify →
 //	Handoff.PersistOutput → budget_usd → RunLedger.Record
 //
 // It returns nil on success, or the failure (an interpolation error, a runner
@@ -1039,9 +1043,10 @@ func (s *Scheduler) runNode(ctx context.Context, node graph.Node, h *handoff.Han
 			// which completed and keeps its artifact).
 			verdictErr = &NodeBudgetError{NodeID: node.ID, BudgetUSD: node.BudgetUSD, ActualUSD: outcome.TotalCostUSD, ActualUnknown: outcome.CostUnknown}
 		} else {
-			// Cheapest predicates first: exit_zero and result_matches are in-memory,
-			// the verification spawns a process. A node that already failed one of
-			// them never pays for a command run against the wreckage.
+			// Cheapest predicates first: exit_zero, result_min_bytes and
+			// result_matches are in-memory, the verification spawns a process.
+			// A node that already failed one of them never pays for a command
+			// run against the wreckage.
 			verdictErr = evaluateSuccessCheck(node, outcome)
 			if verdictErr == nil {
 				verification, verdictErr = s.verifyEvidence(ctx, node, h, invocation.Cwd)
@@ -1248,7 +1253,7 @@ func passProvenance(node graph.Node) string {
 		return runfeed.ProvenanceApproved
 	case node.SuccessCheck.Verify != nil:
 		return runfeed.ProvenanceVerified
-	case node.SuccessCheck.ResultMatches != "":
+	case node.SuccessCheck.ResultMatches != "", node.SuccessCheck.ResultMinBytes > 0:
 		return runfeed.ProvenanceSelfReported
 	default:
 		return runfeed.ProvenanceExitOnly
@@ -1945,6 +1950,12 @@ func evaluateSuccessCheck(node graph.Node, outcome runner.NodeOutcome) error {
 		return &NodeCheckError{NodeID: node.ID, Predicate: "exit_zero", Detail: exitDetail(outcome)}
 	}
 
+	// A length floor on the same string result_matches reads. The detail
+	// names only the two sizes, never the reply's bytes.
+	if check.ResultMinBytes > 0 && len(outcome.Result) < check.ResultMinBytes {
+		return &NodeCheckError{NodeID: node.ID, Predicate: predicateResultMinBytes, Detail: fmt.Sprintf("result is %d bytes, below the minimum of %d", len(outcome.Result), check.ResultMinBytes)}
+	}
+
 	if check.ResultMatches != "" {
 		re, err := regexp.Compile(check.ResultMatches)
 		if err != nil {
@@ -2020,7 +2031,7 @@ func causeFromRunError(err error) string {
 
 // causeFromCheck maps a failed verdict to a retry cause token: a blown
 // budget_usd is "budget_exceeded"; a failed verification is "verify_failed"; a
-// failed result_matches is "result_mismatch"; a failed exit_zero predicate is
+// failed result_matches or result_min_bytes is "result_mismatch"; a failed exit_zero predicate is
 // "nonzero_exit".
 //
 // budget_exceeded is deliberately its own token rather than folding into the
@@ -2041,7 +2052,10 @@ func causeFromCheck(err error) string {
 		switch checkErr.Predicate {
 		case predicateVerify:
 			return graph.CauseVerifyFailed
-		case "result_matches":
+		case "result_matches", predicateResultMinBytes:
+			// A too-short result is a miss over the same self-reported
+			// string, so it shares result_matches' token, its retry and
+			// its feedback trigger rather than minting a new one.
 			return graph.CauseResultMismatch
 		}
 	}

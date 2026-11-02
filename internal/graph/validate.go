@@ -140,7 +140,8 @@ func (g *Graph) Validate() error {
 //     (a root has no session to resume; more than one can't be merged) — and
 //     that parent is not a gate, which never records a session at all; and a
 //     parent has at most one session child, since two would share its session;
-//  6. every success_check is judgeable: a compilable result_matches regex, and
+//  6. every success_check is judgeable: a result_min_bytes that is not
+//     negative, a compilable result_matches regex, and
 //     a verify that is runnable — a command, a parseable timeout within the
 //     ceiling, a compilable output_matches regex;
 //  7. an agent name, when present, carries no surrounding whitespace;
@@ -598,6 +599,12 @@ func (g *Graph) visit(id string, colour map[string]int) (string, bool) {
 func (g *Graph) validateSuccessChecks() []error {
 	var issues []error
 	for _, n := range g.Nodes {
+		if minBytes := n.SuccessCheck.ResultMinBytes; minBytes < 0 {
+			issues = append(issues, &GraphValidationError{
+				NodeID: n.ID,
+				Reason: fmt.Sprintf("success_check result_min_bytes %d must not be negative (0 means no minimum)", minBytes),
+			})
+		}
 		if pattern := n.SuccessCheck.ResultMatches; pattern != "" {
 			if _, err := regexp.Compile(pattern); err != nil {
 				issues = append(issues, &GraphValidationError{
