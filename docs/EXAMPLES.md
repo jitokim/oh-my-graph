@@ -249,7 +249,7 @@ checked and its row says so. The four qualifiers are a closed set:
 | qualifier | what the engine actually did |
 |---|---|
 | `verified` | ran a `success_check.verify` command and judged its exit code (and `output_matches`, when declared) |
-| `self-reported` | matched a `result_matches` pattern against what the node *said* — no state outside the model's narration was observed |
+| `self-reported` | matched a `result_matches` pattern, or measured a `result_min_bytes` floor, against what the node *said* — no state outside the model's narration was observed |
 | `exit-only` | the subprocess exited 0, and no predicate beyond that was declared |
 | `approved` | a human approved a `type: gate` node — no subprocess, no predicate |
 
@@ -1334,11 +1334,37 @@ Spec: [DESIGN.md § Execution engine](../DESIGN.md#execution-engine).
 
 ## Evidence and retry (`success_check` / `retry`)
 
-`success_check` is evidence-grounded gating: `exit_zero`, `result_matches` (a
-regex over what the node *said*) and `verify` (a command the **engine** runs and
-judges). Which of those a node declares is what decides the qualifier its `PASS`
-row earns — see [Reading the
+`success_check` is evidence-grounded gating: `exit_zero`, `result_min_bytes` (a
+floor on how many bytes the node *said*), `result_matches` (a regex over what
+the node *said*) and `verify` (a command the **engine** runs and judges), judged
+in that order. Which of those a node declares is what decides the qualifier its
+`PASS` row earns — see [Reading the
 ledger](#reading-the-ledger--what-a-pass-says).
+
+**A floor on the reply's length (`result_min_bytes`).** A node's artifact is
+only its final assistant message. A node that wrote its report earlier in the
+session and closed with "the report is above." hands its dependents that one
+sentence, and a `result_matches` can still pass on it. `result_min_bytes` fails
+the node when that final reply, the same string `result_matches` reads, is
+shorter than the given number of bytes:
+
+```yaml
+  - id: report
+    prompt: |
+      Write the full report. Your final reply is the whole artifact the next
+      node receives, so put the entire report in it, not a pointer to it.
+    success_check: { exit_zero: true, result_min_bytes: 200 }
+    retry: { max: 1, on: [result_mismatch] }
+```
+
+It is a non-negative integer counted in bytes, not characters. `0` or unset
+means no minimum, and a negative value is refused at load. A miss reads
+`failed success_check result_min_bytes: result is 51 bytes, below the minimum
+of 200` and never quotes the reply. It carries the same retry cause as a
+`result_matches` miss, `result_mismatch`, so `retry.on`, the retry's quote of the
+previous reply and a `feedback:` loop treat it exactly like one. Like
+`result_matches` it measures what the node said, so a PASS it decides is
+`self-reported`.
 
 **A node that fails keeps its own account of why.** The engine's summary of a
 failure is one capped line — and for the commonest failure of all, a

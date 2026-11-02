@@ -75,6 +75,13 @@ has no open issue behind it.
   forces a node to carry evidence, and for nodes whose work is not externally
   observable (a review, a summary) there is nothing to verify against.
   ([#7](https://github.com/jitokim/oh-my-graph/issues/7))
+- **A node's artifact is only its final assistant message.** A node whose
+  closing message refers to output it wrote earlier ("the report is above")
+  hands its dependents that closing message and loses the rest.
+  `success_check.result_min_bytes` can catch a final message that is too
+  short, and graph authors should say in the prompt that the final reply
+  carries the whole output.
+  ([#446](https://github.com/jitokim/oh-my-graph/issues/446))
 - **Your `verify` command runs without the provider API keys.** A
   `success_check.verify` command is a child process oh-my-graph spawns, so it
   gets the same environment policy every other child gets: `ANTHROPIC_API_KEY`,

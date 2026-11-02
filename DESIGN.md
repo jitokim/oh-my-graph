@@ -1723,6 +1723,7 @@ after the runner returns an outcome. **All configured predicates must pass.**
 | predicate | judges | trusts the node? |
 |---|---|---|
 | `exit_zero` | the subprocess exit code | no |
+| `result_min_bytes` | the byte length of the node's `.result` text | **yes — self-report** |
 | `result_matches` | a regex over the node's `.result` text | **yes — self-report** |
 | `verify` | a command the ENGINE runs, by its own exit code/output | no |
 
@@ -1735,9 +1736,27 @@ by emitting "PASS", which is narration, not evidence. `verify` is the only
 predicate that observes state outside the LLM's own account of itself, and it is
 what a node whose success is externally observable should carry.
 
+`result_min_bytes` is a floor on the length, in bytes, of that same `.result`
+string `result_matches` reads (`len(outcome.Result)`, before any regex). A
+node's result is its whole artifact — its final assistant message, nothing
+earlier — so a closing remark that points at work "above" can pass a regex
+while handing dependents nothing (#446). The field is a non-negative integer:
+`0`, or leaving it unset, means no minimum, and a negative value is a load
+error (`GraphValidationError`, `success_check result_min_bytes -1 must not be
+negative (0 means no minimum)`). It runs after `exit_zero` and before
+`result_matches`. A miss is a `NodeCheckError` with predicate
+`result_min_bytes` and the detail `result is N bytes, below the minimum of M`,
+which names the two sizes and never quotes the reply. It maps to the same retry
+cause as a `result_matches` miss, `result_mismatch`, so `retry.on`, the retry's
+quote of the previous reply (ADR 0020) and a `feedback:` arc all treat it
+exactly as they treat a `result_matches` miss. Like `result_matches` it
+measures what the node said, so a PASS it decides alone is `self-reported`,
+not `exit-only`.
+
 ```yaml
 success_check:
   exit_zero: true
+  result_min_bytes: 200                  # optional; bytes of .result, 0/unset = no minimum
   result_matches: '^[*_`\s]*PASS'        # optional, secondary — see "Verdict patterns"
   verify:
     command: "go test ./... -run TestFoo" # required; run via the platform shell (`sh -c` on unix, `cmd /c` on Windows)
@@ -1776,9 +1795,10 @@ means (see "Gate nodes and `resume`", on why the flag pair is registered on
 
 ```go
 type SuccessCheck struct {
-	ExitZero      bool          `yaml:"exit_zero" json:"exit_zero,omitempty"`
-	ResultMatches string        `yaml:"result_matches" json:"result_matches,omitempty"`
-	Verify        *Verification `yaml:"verify" json:"verify,omitempty"` // nil = no evidence check
+	ExitZero       bool          `yaml:"exit_zero" json:"exit_zero,omitempty"`
+	ResultMatches  string        `yaml:"result_matches" json:"result_matches,omitempty"`
+	ResultMinBytes int           `yaml:"result_min_bytes" json:"result_min_bytes,omitempty"` // 0 = no minimum; negative = load error
+	Verify         *Verification `yaml:"verify" json:"verify,omitempty"`                     // nil = no evidence check
 }
 
 // Verification is a pointer field so "absent" and "zero" are distinguishable,
@@ -1803,8 +1823,9 @@ the graph the second leg executes would quietly differ from the one the first
 leg did. `graph.go` states this at the struct itself; copy the pair, not just
 the `yaml` half.
 
-`SuccessCheck.IsZero()` must also test `Verify == nil`, and `Validate` must
-reject an uncompilable `result_matches`, an empty `command`, an unparseable
+`SuccessCheck.IsZero()` must also test `ResultMinBytes == 0` and
+`Verify == nil`, and `Validate` must reject a negative `result_min_bytes`, an
+uncompilable `result_matches`, an empty `command`, an unparseable
 `timeout`, a timeout over the ceiling, and an uncompilable `output_matches` — at
 load, naming the node (`GraphValidationError`), never mid-run. Changing this
 struct touches loader, validator, shipped example graphs and tests together.
@@ -2300,7 +2321,8 @@ in Go (trim, strip emphasis, case-fold) would change what every existing
 Until such an ADR exists, the idiom above is the fix.
 
 **Where it runs in the node lifecycle** (`schedule.runNode`):
-`Handoff.ResolveInputs → NodeRunner.Run → exit_zero → result_matches → verify →
+`Handoff.ResolveInputs → NodeRunner.Run → exit_zero → result_min_bytes →
+result_matches → verify →
 Handoff.PersistOutput → budget_usd → RunState.RecordNode + RunLedger.Record →
 enqueue dependents` (the same order `schedule.runNode`'s own doc comment
 fixes). Ordering is
@@ -4718,7 +4740,8 @@ for the 1.0.0 gate; an `auto --interview` graph does (ADR 0044 §2.4).
   disagree about it. A FAIL carries none — its cause is in `DETAIL`.
 
 Node lifecycle: Scheduler ready → Handoff.ResolveInputs → NodeRunner.Run →
-exit_zero → result_matches → Verifier.Verify → pass: Handoff.PersistOutput →
+exit_zero → result_min_bytes → result_matches → Verifier.Verify → pass:
+Handoff.PersistOutput →
 budget_usd check → pass: RunState.RecordNode + RunLedger.Record + enqueue
 dependents; fail (any check, Verifier, OR budget): retry or Record(FAIL) +
 cancel if halt; gate pause: drain in flight, snapshot, exit 2. Output is
