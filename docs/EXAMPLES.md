@@ -191,7 +191,8 @@ its session-parent's, or a `retry` block (a retried attempt starts cold) —
 plus, for any node, a verdict nothing reads: a prompt that demands a token
 (`START your reply with …`) under a `success_check` with no `result_matches`,
 or a `result_matches` or `result_min_bytes` written without `exit_zero`
-(which drops the exit-code guard a node has for free only while it declares no check at all) —
+(which drops the exit-code guard a node has for free only while it declares
+no check at all) —
 plus, for a node that declares neither `allowed_tools` nor a
 `success_check.verify`, that nothing it does can observe a tool denial: a tool
 your Claude Code settings do not pre-authorise is refused, the node says so in
