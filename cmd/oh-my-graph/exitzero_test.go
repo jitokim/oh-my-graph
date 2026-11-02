@@ -23,7 +23,7 @@ import (
 // alone.
 
 const (
-	exitZeroAddedLine = "  note: node review: exit_zero: true added beside its result_matches (a planned check is never weaker than the exit code)\n"
+	exitZeroAddedLine = "  note: node review: exit_zero: true added beside its result_matches or result_min_bytes (a planned check is never weaker than the exit code)\n"
 	// exitZeroReviewPattern is the review node's verdict, which must come out
 	// of every artifact exactly as the planner wrote it.
 	exitZeroReviewPattern = "^APPROVED"

@@ -169,11 +169,12 @@ func isExecutableFile(path string) bool {
 }
 
 // noteExitZeroAdded names each planned node trusted code gave `exit_zero: true`
-// beside its `result_matches` (#371), so a check the human approves never
-// changes without the screen saying so; an empty list prints nothing.
+// beside its `result_matches` or positive `result_min_bytes` (#371, #447), so a
+// check the human approves never changes without the screen saying so; an
+// empty list prints nothing.
 func noteExitZeroAdded(w io.Writer, added []string) {
 	for _, id := range added {
-		fmt.Fprintf(w, "  note: node %s: exit_zero: true added beside its result_matches (a planned check is never weaker than the exit code)\n", id)
+		fmt.Fprintf(w, "  note: node %s: exit_zero: true added beside its result_matches or result_min_bytes (a planned check is never weaker than the exit code)\n", id)
 	}
 }
 
