@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -382,6 +383,33 @@ nodes:
 	// killed mid-flight, so whatever it spent went unreported too.
 	if want := `cancelled: run halted after node "boom" failed; cost unknown (killed before reporting)`; rec.Detail != want {
 		t.Errorf("sibling detail = %q, want %q", rec.Detail, want)
+	}
+}
+
+// TestScheduler_CancelledContextNeverStartsANode is #432: a ready node whose
+// ctx is already cancelled (Ctrl-C) while a concurrency slot is free used to
+// race the slot acquire against ctx.Done(), and Go's select picks at random
+// between ready cases — so the node could start, and spawn, on a dead run.
+// The race is per-launch, so one Run proves nothing; 200 do.
+func TestScheduler_CancelledContextNeverStartsANode(t *testing.T) {
+	g := mustGraph(t, `
+name: cancelled
+nodes:
+  - { id: a, prompt: a }
+`)
+	r := &countingRunner{FakeRunner: runner.NewFakeRunner(map[string]runner.NodeOutcome{"a": pass("s-a", 0)})}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	const runs = 200
+	for i := 0; i < runs; i++ {
+		s, h, led := newHarness(t, r, Options{Concurrency: 1})
+		if err := s.Run(ctx, g, h, led); !errors.Is(err, context.Canceled) {
+			t.Fatalf("run %d: err = %v, want context.Canceled", i, err)
+		}
+	}
+	if n := r.invoked.Load(); n != 0 {
+		t.Fatalf("runner invoked %d of %d times on a cancelled ctx", n, runs)
 	}
 }
 
@@ -1650,6 +1678,19 @@ func (r *pauseDrainRunner) Run(ctx context.Context, spec runner.NodeInvocation) 
 		}
 	}
 	return runner.NodeOutcome{Result: "PASS", ExitCode: 0, SessionID: "s-" + spec.Prompt}, nil
+}
+
+// countingRunner counts every Run call before delegating to the FakeRunner —
+// which returns early on a cancelled ctx without recording the call, so its own
+// Calls() cannot see a launch that reached the runner on a dead run (#432).
+type countingRunner struct {
+	*runner.FakeRunner
+	invoked atomic.Int32
+}
+
+func (r *countingRunner) Run(ctx context.Context, spec runner.NodeInvocation) (runner.NodeOutcome, error) {
+	r.invoked.Add(1)
+	return r.FakeRunner.Run(ctx, spec)
 }
 
 // recordingRunner returns scripted outcomes keyed by the first token of the

@@ -679,10 +679,22 @@ func (s *Scheduler) execute(ctx context.Context, g *graph.Graph, h *handoff.Hand
 		}
 		node, _ := g.NodeByID(id)
 		grp.Go(func() error {
+			// With ctx already cancelled and a slot free, both select cases
+			// are ready and Go picks one at random — so check ctx before the
+			// select, and again once the slot is held in case the
+			// cancellation landed between the two: a node is never started
+			// on a cancelled run (#432).
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			select {
 			case sem <- struct{}{}:
 			case <-ctx.Done():
 				return ctx.Err()
+			}
+			if err := ctx.Err(); err != nil {
+				<-sem
+				return err
 			}
 			defer func() { <-sem }()
 
