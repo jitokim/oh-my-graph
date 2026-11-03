@@ -2631,7 +2631,11 @@ prose before or after:
   inline the content instead).
 - "handoff" is "artifact" unless a node should continue its single parent's
   claude session, then "session". A "session" node must have exactly one
-  parent.
+  parent. When a node directly continues editing the same files its single
+  parent just edited (implement → tests for that code → docs for that code),
+  set "handoff": "session" so it keeps the parent's context instead of
+  re-reading the code. Review, check and verify nodes stay "artifact" so they
+  judge with fresh eyes.
 - Every node MUST set allowed_tools to a non-empty list drawn ONLY from this
   exact set: %[3]s
   Pick just the tools that node needs (least privilege). Any tool outside
