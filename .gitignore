@@ -15,3 +15,6 @@
 
 # Local isolated development worktrees
 /.worktrees/
+
+# goreleaser output (release builds)
+/dist/
