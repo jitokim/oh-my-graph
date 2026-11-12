@@ -17,6 +17,111 @@ pull requests never edit a common file
 ([ADR 0042](docs/adr/0042-a-changelog-entry-is-a-file-the-pr-owns.md)). What
 has landed since the last release is the list of files in that directory.
 
+## [v0.20.0] - 2026-11-12
+
+**A small reliability release.** Ctrl-C is handled more carefully: after an
+interrupt the scheduler no longer starts a node on the cancelled run
+([#432](https://github.com/jitokim/oh-my-graph/issues/432)), `runs list`,
+`show` and `resume` say how to continue a run interrupted after or before a
+gate approval was saved
+([#433](https://github.com/jitokim/oh-my-graph/issues/433)), and a run
+interrupted during its end-of-leg remote snapshot reads `FAIL`, matching its
+exit 1 ([#434](https://github.com/jitokim/oh-my-graph/issues/434)). A new
+`success_check.result_min_bytes` fails a node whose final reply is too short
+to be its artifact ([#446](https://github.com/jitokim/oh-my-graph/issues/446)).
+And release binaries' build info is accurate again, with no more `+dirty`
+([#450](https://github.com/jitokim/oh-my-graph/issues/450)).
+
+Open follow-ups.
+[#438](https://github.com/jitokim/oh-my-graph/issues/438): making a planned
+node's own push attributable in `auto`, and failing closed when attribution is
+unavailable, still await the captain's decision.
+[#449](https://github.com/jitokim/oh-my-graph/issues/449): a concurrent commit
+in hq was attributed to a run; it awaits the same decision.
+
+This release's rotating meta-review took **security** as its subject.
+Meta-review (security): we asked whether any change since v0.19.0 can put a
+secret (a password in a remote URL, a token or an API key) into a log line, a
+run record (`state.json`, `events.jsonl`, a node's `*.out`), the plan screen or
+these release notes. We read every code change in the release: the new
+`result_min_bytes` check and its messages, the new resume and `runs list`
+hints after an approved gate, the cancelled-context checks in the scheduler,
+the move of the guard rule into `runstate`, and the `.gitignore` change for
+release builds. We also confirmed that `scripts/release-notes.sh`,
+`.goreleaser.yaml` and the child-environment scrub list are unchanged since
+v0.19.0. The new messages carry only run IDs, node and gate IDs, gate
+descriptions, byte counts and fixed wording, and no change adds a field to the
+run record or formats a remote URL, an environment value or a child's stderr
+anywhere new. We found no leak path.
+
+Release QA: pending (make local, make smoke; codex smoke skipped: codex not installed)
+
+### Added
+
+- **`success_check.result_min_bytes` fails a node whose final reply is too
+  short.** A node's artifact is only its final assistant message, so a node
+  that closes with "the report is above" hands its dependents one sentence,
+  and a `result_matches` can still pass on it. `result_min_bytes: N` fails the
+  node when that reply, the same string `result_matches` reads, is under `N`
+  bytes. It runs after `exit_zero` and before `result_matches`, `0` or unset
+  means no minimum, and a negative value is refused at load. A miss carries
+  the `result_mismatch` retry cause, so `retry.on`, the retry's quote of the
+  previous reply and `feedback:` loops treat it like a `result_matches` miss.
+  ([#446](https://github.com/jitokim/oh-my-graph/issues/446))
+
+### Changed
+
+- **The plan screen's `exit_zero` note names `result_min_bytes` too.** Trusted
+  code also adds `exit_zero: true` beside a planned `result_min_bytes`, so the
+  note now reads `exit_zero: true added beside its result_matches or
+  result_min_bytes (a planned check is never weaker than the exit code)`.
+  ([#446](https://github.com/jitokim/oh-my-graph/issues/446))
+
+### Fixed
+
+- **After Ctrl-C the scheduler no longer admits a node on the
+  already-cancelled run.** A ready node waiting for a concurrency slot raced
+  the slot against the run's cancellation, and when both were ready Go picked
+  one at random, so a node could still start, and spawn a model process,
+  after the interrupt. The launch now checks the run's context before and
+  after taking the slot, and gives the slot back without starting the node
+  when the run is already cancelled at that check.
+  ([#432](https://github.com/jitokim/oh-my-graph/issues/432))
+- **`runs list`, `show` and `resume --approve` point to `--retry-failed` after
+  an interrupt that came after the approval was saved.** A Ctrl-C landing once
+  `resume --approve <gate>` had saved the approval left a run that reads
+  `FAIL` and is no longer paused, yet nothing said how to continue it, and
+  `--approve` again only answered that the run is not paused. `runs list` and
+  `show` now say the gate was already approved and to continue the run with
+  `oh-my-graph resume <id> --retry-failed`, and `resume --approve` on such a
+  run says the same (still exit 1), or `(nothing to resume)` when a retry
+  would run nothing.
+  ([#433](https://github.com/jitokim/oh-my-graph/issues/433))
+- **Ctrl-C during a resumed leg's start remote snapshot no longer exits 1
+  while the run is still paused.** An interrupt that lands before `resume
+  --approve`, `--reject` or `--retry-failed` has saved its decision leaves the
+  run paused at its gate, yet the command exited 1. It now exits 2, says the
+  run is still paused at its gate, and prints the gate's own hint, so the
+  same `resume` can be run again. A resumed run not paused at a gate, and a
+  fresh `run` or `auto`, still exit 1.
+  ([#433](https://github.com/jitokim/oh-my-graph/issues/433))
+- **An unguarded run interrupted during its end-of-leg remote snapshot now
+  reads `FAIL`, matching its exit 1.** When a Ctrl-C landed while the leg's
+  after remote snapshot ran and every node had already passed, the command
+  exited 1 and the leg closed `"failed"`, but `runs list`, `show` and the
+  dashboard read `PASS`, because a run without `--forbid-remote-changes`
+  counted its passed nodes before its closing outcome. A closed leg whose
+  outcome is `"failed"` now reads `FAIL` whatever its node count, guarded or
+  not, so exit 1 ↔ `FAIL` holds for every single-run invocation (ADR 0023
+  §2.6). `resume --retry-failed` on such a run is accepted: it launches no
+  node, the leg closes `"passed"`, and the run reads `PASS`.
+  ([#434](https://github.com/jitokim/oh-my-graph/issues/434))
+- **Release binaries' build info is now accurate: no more `+dirty` or
+  `vcs.modified=true`.** goreleaser writes into an untracked `dist/` before it
+  builds, and Go counts untracked files as a modified tree, so every release
+  binary was marked modified even though its contents always matched the tag.
+  ([#450](https://github.com/jitokim/oh-my-graph/issues/450))
+
 ## [v0.19.0] - 2026-10-29
 
 **If you built oh-my-graph from `main` between 2026-10-25 20:24 and 23:24 UTC
@@ -6233,7 +6338,8 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   permanently — it would make an `auto` run depend on files the user forgot
   they had.
 
-[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.20.0...HEAD
+[v0.20.0]: https://github.com/jitokim/oh-my-graph/compare/v0.19.0...v0.20.0
 [v0.19.0]: https://github.com/jitokim/oh-my-graph/compare/v0.18.0...v0.19.0
 [v0.18.0]: https://github.com/jitokim/oh-my-graph/compare/v0.17.0...v0.18.0
 [v0.17.0]: https://github.com/jitokim/oh-my-graph/compare/v0.16.0...v0.17.0
