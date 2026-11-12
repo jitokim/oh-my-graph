@@ -54,7 +54,16 @@ descriptions, byte counts and fixed wording, and no change adds a field to the
 run record or formats a remote URL, an environment value or a child's stderr
 anywhere new. We found no leak path.
 
-Release QA: pending (make local, make smoke; codex smoke skipped: codex not installed)
+Release QA: `make local` and `make smoke` (claude) passed (run
+`20261112-002222.565877191-1`: `write` verified, `critique` exit-only, in its
+own fresh directory). Codex smoke skipped: codex not installed. On a build of
+this branch, a Ctrl-C during a resumed leg's remote snapshot exited 2 and left
+the run paused when it landed before the approval was saved, and when it landed
+after, the run read FAIL and `runs list`, `show` and `resume --approve` all
+pointed to `--retry-failed`, which then passed. A `result_min_bytes: 50` node
+whose reply was 4 bytes failed with "result is 4 bytes, below the minimum of
+50", and a negative value was refused by `lint`. A build with an untracked
+`dist/` present reported `vcs.modified=false`.
 
 ### Added
 
