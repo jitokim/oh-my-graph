@@ -6,7 +6,7 @@
 
 <h1 align="center">oh-my-graph</h1>
 
-<p align="center"><em>Each node of a graph you write runs as a real subprocess of your own <code>claude</code> or <code>codex</code> CLI — your settings, your skills.</em></p>
+<p align="center"><em>Give it a goal. It plans the steps, runs each one with the <code>claude</code> or <code>codex</code> CLI you're already logged into, and can check the result with your own test command — or write the graph yourself in YAML.</em></p>
 
 <p align="center">
   <a href="https://github.com/jitokim/oh-my-graph/releases"><img src="https://img.shields.io/github/v/release/jitokim/oh-my-graph?include_prereleases&amp;label=release&amp;color=blue" alt="Latest release" /></a>
@@ -18,6 +18,20 @@
 <p align="center">
   <img src="assets/hero.png" alt="oh-my-graph" width="100%" />
 </p>
+
+```sh
+oh-my-graph auto "add a slugify() function to textutil.py, with unit tests" \
+  --verify-cmd 'sh verify.sh'
+```
+
+What happens (the GIF below is this exact run, v0.18.0):
+
+1. **Plan.** The goal becomes a 2-step graph: `impl`, then `check`. You see the plan before any step runs.
+2. **Run.** Each step is a separate `claude` session, isolated from your own settings and MCP servers by default (`--accept-loaded-user-config` loads them).
+3. **Check.** The engine runs your `verify.sh` itself, once on the starting tree and again at the last step (`check`), and the ledger says which PASS was verified by it and which was only an exit code.
+4. **Cost.** $0.28 for this run, from your plan allowance, not a metered API key.
+
+If a step edits `verify.sh` during the run, verification fails; the tests that script calls are not pinned.
 
 > Each node of a graph you write runs as a real subprocess of the `claude` or
 > `codex` CLI you already have logged in — so it starts inside your own
