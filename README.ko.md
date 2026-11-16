@@ -8,7 +8,7 @@
 
 <h1 align="center">oh-my-graph</h1>
 
-<p align="center"><em>직접 쓴 그래프의 각 노드가, 이미 로그인해 둔 <code>claude</code> 또는 <code>codex</code> CLI 의 진짜 서브프로세스로 돕니다 — 당신의 설정, 당신의 스킬 그대로.</em></p>
+<p align="center"><em>목표만 주면 됩니다. 단계를 계획하고, 이미 로그인해 둔 <code>claude</code> 또는 <code>codex</code> CLI로 각 단계를 실행하며, 당신의 테스트 명령으로 결과를 확인할 수도 있습니다 — 아니면 그래프를 YAML로 직접 써도 됩니다.</em></p>
 
 <p align="center">
   <a href="https://github.com/jitokim/oh-my-graph/releases"><img src="https://img.shields.io/github/v/release/jitokim/oh-my-graph?include_prereleases&amp;label=release&amp;color=blue" alt="Latest release" /></a>
@@ -20,6 +20,20 @@
 <p align="center">
   <img src="assets/hero.png" alt="oh-my-graph" width="100%" />
 </p>
+
+```sh
+oh-my-graph auto "add a slugify() function to textutil.py, with unit tests" \
+  --verify-cmd 'sh verify.sh'
+```
+
+무슨 일이 일어나나 (아래 GIF가 바로 이 실행, v0.18.0):
+
+1. **계획.** 목표가 2단계 그래프가 됩니다: `impl`, 그다음 `check`. 어떤 단계든 실행되기 전에 플랜을 먼저 보여 줍니다.
+2. **실행.** 각 단계는 당신의 설정, CLAUDE.md, MCP 서버와 스킬을 그대로 쓰는 별도의 `claude` 세션입니다.
+3. **확인.** 엔진이 당신의 `verify.sh`를 직접 실행합니다. 시작 트리에서 한 번, 마지막 단계(`check`)에서 다시 한 번 실행하며, ledger는 어느 PASS가 그 스크립트로 검증된 것이고 어느 것이 exit code뿐인지 적습니다.
+4. **비용.** 이번 실행은 $0.28이며, 종량제 API key가 아니라 플랜 사용량에서 나갑니다.
+
+실행 중에 어떤 단계가 `verify.sh`를 고치면 검증이 실패합니다. 그 스크립트가 부르는 테스트는 고정되지 않습니다.
 
 > 노드 런타임이 API key가 아니라 — 직접 로그인한 `claude` 또는 `codex`
 > CLI인 graph-native 멀티 에이전트 오케스트레이터.
