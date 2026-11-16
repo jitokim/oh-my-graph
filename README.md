@@ -27,7 +27,7 @@ oh-my-graph auto "add a slugify() function to textutil.py, with unit tests" \
 What happens (the GIF below is this exact run, v0.18.0):
 
 1. **Plan.** The goal becomes a 2-step graph: `impl`, then `check`. You see the plan before any step runs.
-2. **Run.** Each step is a separate `claude` session with your settings, CLAUDE.md, MCP servers and skills.
+2. **Run.** Each step is a separate `claude` session, isolated from your own settings and MCP servers by default (`--accept-loaded-user-config` loads them).
 3. **Check.** The engine runs your `verify.sh` itself, once on the starting tree and again at the last step (`check`), and the ledger says which PASS was verified by it and which was only an exit code.
 4. **Cost.** $0.28 for this run, from your plan allowance, not a metered API key.
 

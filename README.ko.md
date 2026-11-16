@@ -29,7 +29,7 @@ oh-my-graph auto "add a slugify() function to textutil.py, with unit tests" \
 무슨 일이 일어나나 (아래 GIF가 바로 이 실행, v0.18.0):
 
 1. **계획.** 목표가 2단계 그래프가 됩니다: `impl`, 그다음 `check`. 어떤 단계든 실행되기 전에 플랜을 먼저 보여 줍니다.
-2. **실행.** 각 단계는 당신의 설정, CLAUDE.md, MCP 서버와 스킬을 그대로 쓰는 별도의 `claude` 세션입니다.
+2. **실행.** 각 단계는 별도의 `claude` 세션이며, 기본적으로 당신의 설정과 MCP 서버로부터 격리되어 실행됩니다(`--accept-loaded-user-config`를 주면 그것들을 불러옵니다).
 3. **확인.** 엔진이 당신의 `verify.sh`를 직접 실행합니다. 시작 트리에서 한 번, 마지막 단계(`check`)에서 다시 한 번 실행하며, ledger는 어느 PASS가 그 스크립트로 검증된 것이고 어느 것이 exit code뿐인지 적습니다.
 4. **비용.** 이번 실행은 $0.28이며, 종량제 API key가 아니라 플랜 사용량에서 나갑니다.
 
