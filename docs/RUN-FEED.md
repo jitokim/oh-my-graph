@@ -185,6 +185,7 @@ runs only — see "Goal cycles" below), `build_evidence` (auto-mode launches onl
 `conventions` (`auto --conventions` launches only — see below),
 `verify_pins` (`auto --verify-cmd` launches only — see below),
 `run_base_sha` and `remote_changes` (the remote change record — see below),
+`working_tree` (a leg that ended with uncommitted changes only — see below),
 `nodes` (map of node id →
 terminal record: `verdict`, `session_id`, `cost_usd`, `cost_unknown`, `usage`
 (`input_tokens`, `cached_input_tokens`, `output_tokens`,
@@ -432,6 +433,27 @@ attributed.
 Both are **additive optional fields and the schema stays 3**: an older binary
 that ignores them loses the report and runs the rest of the run as this one
 does. No event carries them; the feed schema is unchanged.
+
+`working_tree` is the invocation repository's working tree as the run's last
+leg to end left it ([#455](https://github.com/jitokim/oh-my-graph/issues/455)),
+read with `git status --porcelain=v1 -z --untracked-files=all` in the same
+repository the remote change record reads: `changed`, the number of paths, and
+`paths`, every path that status lists — tracked files modified, added, deleted
+or renamed (a rename by its new path), and untracked files not ignored —
+relative to the repository root and sorted. `run`, `auto` and `resume` replace
+it at each leg's end. It is absent when that tree was clean, when git could not
+read it, and on a leg interrupted before its end. It is a report: nothing reads
+it to decide anything, and no verdict, node status or exit code depends on it.
+An **additive optional field; the schema stays 3**, no event carries it and the
+feed schema is unchanged.
+
+The same record prints one line after the ledger table, after the remote
+change record, when `changed` is above zero — `working tree: 1 file changed,
+uncommitted (<paths>)` for one path, `working tree: <N> files changed,
+uncommitted (<paths>)` otherwise, `<paths>` being the first five joined by `, `
+and followed by `, …` when there are more. A clean tree prints no line. `show
+<run-id>` prints the same line below its table from the recorded field, never
+from the tree as it is now.
 
 `forbid_remote_changes` is `true` on a run launched with `run` or `auto
 --forbid-remote-changes` (ADR 0046) and absent otherwise; `resume` reads it,

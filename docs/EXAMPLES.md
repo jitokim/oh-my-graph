@@ -89,6 +89,17 @@ of independent lanes, where one lane's failure should not cancel the others'
 in-flight work. The flag ORs with the field: either saying continue means
 continue.
 
+A leg that ends with uncommitted changes in the invocation repository's
+working tree — every `run`, each `auto` cycle's run and each `resume` leg —
+prints one more line after the ledger, beside the remote change record:
+`working tree: 3 files changed, uncommitted (a.go, b.go, c.go)` (`1 file` for
+one; the first five paths, then `, …`). The paths are what `git status
+--porcelain` lists, and they are recorded as `working_tree` in `state.json`, so
+`show <run-id>` prints the same line later, even after the work was committed.
+It is visibility only: a run can `PASS` with its work left uncommitted, and the
+line changes no verdict and no exit code. A clean tree prints nothing
+([#455](https://github.com/jitokim/oh-my-graph/issues/455)).
+
 **What those six statuses mean, and how a live run is told from one whose
 process died**, is the run feed's own rule — one shared derivation behind `runs
 list`, the dashboard, the single-run view and `watch`, so they cannot disagree.
