@@ -1,6 +1,6 @@
 ### Changed
 
-- **Under `--runtime codex`, the planner no longer plans commits.** Codex's
+- **Under `--runtime codex`, the planner is told not to plan commits.** Codex's
   `workspace-write` sandbox keeps `.git` read-only, so a node told to commit
   could not. `auto`, `chat` and `design` on Codex now tell the planner that no
   node can commit, stage or amend; the work stays in the working tree and the

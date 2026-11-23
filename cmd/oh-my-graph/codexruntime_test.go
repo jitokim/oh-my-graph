@@ -13,7 +13,7 @@ import (
 
 // codexNoCommitMarker is a fragment of the coordinator's Codex paragraph
 // (coordinator.WithCodexRuntime), enough to tell whether it reached a prompt.
-const codexNoCommitMarker = "sandbox keeps .git\nread-only, so no planned node can commit"
+const codexNoCommitMarker = "no planned node can commit"
 
 // plannerPromptsOf returns every planner call's prompt the fake recorded.
 func plannerPromptsOf(fake *runner.FakeRunner) []string {
