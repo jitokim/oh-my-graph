@@ -138,6 +138,12 @@ func showRun(w io.Writer, runDir, runID string) error {
 			InputTokens: snap.PlanningUsage.InputTokens, CachedInputTokens: snap.PlanningUsage.CachedInputTokens,
 			OutputTokens: snap.PlanningUsage.OutputTokens, ReasoningOutputTokens: snap.PlanningUsage.ReasoningOutputTokens,
 		})
+	// The working tree the run's last leg ended with, as recorded then
+	// (#455): never read again here, since the tree may have been committed
+	// since.
+	if line := workingTreeLine(snap.WorkingTree); line != "" {
+		fmt.Fprintf(w, "\n%s\n", line)
+	}
 	// The hint `runs list` prints under a FAIL row past an approved gate, here
 	// for the same run (#433). A graph that does not parse gets no hint: the
 	// table above does not need the graph, and `resume` reports the parse.

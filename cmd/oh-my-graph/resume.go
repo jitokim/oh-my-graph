@@ -818,6 +818,9 @@ func continueRun(flags *resumeFlags, snap runstate.Snapshot, records map[string]
 		// never a new one, so an old run with none attributes nothing.
 		RunBaseSHA:    snap.RunBaseSHA,
 		RemoteChanges: snap.RemoteChanges,
+		// And the working tree the last leg ended with (#455), until this
+		// leg's own end replaces it.
+		WorkingTree: snap.WorkingTree,
 		// The node records, and the pause, as loaded, until the before remote
 		// snapshot has completed uninterrupted: only then does RecordLegGate
 		// write this leg's carried records — a retry's retained subset, its
