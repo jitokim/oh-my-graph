@@ -165,7 +165,9 @@ gate, a `type: gate` node with its `depends_on`) and `run` that file.
 Codex maps `permission_mode: plan` to its read-only sandbox, ordinary modes to
 `workspace-write`, and `bypassPermissions` to `danger-full-access`. That sandbox
 is also a network boundary, so a Codex graph halts at its first node that
-pushes or calls `gh`. Codex does
+pushes or calls `gh`. A Codex node cannot commit either, because its sandbox
+keeps `.git` read-only, so its work stays uncommitted
+([docs/LIMITATIONS.md](docs/LIMITATIONS.md)). Codex does
 not report USD or implement Claude's `agent:` selector, so `agent:` and
 `--max-goal-budget-usd` are rejected before a Codex run spends anything; the
 ledger labels its USD cost `unknown` rather than inventing `$0`. A

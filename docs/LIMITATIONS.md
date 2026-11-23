@@ -284,6 +284,20 @@ has no open issue behind it.
     file the sandbox can READ (it restricts writes and network, not reads), so
     `network_access=true` probably does fix `gh` there. That case is
     **unmeasured**; the macOS result above is the only one this repo has run.
+- **A Codex `workspace-write` node cannot commit, and cannot run Go builds or
+  tests while GOCACHE is outside the workspace.**
+  Measured 2026-11-23 with codex-cli 0.171.0: Codex mounts the workspace's
+  `.git` read-only, so `git commit` fails with "fatal: Unable to create
+  '.git/index.lock': Read-only file system", in a plain clone too; and the
+  default Go cache, `~/.cache/go-build`, is read-only to the node, so `go build`
+  and `go test` fail. One run uses one runtime (ADR 0025), so no later Claude
+  node can commit for it. Under Codex the planner is told not to plan a commit
+  or tell any node to commit, stage or amend; the work stays in the working tree
+  and the end-of-run `working tree:` line reports it.
+  Workarounds, measured: setting GOCACHE inside the workspace, or adding the Go
+  cache directory to Codex's `sandbox_workspace_write.writable_roots`, lets Go
+  builds and tests run; making `.git` writable or having the engine commit is an
+  open design question in [#457](https://github.com/jitokim/oh-my-graph/issues/457).
 - **Model inheritance is Claude-only.** Under `--runtime codex`, a planned node
   runs the model `codex` itself defaults to; `--ignore-user-config` withholds
   `~/.codex/config.toml`'s `model` key, and oh-my-graph does not read it. A
