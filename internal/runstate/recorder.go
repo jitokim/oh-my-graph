@@ -41,6 +41,7 @@ func NewSnapshotRecorder(path string, base Snapshot) *SnapshotRecorder {
 	}
 	base.Nodes = nodes
 	base.RemoteChanges = base.RemoteChanges.clone()
+	base.WorkingTree = base.WorkingTree.clone()
 	return &SnapshotRecorder{path: path, snap: base}
 }
 
@@ -209,6 +210,17 @@ func (r *SnapshotRecorder) RecordRemoteChanges(changes RemoteChanges) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.snap.RemoteChanges = changes.clone()
+	return Write(r.path, r.snap)
+}
+
+// RecordWorkingTree stores the working tree a leg ended with (#455) and
+// persists the snapshot in one write. nil — a clean tree, or one that could
+// not be read — removes the earlier leg's record. The paths are copied.
+// Nothing else is touched.
+func (r *SnapshotRecorder) RecordWorkingTree(wt *WorkingTree) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.snap.WorkingTree = wt.clone()
 	return Write(r.path, r.snap)
 }
 

@@ -1,6 +1,7 @@
 package worktree
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -41,14 +42,16 @@ const gitWaitDelay = time.Second
 // snapshot's reads — Remotes, LsRemoteHeads, LsRemoteHeadsURL and
 // LsRemoteHeadsURLOutsideRepo (with their `git version` and collision
 // checks), RepoConfigFingerprint, ResolveFetchURL, ShallowFile, the local
-// CommitAttributable check and the GHDefaultRemotes config read — go through
+// CommitAttributable check, the GHDefaultRemotes config read and the
+// end-of-leg WorkingTreeChanges status read (#455) — go through
 // the same m.gitRun/gitCmd path that m.git uses, so they inherit the one
 // exec.Command, the env scrub and the timeout, and add only
 // GIT_TERMINAL_PROMPT=0 and an empty GIT_ASKPASS — plus, for Remotes and the
 // two ls-remote reads, GIT_SSH_COMMAND
 // running ssh in BatchMode unless the user chose an ssh command (see
 // snapshotEnv), and for CommitAttributable's commands only, the two
-// variables that turn off replace refs and grafts (attributionEnv). That widens ADR 0005's "the git worktree commands behind a
+// variables that turn off replace refs and grafts (attributionEnv), and for
+// WorkingTreeChanges only, GIT_OPTIONAL_LOCKS=0 (statusEnv). That widens ADR 0005's "the git worktree commands behind a
 // node's worktree:" to cover them; it adds no spawner.
 //
 // Construct it in cmd/oh-my-graph and inject it; the Scheduler never builds
@@ -420,10 +423,36 @@ func (m *GitManager) gitRunIn(ctx context.Context, out *outsideRepo, extraEnv []
 	}
 	combined, err := cmd.CombinedOutput()
 	output := strings.TrimSpace(string(combined))
-	if err != nil && errors.Is(cmdCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-		err = fmt.Errorf("timed out after %s: %w", m.timeout, err)
+	return output, m.timedOut(ctx, cmdCtx, err)
+}
+
+// gitStdout is gitEnv for a command whose stdout is data to parse: it returns
+// git's stdout alone and untrimmed, and keeps stderr apart, for the error
+// only — a warning git prints is then never read as data.
+func (m *GitManager) gitStdout(ctx context.Context, extraEnv []string, args ...string) (string, error) {
+	cmdCtx, cancel := context.WithTimeout(ctx, m.timeout)
+	defer cancel()
+
+	cmd := m.gitCmd(cmdCtx, extraEnv, args...)
+	if m.observe != nil {
+		m.observe(cmd)
 	}
-	return output, err
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdout, err := cmd.Output()
+	if err = m.timedOut(ctx, cmdCtx, err); err != nil {
+		return "", gitFailure(args, err, strings.TrimSpace(stderr.String()))
+	}
+	return string(stdout), nil
+}
+
+// timedOut names the per-command timeout in err when it, and not the
+// caller's ctx, ended the command run under cmdCtx.
+func (m *GitManager) timedOut(ctx, cmdCtx context.Context, err error) error {
+	if err != nil && errors.Is(cmdCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+		return fmt.Errorf("timed out after %s: %w", m.timeout, err)
+	}
+	return err
 }
 
 // gitCmd assembles the exact *exec.Cmd for one git invocation: argv, the
@@ -1107,4 +1136,55 @@ func parseGHResolved(out string) map[string]string {
 		values[name] = value
 	}
 	return values
+}
+
+// WorkingTreeChanges runs `git status --porcelain=v1 -z --untracked-files=all`
+// in the invocation repository, a local read with prompting off like
+// GHDefaultRemotes's, and returns every path it lists, sorted: tracked files
+// modified, added, deleted or renamed, and untracked files not ignored. A
+// clean tree is an empty list and no error. It runs with statusEnv and parses
+// git's stdout only (gitStdout).
+func (m *GitManager) WorkingTreeChanges(ctx context.Context) ([]string, error) {
+	out, err := m.gitStdout(ctx, statusEnv, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	if err != nil {
+		return nil, err
+	}
+	return parseStatusPorcelainZ(out), nil
+}
+
+// statusEnv is the extra env of WorkingTreeChanges alone: noPromptEnv, plus
+// GIT_OPTIONAL_LOCKS=0, so `git status` never takes index.lock to refresh the
+// index and cannot collide with the user's own git running in the same repo.
+var statusEnv = append(append([]string(nil), noPromptEnv...), "GIT_OPTIONAL_LOCKS=0")
+
+// statusCodes is every character an XY status of `git status --porcelain=v1`
+// is made of.
+const statusCodes = " MTADRCU?!"
+
+// parseStatusPorcelainZ reads NUL-separated "XY <path>" entries. A rename or
+// copy (X or Y is R or C) is followed by its original path as a field of its
+// own, which is skipped: the path listed is the new one. An entry of any other
+// shape is skipped.
+func parseStatusPorcelainZ(out string) []string {
+	paths := make([]string, 0)
+	fields := strings.Split(out, "\x00")
+	for i := 0; i < len(fields); i++ {
+		entry := fields[i]
+		var xy, path string
+		switch {
+		case len(entry) > 3 && entry[2] == ' ':
+			xy, path = entry[:2], entry[3:]
+		default:
+			continue
+		}
+		if !strings.ContainsRune(statusCodes, rune(xy[0])) || !strings.ContainsRune(statusCodes, rune(xy[1])) || xy == "  " {
+			continue
+		}
+		paths = append(paths, path)
+		if strings.ContainsAny(xy, "RC") {
+			i++
+		}
+	}
+	sort.Strings(paths)
+	return paths
 }

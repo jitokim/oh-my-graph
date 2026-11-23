@@ -63,6 +63,9 @@ type remoteLeg struct {
 	noRunBranches bool
 	guardedBefore *worktree.GuardedBefore
 	changes       runstate.RemoteChanges
+	// workingTree is the invocation repository's uncommitted paths as end
+	// read them (#455), nil for a clean tree or one not read.
+	workingTree *runstate.WorkingTree
 }
 
 // beginRemoteLeg takes the leg's before snapshot and records it. prior is the
@@ -123,6 +126,10 @@ func (l *remoteLeg) snapshot(ctx context.Context) runstate.RemoteSnapshot {
 // context is cancelled with runCtx, so an interrupt while the snapshot runs
 // kills its git and gh and records it interrupted the same way. It reports
 // whether the leg was interrupted by the time the record was written.
+//
+// Beside the record it reads the working tree's uncommitted paths in the same
+// repository (#455) and records them; an interrupted leg reads nothing and
+// records none.
 func (l *remoteLeg) end(runCtx context.Context) (interrupted bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -160,6 +167,11 @@ func (l *remoteLeg) end(runCtx context.Context) (interrupted bool) {
 		l.changes.EndLeg(after, worktree.RunCommitCheck(context.Background(), l.obs, l.baseSHA))
 	}
 	l.record()
+	l.workingTree = nil
+	if !interrupted {
+		l.workingTree = l.readWorkingTree(ctx)
+	}
+	l.recordWorkingTree()
 	return interrupted
 }
 
@@ -316,13 +328,15 @@ func (l *remoteLeg) record() {
 	}
 }
 
-// print writes what this leg observed, after the ledger table, and on a
-// guarded leg which parts its verdict could not use (printGuardSummary).
+// print writes what this leg observed, after the ledger table, on a guarded
+// leg which parts its verdict could not use (printGuardSummary), and the
+// working tree it left uncommitted (printWorkingTree).
 func (l *remoteLeg) print(w io.Writer) {
 	printRemoteChanges(w, &l.changes)
 	if l.guarded {
 		printGuardSummary(w, &l.changes, l.noRunBranches)
 	}
+	printWorkingTree(w, l.workingTree)
 }
 
 // prNotGuarded is the notice a guarded leg prints, at launch and again in its

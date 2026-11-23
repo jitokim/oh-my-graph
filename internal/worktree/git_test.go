@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -444,5 +445,212 @@ func TestGitManager_AcquireLeavesAnExistingManagedBaseAlone(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o755 {
 		t.Errorf("legacy managed base dir mode = %v, want it untouched at 0755.", got)
+	}
+}
+
+// writeFile writes text to path, failing the test on error.
+func writeFile(t *testing.T, path, text string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestGitManager_WorkingTreeChangesListsUncommittedPaths reads a real tree
+// holding every kind of entry the end-of-leg line counts (#455): modified,
+// untracked, deleted, and renamed — by its new path only — sorted, with an
+// ignored file left out.
+func TestGitManager_WorkingTreeChangesListsUncommittedPaths(t *testing.T) {
+	m, repo := newTestManager(t)
+	for _, name := range []string{"modified.txt", "deleted.txt", "old.txt", ".gitignore"} {
+		writeFile(t, filepath.Join(repo, name), name+"\n")
+	}
+	writeFile(t, filepath.Join(repo, ".gitignore"), "ignored.log\n")
+	gitIn(t, repo, "add", ".")
+	gitIn(t, repo, "commit", "-q", "-m", "files")
+
+	clean, err := m.WorkingTreeChanges(context.Background())
+	if err != nil || len(clean) != 0 {
+		t.Fatalf("clean tree: got %q, %v; want no paths, no error", clean, err)
+	}
+
+	writeFile(t, filepath.Join(repo, "modified.txt"), "changed\n")
+	if err := os.Remove(filepath.Join(repo, "deleted.txt")); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "mv", "old.txt", "renamed.txt")
+	if err := os.MkdirAll(filepath.Join(repo, "dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, "dir", "untracked.txt"), "new\n")
+	writeFile(t, filepath.Join(repo, "a-untracked.txt"), "new\n")
+	writeFile(t, filepath.Join(repo, "ignored.log"), "noise\n")
+
+	got, err := m.WorkingTreeChanges(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"a-untracked.txt", "deleted.txt", "dir/untracked.txt", "modified.txt", "renamed.txt"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("WorkingTreeChanges = %q, want %q", got, want)
+	}
+}
+
+// TestGitManager_WorkingTreeChangesOutsideARepoFails: a directory that is no
+// repository is an error to record nothing on, never a clean tree.
+func TestGitManager_WorkingTreeChangesOutsideARepoFails(t *testing.T) {
+	m := NewGitManager(t.TempDir(), filepath.Join(t.TempDir(), "worktrees"), "test-run")
+	if paths, err := m.WorkingTreeChanges(context.Background()); err == nil {
+		t.Fatalf("WorkingTreeChanges outside a repository = %q, nil; want an error", paths)
+	}
+}
+
+// TestGitManager_WorkingTreeChangesScrubsTheChildEnv asserts the status read
+// runs through the seam's one command path: the billing variables deleted,
+// the rest of the parent env kept, and prompting off.
+func TestGitManager_WorkingTreeChangesScrubsTheChildEnv(t *testing.T) {
+	m, _ := newTestManager(t)
+	m.environ = func() []string {
+		return append(os.Environ(),
+			"ANTHROPIC_API_KEY=sk-live-secret",
+			"ANTHROPIC_AUTH_TOKEN=tok-secret",
+			"OPENAI_API_KEY=sk-openai-secret",
+			"CODEX_API_KEY=sk-codex-secret",
+			"OMG_TEST_KEEP=kept",
+		)
+	}
+	seen := recordCommands(m)
+	if _, err := m.WorkingTreeChanges(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	cmds := seen()
+	if len(cmds) != 1 || !slices.Equal(cmds[0].args, []string{"status", "--porcelain=v1", "-z", "--untracked-files=all"}) {
+		t.Fatalf("commands = %+v, want the one status read", cmds)
+	}
+	env := cmds[0].env
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") || strings.HasPrefix(kv, "ANTHROPIC_AUTH_TOKEN=") ||
+			strings.HasPrefix(kv, "OPENAI_API_KEY=") || strings.HasPrefix(kv, "CODEX_API_KEY=") {
+			t.Errorf("billing variable leaked into the git child env: %s", kv)
+		}
+	}
+	for _, want := range []string{"OMG_TEST_KEEP=kept", "GIT_TERMINAL_PROMPT=0"} {
+		if !slices.Contains(env, want) {
+			t.Errorf("git child env lacks %s", want)
+		}
+	}
+}
+
+// TestParseStatusPorcelainZ pins the -z parse: each entry kind, a rename's
+// original path skipped, a first entry that starts with a space, a path
+// holding spaces, a warning riding along, and sorting.
+func TestParseStatusPorcelainZ(t *testing.T) {
+	cases := []struct {
+		name string
+		out  string
+		want []string
+	}{
+		{"clean", "", []string{}},
+		{"modified untracked deleted", " M z.go\x00?? a.txt\x00 D m.md\x00", []string{"a.txt", "m.md", "z.go"}},
+		{"first entry starts with a space", " M z.go\x00?? a.txt\x00", []string{"a.txt", "z.go"}},
+		{"staged rename keeps the new path", "R  new.go\x00old.go\x00A  b.go\x00", []string{"b.go", "new.go"}},
+		{"copy keeps the new path", "C  copy.go\x00orig.go\x00", []string{"copy.go"}},
+		{"worktree rename", " R new.go\x00old.go\x00", []string{"new.go"}},
+		{"rename of a name that looks like an entry", "R  b.go\x00?? x\x00", []string{"b.go"}},
+		{"path with spaces", "?? my file.txt\x00", []string{"my file.txt"}},
+		{"warning skipped", "warning: something odd\x00?? a\x00", []string{"a"}},
+		{"staged and unstaged", "MM both.go\x00AD gone.go\x00", []string{"both.go", "gone.go"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := parseStatusPorcelainZ(c.out); !slices.Equal(got, c.want) {
+				t.Fatalf("parseStatusPorcelainZ(%q) = %q, want %q", c.out, got, c.want)
+			}
+		})
+	}
+}
+
+// TestParseStatusPorcelainZKeepsLeadingSpaceInName: git's stdout is never
+// trimmed, so a name that starts with a space keeps it, in the first entry as
+// in any other, and a rename after them still lists its new path.
+func TestParseStatusPorcelainZKeepsLeadingSpaceInName(t *testing.T) {
+	out := " M  report.go\x00??  x.txt\x00R  new.go\x00old.go\x00"
+	want := []string{" report.go", " x.txt", "new.go"}
+	if got := parseStatusPorcelainZ(out); !slices.Equal(got, want) {
+		t.Fatalf("parseStatusPorcelainZ(%q) = %q, want %q", out, got, want)
+	}
+}
+
+// TestWorkingTreeChangesSetsOptionalLocksOff: the status read, and only it,
+// runs with GIT_OPTIONAL_LOCKS=0, so it never takes index.lock beside the
+// user's own git — on top of the scrubbed env, not instead of it.
+func TestWorkingTreeChangesSetsOptionalLocksOff(t *testing.T) {
+	m, repo := newTestManager(t)
+	m.environ = func() []string {
+		return append(os.Environ(),
+			"ANTHROPIC_API_KEY=sk-live-secret",
+			"ANTHROPIC_AUTH_TOKEN=tok-secret",
+			"OPENAI_API_KEY=sk-openai-secret",
+			"CODEX_API_KEY=sk-codex-secret",
+		)
+	}
+	seen := recordCommands(m)
+	if _, err := m.WorkingTreeChanges(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if m.HeadCommit(context.Background(), repo) == "" {
+		t.Fatal("HeadCommit of the test repo is empty")
+	}
+	if _, err := m.GHDefaultRemotes(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	cmds := seen()
+	if len(cmds) != 3 || cmds[0].args[0] != "status" {
+		t.Fatalf("commands = %+v, want the status read, then rev-parse and config", cmds)
+	}
+	status := cmds[0].env
+	if !slices.Contains(status, "GIT_OPTIONAL_LOCKS=0") || lastValue(status, "GIT_OPTIONAL_LOCKS") != "0" {
+		t.Errorf("the status read's env lacks GIT_OPTIONAL_LOCKS=0")
+	}
+	assertScrubbedEnv(t, status)
+	if !slices.Contains(status, "GIT_TERMINAL_PROMPT=0") {
+		t.Errorf("the status read's env lacks GIT_TERMINAL_PROMPT=0")
+	}
+	for _, c := range cmds[1:] {
+		if hasKey(c.env, "GIT_OPTIONAL_LOCKS") {
+			t.Errorf("git %v got GIT_OPTIONAL_LOCKS; only the status read may", c.args)
+		}
+	}
+}
+
+// TestWorkingTreeChangesIgnoresStderr runs the status read under a git on PATH
+// that prints a warning to stderr before handing over to the real git: the
+// warning reaches no path, and the first one — an unstaged change, whose entry
+// starts with a space — comes back whole.
+func TestWorkingTreeChangesIgnoresStderr(t *testing.T) {
+	m, repo := newTestManager(t)
+	writeFile(t, filepath.Join(repo, "a.txt"), "a\n")
+	gitIn(t, repo, "add", ".")
+	gitIn(t, repo, "commit", "-q", "-m", "a")
+	writeFile(t, filepath.Join(repo, "a.txt"), "changed\n")
+	writeFile(t, filepath.Join(repo, "b.txt"), "new\n")
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("no git on PATH: %v", err)
+	}
+	bin := t.TempDir()
+	script := "#!/bin/sh\nif [ \"$1\" = status ]; then printf 'warning: odd\\0?? warned.txt\\0' >&2; fi\nexec '" + realGit + "' \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	got, err := m.WorkingTreeChanges(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"a.txt", "b.txt"}; !slices.Equal(got, want) {
+		t.Fatalf("WorkingTreeChanges = %q, want %q", got, want)
 	}
 }
