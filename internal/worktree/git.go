@@ -1,6 +1,7 @@
 package worktree
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -49,7 +50,8 @@ const gitWaitDelay = time.Second
 // two ls-remote reads, GIT_SSH_COMMAND
 // running ssh in BatchMode unless the user chose an ssh command (see
 // snapshotEnv), and for CommitAttributable's commands only, the two
-// variables that turn off replace refs and grafts (attributionEnv). That widens ADR 0005's "the git worktree commands behind a
+// variables that turn off replace refs and grafts (attributionEnv), and for
+// WorkingTreeChanges only, GIT_OPTIONAL_LOCKS=0 (statusEnv). That widens ADR 0005's "the git worktree commands behind a
 // node's worktree:" to cover them; it adds no spawner.
 //
 // Construct it in cmd/oh-my-graph and inject it; the Scheduler never builds
@@ -421,10 +423,36 @@ func (m *GitManager) gitRunIn(ctx context.Context, out *outsideRepo, extraEnv []
 	}
 	combined, err := cmd.CombinedOutput()
 	output := strings.TrimSpace(string(combined))
-	if err != nil && errors.Is(cmdCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-		err = fmt.Errorf("timed out after %s: %w", m.timeout, err)
+	return output, m.timedOut(ctx, cmdCtx, err)
+}
+
+// gitStdout is gitEnv for a command whose stdout is data to parse: it returns
+// git's stdout alone and untrimmed, and keeps stderr apart, for the error
+// only — a warning git prints is then never read as data.
+func (m *GitManager) gitStdout(ctx context.Context, extraEnv []string, args ...string) (string, error) {
+	cmdCtx, cancel := context.WithTimeout(ctx, m.timeout)
+	defer cancel()
+
+	cmd := m.gitCmd(cmdCtx, extraEnv, args...)
+	if m.observe != nil {
+		m.observe(cmd)
 	}
-	return output, err
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdout, err := cmd.Output()
+	if err = m.timedOut(ctx, cmdCtx, err); err != nil {
+		return "", gitFailure(args, err, strings.TrimSpace(stderr.String()))
+	}
+	return string(stdout), nil
+}
+
+// timedOut names the per-command timeout in err when it, and not the
+// caller's ctx, ended the command run under cmdCtx.
+func (m *GitManager) timedOut(ctx, cmdCtx context.Context, err error) error {
+	if err != nil && errors.Is(cmdCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+		return fmt.Errorf("timed out after %s: %w", m.timeout, err)
+	}
+	return err
 }
 
 // gitCmd assembles the exact *exec.Cmd for one git invocation: argv, the
@@ -1114,14 +1142,20 @@ func parseGHResolved(out string) map[string]string {
 // in the invocation repository, a local read with prompting off like
 // GHDefaultRemotes's, and returns every path it lists, sorted: tracked files
 // modified, added, deleted or renamed, and untracked files not ignored. A
-// clean tree is an empty list and no error.
+// clean tree is an empty list and no error. It runs with statusEnv and parses
+// git's stdout only (gitStdout).
 func (m *GitManager) WorkingTreeChanges(ctx context.Context) ([]string, error) {
-	out, err := m.gitEnv(ctx, noPromptEnv, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	out, err := m.gitStdout(ctx, statusEnv, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if err != nil {
 		return nil, err
 	}
 	return parseStatusPorcelainZ(out), nil
 }
+
+// statusEnv is the extra env of WorkingTreeChanges alone: noPromptEnv, plus
+// GIT_OPTIONAL_LOCKS=0, so `git status` never takes index.lock to refresh the
+// index and cannot collide with the user's own git running in the same repo.
+var statusEnv = append(append([]string(nil), noPromptEnv...), "GIT_OPTIONAL_LOCKS=0")
 
 // statusCodes is every character an XY status of `git status --porcelain=v1`
 // is made of.
@@ -1129,11 +1163,10 @@ const statusCodes = " MTADRCU?!"
 
 // parseStatusPorcelainZ reads NUL-separated "XY <path>" entries. A rename or
 // copy (X or Y is R or C) is followed by its original path as a field of its
-// own, which is skipped: the path listed is the new one. gitRun trims the
-// output, so the first entry of an unstaged change (" M <path>") arrives
-// without its leading space and is read as one: an entry whose third byte is
-// not the separator but whose second is. An entry of any other shape — the
-// output is combined, so it may be a warning — is skipped.
+// own, which is skipped: the path listed is the new one. A first entry of an
+// unstaged change that lost its leading space to a trim (" M <path>" read as
+// "M <path>") is still read as one: an entry whose third byte is not the
+// separator but whose second is. An entry of any other shape is skipped.
 func parseStatusPorcelainZ(out string) []string {
 	paths := make([]string, 0)
 	fields := strings.Split(out, "\x00")

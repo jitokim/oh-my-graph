@@ -569,3 +569,77 @@ func TestParseStatusPorcelainZ(t *testing.T) {
 		})
 	}
 }
+
+// TestWorkingTreeChangesSetsOptionalLocksOff: the status read, and only it,
+// runs with GIT_OPTIONAL_LOCKS=0, so it never takes index.lock beside the
+// user's own git — on top of the scrubbed env, not instead of it.
+func TestWorkingTreeChangesSetsOptionalLocksOff(t *testing.T) {
+	m, repo := newTestManager(t)
+	m.environ = func() []string {
+		return append(os.Environ(),
+			"ANTHROPIC_API_KEY=sk-live-secret",
+			"ANTHROPIC_AUTH_TOKEN=tok-secret",
+			"OPENAI_API_KEY=sk-openai-secret",
+			"CODEX_API_KEY=sk-codex-secret",
+		)
+	}
+	seen := recordCommands(m)
+	if _, err := m.WorkingTreeChanges(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if m.HeadCommit(context.Background(), repo) == "" {
+		t.Fatal("HeadCommit of the test repo is empty")
+	}
+	if _, err := m.GHDefaultRemotes(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	cmds := seen()
+	if len(cmds) != 3 || cmds[0].args[0] != "status" {
+		t.Fatalf("commands = %+v, want the status read, then rev-parse and config", cmds)
+	}
+	status := cmds[0].env
+	if !slices.Contains(status, "GIT_OPTIONAL_LOCKS=0") || lastValue(status, "GIT_OPTIONAL_LOCKS") != "0" {
+		t.Errorf("the status read's env lacks GIT_OPTIONAL_LOCKS=0")
+	}
+	assertScrubbedEnv(t, status)
+	if !slices.Contains(status, "GIT_TERMINAL_PROMPT=0") {
+		t.Errorf("the status read's env lacks GIT_TERMINAL_PROMPT=0")
+	}
+	for _, c := range cmds[1:] {
+		if hasKey(c.env, "GIT_OPTIONAL_LOCKS") {
+			t.Errorf("git %v got GIT_OPTIONAL_LOCKS; only the status read may", c.args)
+		}
+	}
+}
+
+// TestWorkingTreeChangesIgnoresStderr runs the status read under a git on PATH
+// that prints a warning to stderr before handing over to the real git: the
+// warning reaches no path, and the first one — an unstaged change, whose entry
+// starts with a space — comes back whole.
+func TestWorkingTreeChangesIgnoresStderr(t *testing.T) {
+	m, repo := newTestManager(t)
+	writeFile(t, filepath.Join(repo, "a.txt"), "a\n")
+	gitIn(t, repo, "add", ".")
+	gitIn(t, repo, "commit", "-q", "-m", "a")
+	writeFile(t, filepath.Join(repo, "a.txt"), "changed\n")
+	writeFile(t, filepath.Join(repo, "b.txt"), "new\n")
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("no git on PATH: %v", err)
+	}
+	bin := t.TempDir()
+	script := "#!/bin/sh\nif [ \"$1\" = status ]; then printf 'warning: odd\\0?? warned.txt\\0' >&2; fi\nexec '" + realGit + "' \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	got, err := m.WorkingTreeChanges(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"a.txt", "b.txt"}; !slices.Equal(got, want) {
+		t.Fatalf("WorkingTreeChanges = %q, want %q", got, want)
+	}
+}
