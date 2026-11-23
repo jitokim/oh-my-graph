@@ -303,11 +303,14 @@ has no open issue behind it.
   ignored. Adding the Go cache directory to Codex's
   `sandbox_workspace_write.writable_roots` did too, but that was measured as a
   `codex exec -c 'sandbox_workspace_write.writable_roots=[...]'` override, not
-  through the engine. oh-my-graph passes no such override: a planned node runs
-  with `--ignore-user-config` (`toolPolicyFor` sets layer 1, and the Codex argv
-  adds the flag while it is set), so a `writable_roots` entry in
-  `~/.codex/config.toml` reaches planned nodes only on an `auto` run that
-  passes `--accept-loaded-user-config`. Making `.git` writable or having the
+  through the engine. oh-my-graph passes no such override, so whether a
+  `writable_roots` entry in `~/.codex/config.toml` takes effect depends on the
+  command. A graph run with `run --runtime codex`, hand-written or written by
+  `design`, gets it by default: its nodes carry no setting sources, and the
+  Codex argv adds `--ignore-user-config` only while layer 1 is set. An `auto`
+  planned node gets it only when the run passes `--accept-loaded-user-config`,
+  because `toolPolicyFor` sets layer 1 otherwise. A `chat` planned node never
+  gets it: `chat` has no such flag. Making `.git` writable or having the
   engine commit is an open design question in
   [#457](https://github.com/jitokim/oh-my-graph/issues/457).
 - **Model inheritance is Claude-only.** Under `--runtime codex`, a planned node
