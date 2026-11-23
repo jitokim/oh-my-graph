@@ -108,6 +108,8 @@ func runChatWith(runtime runner.Runtime, args []string, in io.Reader, out io.Wri
 		options = append(options, coordinator.WithUserSettingsPath(usermodel.DefaultPath()))
 	} else {
 		fmt.Fprintln(out, "Codex runtime: Claude agent mapping and skill activation are unavailable; each generated plan will show its filesystem sandbox policy before confirmation.")
+		// Same planner as `auto`'s, so the same no-commit hint (#457).
+		options = append(options, coordinator.WithCodexRuntime())
 	}
 	// Outside the runtime branch: the menu is in the planner prompt, which
 	// both runtimes render.

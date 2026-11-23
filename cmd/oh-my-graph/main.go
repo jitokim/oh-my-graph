@@ -690,6 +690,9 @@ func runAutoWithRuntime(runtime runner.Runtime, args []string, nodeRunner runner
 		options = append(options, coordinator.WithUserSettingsPath(usermodel.DefaultPath()))
 	} else {
 		fmt.Fprintln(os.Stdout, "Codex runtime: Claude agent mapping and skill activation are unavailable; the generated plan will show the filesystem sandbox policy used for each node.")
+		// Codex only: its sandbox keeps .git read-only, so the planner is told
+		// no node can commit (#457). A Claude run's prompt stays unchanged.
+		options = append(options, coordinator.WithCodexRuntime())
 	}
 	// On both runtimes, and on the coordinator for the goal loop's reason:
 	// every cycle renders the planner prompt afresh, menu included (ADR 0038).

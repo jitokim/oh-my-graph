@@ -284,6 +284,35 @@ has no open issue behind it.
     file the sandbox can READ (it restricts writes and network, not reads), so
     `network_access=true` probably does fix `gh` there. That case is
     **unmeasured**; the macOS result above is the only one this repo has run.
+- **A Codex `workspace-write` node cannot commit, and cannot run Go builds or
+  tests while GOCACHE is outside the workspace.**
+  Measured 2026-11-23 with codex-cli 0.171.0: Codex mounts the workspace's
+  `.git` read-only, so `git add` and `git commit` fail on `.git/index.lock`
+  ("fatal: Unable to create '.git/index.lock': Read-only file system"); the
+  `git add` control was a plain clone, not a linked worktree; and the
+  default Go cache is read-only to the node, so `go build` and `go test` fail.
+  The measured cache was `~/.cache/go-build`, the Linux default; macOS keeps its
+  default elsewhere, so run `go env GOCACHE` to find the directory to add. One
+  run uses one runtime (ADR 0025), so no later Claude node can commit for it.
+  Under Codex the planner is told not to plan a commit or tell any node to
+  commit, stage or amend; the work stays in the working tree and the end-of-run
+  `working tree:` line reports it.
+  Workarounds, each measured once with `go vet`: setting GOCACHE inside the
+  workspace lets the Go command use its build cache, though that cache
+  directory is untracked and shows on the `working tree:` line unless it is
+  ignored. Adding the Go cache directory to Codex's
+  `sandbox_workspace_write.writable_roots` did too, but that was measured as a
+  `codex exec -c 'sandbox_workspace_write.writable_roots=[...]'` override, not
+  through the engine. oh-my-graph passes no such override, so whether a
+  `writable_roots` entry in `~/.codex/config.toml` takes effect depends on the
+  command. A graph run with `run --runtime codex`, hand-written or written by
+  `design`, gets it by default: its nodes carry no setting sources, and the
+  Codex argv adds `--ignore-user-config` only while layer 1 is set. An `auto`
+  planned node gets it only when the run passes `--accept-loaded-user-config`,
+  because `toolPolicyFor` sets layer 1 otherwise. A `chat` planned node never
+  gets it: `chat` has no such flag. Making `.git` writable or having the
+  engine commit is an open design question in
+  [#457](https://github.com/jitokim/oh-my-graph/issues/457).
 - **Model inheritance is Claude-only.** Under `--runtime codex`, a planned node
   runs the model `codex` itself defaults to; `--ignore-user-config` withholds
   `~/.codex/config.toml`'s `model` key, and oh-my-graph does not read it. A

@@ -158,6 +158,10 @@ func runDesignWithRuntime(runtime runner.Runtime, args []string, nodeRunner runn
 		fmt.Fprintf(out, "The planner receives this before its instructions, and the graph's nodes do not:\n\n%s", prefix)
 		options = append(options, coordinator.WithInterviewPrefix(prefix))
 	}
+	if runtime == runner.RuntimeCodex {
+		// Same planner as `auto`'s, so the same no-commit hint (#457).
+		options = append(options, coordinator.WithCodexRuntime())
+	}
 
 	fmt.Fprintf(out, "Planning a graph for goal %q...\n", flags.goal)
 	plan, err := coordinator.New(nodeRunner, options...).Plan(ctx, flags.goal, nil)
