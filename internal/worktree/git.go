@@ -1163,10 +1163,8 @@ const statusCodes = " MTADRCU?!"
 
 // parseStatusPorcelainZ reads NUL-separated "XY <path>" entries. A rename or
 // copy (X or Y is R or C) is followed by its original path as a field of its
-// own, which is skipped: the path listed is the new one. A first entry of an
-// unstaged change that lost its leading space to a trim (" M <path>" read as
-// "M <path>") is still read as one: an entry whose third byte is not the
-// separator but whose second is. An entry of any other shape is skipped.
+// own, which is skipped: the path listed is the new one. An entry of any other
+// shape is skipped.
 func parseStatusPorcelainZ(out string) []string {
 	paths := make([]string, 0)
 	fields := strings.Split(out, "\x00")
@@ -1176,8 +1174,6 @@ func parseStatusPorcelainZ(out string) []string {
 		switch {
 		case len(entry) > 3 && entry[2] == ' ':
 			xy, path = entry[:2], entry[3:]
-		case i == 0 && len(entry) > 2 && entry[1] == ' ':
-			xy, path = " "+entry[:1], entry[2:]
 		default:
 			continue
 		}

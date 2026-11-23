@@ -542,8 +542,8 @@ func TestGitManager_WorkingTreeChangesScrubsTheChildEnv(t *testing.T) {
 }
 
 // TestParseStatusPorcelainZ pins the -z parse: each entry kind, a rename's
-// original path skipped, a first entry that lost its leading space to the
-// trim, a path holding spaces, a warning riding along, and sorting.
+// original path skipped, a first entry that starts with a space, a path
+// holding spaces, a warning riding along, and sorting.
 func TestParseStatusPorcelainZ(t *testing.T) {
 	cases := []struct {
 		name string
@@ -552,7 +552,7 @@ func TestParseStatusPorcelainZ(t *testing.T) {
 	}{
 		{"clean", "", []string{}},
 		{"modified untracked deleted", " M z.go\x00?? a.txt\x00 D m.md\x00", []string{"a.txt", "m.md", "z.go"}},
-		{"first entry trimmed", "M z.go\x00?? a.txt\x00", []string{"a.txt", "z.go"}},
+		{"first entry starts with a space", " M z.go\x00?? a.txt\x00", []string{"a.txt", "z.go"}},
 		{"staged rename keeps the new path", "R  new.go\x00old.go\x00A  b.go\x00", []string{"b.go", "new.go"}},
 		{"copy keeps the new path", "C  copy.go\x00orig.go\x00", []string{"copy.go"}},
 		{"worktree rename", " R new.go\x00old.go\x00", []string{"new.go"}},
@@ -567,6 +567,17 @@ func TestParseStatusPorcelainZ(t *testing.T) {
 				t.Fatalf("parseStatusPorcelainZ(%q) = %q, want %q", c.out, got, c.want)
 			}
 		})
+	}
+}
+
+// TestParseStatusPorcelainZKeepsLeadingSpaceInName: git's stdout is never
+// trimmed, so a name that starts with a space keeps it, in the first entry as
+// in any other, and a rename after them still lists its new path.
+func TestParseStatusPorcelainZKeepsLeadingSpaceInName(t *testing.T) {
+	out := " M  report.go\x00??  x.txt\x00R  new.go\x00old.go\x00"
+	want := []string{" report.go", " x.txt", "new.go"}
+	if got := parseStatusPorcelainZ(out); !slices.Equal(got, want) {
+		t.Fatalf("parseStatusPorcelainZ(%q) = %q, want %q", out, got, want)
 	}
 }
 
