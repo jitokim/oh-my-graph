@@ -553,9 +553,11 @@ has no open issue behind it.
   `working_tree` in `state.json`) is `git status --porcelain` in the directory
   the run was launched from, read once as each leg ends. A node's engine
   worktree (`worktree:`) is a checkout of its own and is not listed, and
-  neither is an ignored file or a change in another repository. It is
-  visibility only: a run whose work is left uncommitted still exits 0 when its
-  nodes pass.
+  neither is an ignored file or a change in another repository. It shows the
+  working tree's state as the leg ends, not only what this run changed: a
+  change that was already uncommitted before the run started is listed too.
+  It is visibility only: a run whose work is left uncommitted still exits 0
+  when its nodes pass.
   ([#455](https://github.com/jitokim/oh-my-graph/issues/455))
 - **The remote change record sees two snapshots of one repository, and
   only reports unless you pass `--forbid-remote-changes`.** `run`, `auto` and
