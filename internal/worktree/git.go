@@ -41,7 +41,8 @@ const gitWaitDelay = time.Second
 // snapshot's reads — Remotes, LsRemoteHeads, LsRemoteHeadsURL and
 // LsRemoteHeadsURLOutsideRepo (with their `git version` and collision
 // checks), RepoConfigFingerprint, ResolveFetchURL, ShallowFile, the local
-// CommitAttributable check and the GHDefaultRemotes config read — go through
+// CommitAttributable check, the GHDefaultRemotes config read and the
+// end-of-leg WorkingTreeChanges status read (#455) — go through
 // the same m.gitRun/gitCmd path that m.git uses, so they inherit the one
 // exec.Command, the env scrub and the timeout, and add only
 // GIT_TERMINAL_PROMPT=0 and an empty GIT_ASKPASS — plus, for Remotes and the
@@ -1107,4 +1108,54 @@ func parseGHResolved(out string) map[string]string {
 		values[name] = value
 	}
 	return values
+}
+
+// WorkingTreeChanges runs `git status --porcelain=v1 -z --untracked-files=all`
+// in the invocation repository, a local read with prompting off like
+// GHDefaultRemotes's, and returns every path it lists, sorted: tracked files
+// modified, added, deleted or renamed, and untracked files not ignored. A
+// clean tree is an empty list and no error.
+func (m *GitManager) WorkingTreeChanges(ctx context.Context) ([]string, error) {
+	out, err := m.gitEnv(ctx, noPromptEnv, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	if err != nil {
+		return nil, err
+	}
+	return parseStatusPorcelainZ(out), nil
+}
+
+// statusCodes is every character an XY status of `git status --porcelain=v1`
+// is made of.
+const statusCodes = " MTADRCU?!"
+
+// parseStatusPorcelainZ reads NUL-separated "XY <path>" entries. A rename or
+// copy (X or Y is R or C) is followed by its original path as a field of its
+// own, which is skipped: the path listed is the new one. gitRun trims the
+// output, so the first entry of an unstaged change (" M <path>") arrives
+// without its leading space and is read as one: an entry whose third byte is
+// not the separator but whose second is. An entry of any other shape — the
+// output is combined, so it may be a warning — is skipped.
+func parseStatusPorcelainZ(out string) []string {
+	paths := make([]string, 0)
+	fields := strings.Split(out, "\x00")
+	for i := 0; i < len(fields); i++ {
+		entry := fields[i]
+		var xy, path string
+		switch {
+		case len(entry) > 3 && entry[2] == ' ':
+			xy, path = entry[:2], entry[3:]
+		case i == 0 && len(entry) > 2 && entry[1] == ' ':
+			xy, path = " "+entry[:1], entry[2:]
+		default:
+			continue
+		}
+		if !strings.ContainsRune(statusCodes, rune(xy[0])) || !strings.ContainsRune(statusCodes, rune(xy[1])) || xy == "  " {
+			continue
+		}
+		paths = append(paths, path)
+		if strings.ContainsAny(xy, "RC") {
+			i++
+		}
+	}
+	sort.Strings(paths)
+	return paths
 }

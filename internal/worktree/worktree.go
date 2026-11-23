@@ -11,7 +11,8 @@
 // implementation. See docs/adr/0005.
 //
 // The same seam also reads the invocation repository's remotes and remote
-// branch refs for the run's remote snapshot (#410), behind RemoteObserver
+// branch refs for the run's remote snapshot (#410), and its working tree's
+// uncommitted changes at the end of each leg (#455), behind RemoteObserver
 // beside Provider. Those are git commands the engine issues against the same
 // repository, so they run on GitManager rather than on a new spawner.
 //
@@ -149,4 +150,9 @@ type RemoteObserver interface {
 	// "base" for the remote's own repository, or the OWNER/REPO gh chose
 	// instead. None is an empty map, not an error.
 	GHDefaultRemotes(ctx context.Context) (map[string]string, error)
+	// WorkingTreeChanges lists, sorted, every path `git status --porcelain`
+	// lists in the invocation repository's working tree (#455): tracked
+	// files modified, added, deleted or renamed — a rename by its new path —
+	// and untracked files not ignored. A clean tree is an empty list.
+	WorkingTreeChanges(ctx context.Context) ([]string, error)
 }

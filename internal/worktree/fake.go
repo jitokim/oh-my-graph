@@ -81,7 +81,8 @@ func (f *FakeManager) Calls() []string {
 // counterpart for the remote snapshot. It answers from what a test set on it
 // (no git, no network): the remotes list or an error for it, each remote's
 // heads or an error for them, the set of shas CommitAttributable passes (or
-// cannot check), the shallow digest, and the remotes marked gh's default.
+// cannot check), the shallow digest, the remotes marked gh's default, and
+// the working tree's uncommitted paths.
 // Mutating it between two snapshots is how a test scripts a change.
 //
 // A read by URL answers what SetURLHeads scripted for that URL, else what
@@ -111,6 +112,8 @@ type FakeRemoteObserver struct {
 	ghDefaults  map[string]string
 	ghDefErr    error
 	ghDefCalls  int
+	wtPaths     []string
+	wtErr       error
 }
 
 // NewFakeRemoteObserver builds a FakeRemoteObserver with no remotes.
@@ -389,6 +392,31 @@ func (f *FakeRemoteObserver) GHDefaultCalls() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.ghDefCalls
+}
+
+// SetWorkingTree scripts what WorkingTreeChanges returns: the uncommitted
+// paths, or a non-nil err in their place. Nothing scripted is a clean tree.
+func (f *FakeRemoteObserver) SetWorkingTree(paths []string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.wtPaths = append([]string(nil), paths...)
+	f.wtErr = err
+}
+
+// WorkingTreeChanges returns the scripted paths, sorted, or the scripted
+// error.
+func (f *FakeRemoteObserver) WorkingTreeChanges(ctx context.Context) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.wtErr != nil {
+		return nil, f.wtErr
+	}
+	out := append([]string{}, f.wtPaths...)
+	sort.Strings(out)
+	return out, nil
 }
 
 var _ RemoteObserver = (*FakeRemoteObserver)(nil)
