@@ -327,6 +327,7 @@ type Coordinator struct {
 	// means unknown: the prompt is byte-identical to one built without it.
 	startCommit         string
 	forbidRemoteChanges bool // ADR 0046 §5.2 — see WithForbidRemoteChanges (forbidremote.go)
+	codexRuntime        bool // #457 — see WithCodexRuntime (codexruntime.go)
 }
 
 // Option configures a Coordinator at construction.
@@ -604,8 +605,8 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 }
 
 // plannerPromptFor renders one planning attempt's base prompt: the planner
-// instruction for the goal, then suffix (forbidRemoteSuffix's sentence, or
-// empty), then the goal loop's continuation section when a previous cycle left
+// instruction for the goal, then suffix (forbidRemoteSuffix's sentence and
+// codexRuntimeSuffix's, each or both empty), then the goal loop's continuation section when a previous cycle left
 // work remaining. It is the one place that continuation is fenced, with or
 // without a suffix, so a suffix only ever adds its own text ahead of it.
 //

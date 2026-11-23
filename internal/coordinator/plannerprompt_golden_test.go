@@ -184,3 +184,46 @@ func TestPlannerPrompt_ForbidRemoteChangesSentence(t *testing.T) {
 		}
 	}
 }
+
+// #457: the first-cycle prompt under the Codex runtime, so its no-commit
+// paragraph is a reviewed golden diff. Without the option every other golden
+// here is the prompt unchanged.
+func TestPlannerPromptGoldens_CodexRuntime(t *testing.T) {
+	first, _, _ := plannerPrompts(t, WithCodexRuntime())
+	checkPlannerGolden(t, "first-codex", first.Prompt)
+}
+
+// #457: the no-commit paragraph reaches the first attempt, its repair and a
+// continuation exactly once each, before the continuation section; without
+// the option it reaches none of them; with --forbid-remote-changes too, both
+// paragraphs appear, forbid-remote first.
+func TestPlannerPromptCodexNoCommit(t *testing.T) {
+	first, repair, continuation := plannerPrompts(t, WithCodexRuntime())
+	for name, call := range map[string]runner.NodeInvocation{"first": first, "repair": repair, "continuation": continuation} {
+		if n := strings.Count(call.Prompt, plannerCodexNoCommitSentence); n != 1 {
+			t.Errorf("%s prompt carries the codex paragraph %d times, want 1", name, n)
+		}
+	}
+	if s, c := strings.Index(continuation.Prompt, plannerCodexNoCommitSentence), strings.Index(continuation.Prompt, goldenRemaining); s < 0 || c < 0 || s > c {
+		t.Errorf("continuation: paragraph at %d, remaining at %d; want the paragraph before the continuation section", s, c)
+	}
+
+	first, repair, continuation = plannerPrompts(t)
+	for name, call := range map[string]runner.NodeInvocation{"first": first, "repair": repair, "continuation": continuation} {
+		if strings.Contains(call.Prompt, "Codex runtime") {
+			t.Errorf("%s prompt names the Codex runtime without the option", name)
+		}
+	}
+
+	first, repair, continuation = plannerPrompts(t, WithForbidRemoteChanges(), WithCodexRuntime())
+	for name, call := range map[string]runner.NodeInvocation{"first": first, "repair": repair, "continuation": continuation} {
+		f, c := strings.Count(call.Prompt, plannerForbidRemoteChangesSentence), strings.Count(call.Prompt, plannerCodexNoCommitSentence)
+		if f != 1 || c != 1 {
+			t.Errorf("%s prompt with both options carries forbid-remote %d times and codex %d times, want 1 each", name, f, c)
+			continue
+		}
+		if !strings.Contains(call.Prompt, plannerForbidRemoteChangesSentence+plannerCodexNoCommitSentence) {
+			t.Errorf("%s prompt with both options does not put the codex paragraph right after the forbid-remote sentence", name)
+		}
+	}
+}
