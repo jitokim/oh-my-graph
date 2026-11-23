@@ -795,6 +795,11 @@ type Snapshot struct {
 	// drops it loses the report and runs the rest of the run exactly as this
 	// one does. RunBaseSHA is the same: nothing but this record reads it.
 	RemoteChanges *RemoteChanges `json:"remote_changes,omitempty"`
+	// WorkingTree is the invocation repository's uncommitted changes as the
+	// last leg to end read them (#455). nil — and absent — on a clean tree,
+	// and on a leg that could not read it. A report, so Schema stays 3 by
+	// the rule RemoteChanges states. See WorkingTree.
+	WorkingTree *WorkingTree `json:"working_tree,omitempty"`
 
 	// Nodes is the per-node completion record, keyed by node id. Every node that
 	// has reached a terminal verdict on any leg so far appears here; CompletedNodes
