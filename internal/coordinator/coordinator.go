@@ -606,9 +606,10 @@ func (c *Coordinator) plan(ctx context.Context, goal string, inputKeys []string,
 
 // plannerPromptFor renders one planning attempt's base prompt: the planner
 // instruction for the goal, then suffix (forbidRemoteSuffix's sentence and
-// codexRuntimeSuffix's, each or both empty), then the goal loop's continuation section when a previous cycle left
-// work remaining. It is the one place that continuation is fenced, with or
-// without a suffix, so a suffix only ever adds its own text ahead of it.
+// codexRuntimeSuffix's, each or both empty), then the goal loop's
+// continuation section when a previous cycle left work remaining. It is the
+// one place that continuation is fenced, with or without a suffix, so a
+// suffix only ever adds its own text ahead of it.
 //
 // verifyCommand is the --verify-cmd text exactly as the engine will run it,
 // empty when none was supplied. It travels through to plannerPrompt because it
