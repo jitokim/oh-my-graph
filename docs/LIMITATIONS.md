@@ -291,11 +291,12 @@ has no open issue behind it.
   ("fatal: Unable to create '.git/index.lock': Read-only file system"); the
   `git add` control was a plain clone, not a linked worktree; and the
   default Go cache is read-only to the node, so `go build` and `go test` fail.
-  The measured cache was `~/.cache/go-build`, the Linux default; macOS keeps
-  its default elsewhere, so run `go env GOCACHE` to find the directory to add. One run uses one runtime (ADR 0025), so no later Claude
-  node can commit for it. Under Codex the planner is told not to plan a commit
-  or tell any node to commit, stage or amend; the work stays in the working tree
-  and the end-of-run `working tree:` line reports it.
+  The measured cache was `~/.cache/go-build`, the Linux default; macOS keeps its
+  default elsewhere, so run `go env GOCACHE` to find the directory to add. One
+  run uses one runtime (ADR 0025), so no later Claude node can commit for it.
+  Under Codex the planner is told not to plan a commit or tell any node to
+  commit, stage or amend; the work stays in the working tree and the end-of-run
+  `working tree:` line reports it.
   Workarounds, each measured once with `go vet`: setting GOCACHE inside the
   workspace lets the Go command use its build cache, though that cache
   directory is untracked and shows on the `working tree:` line unless it is
