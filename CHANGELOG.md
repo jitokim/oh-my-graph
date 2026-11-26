@@ -32,6 +32,9 @@ node's own push attributable in `auto`, and failing closed when attribution is
 unavailable, still await the captain's decision.
 [#449](https://github.com/jitokim/oh-my-graph/issues/449): a concurrent commit
 in hq was attributed to a run; it awaits the same decision.
+[#457](https://github.com/jitokim/oh-my-graph/issues/457): whether Codex nodes
+may write `.git`, or the engine commits their work, still awaits the captain's
+decision.
 [#459](https://github.com/jitokim/oh-my-graph/issues/459) is open:
 merge-shepherd's ready-and-wait can never pass on Dependabot PRs, because
 CodeRabbit skips bot authors.
@@ -68,7 +71,14 @@ instead of the no-commit paragraph: `TestPlannerPromptCodexNoCommit` and
 least one test red, and printing and recording the working tree are checked
 separately. We found no untested behaviour; no test was added or changed.
 
-Release QA: pending (make local, make smoke, make smoke-codex)
+Release QA: PASS on a7c02fe (binary built from the PR head, oh-my-graph
+0.21.0). make local passed. make smoke (claude) passed, run
+20261126-124208.055213197-1: write verified, critique exit-only, own fresh
+directory. make smoke-codex (codex-cli 0.171.0) passed, run
+20261126-124234.617701492-1: write verified, critique exit-only, own fresh
+directory. Four of the seven meta-review mutations (1, 2, 4, 7) were re-run
+independently; each built and turned the same tests red. A Codex
+`auto --plan-only` on a goal that asks for a commit planned no commit step.
 
 ### Added
 
