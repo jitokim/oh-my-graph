@@ -161,7 +161,9 @@ in the graph's inputs list; it is bound anyway — did you mean "task"?`). `run`
 Codex는 `permission_mode: plan`을 read-only sandbox로, 일반 모드를
 `workspace-write`로, `bypassPermissions`를 `danger-full-access`로 매핑합니다.
 이 sandbox는 네트워크 경계이기도 해서, Codex 그래프는 push하거나 `gh`를
-호출하는 첫 번째 노드에서 멈춥니다.
+호출하는 첫 번째 노드에서 멈춥니다. `workspace-write`(또는 read-only) Codex 노드는
+커밋도 할 수 없습니다. 이 sandbox가 `.git`을 read-only로 두기 때문에, 그 노드의
+작업은 커밋되지 않은 채로 남습니다 ([docs/LIMITATIONS.md](docs/LIMITATIONS.md)).
 Codex는 USD를 보고하지 않고 Claude의 `agent:` 선택자도 구현하지 않으므로,
 `agent:`와 `--max-goal-budget-usd`는 Codex run이 무언가를 쓰기 전에 거부합니다.
 노드의 `budget_usd`는 거부하지 않습니다. 묶을 USD가 없어 그저 적용될 수 없을

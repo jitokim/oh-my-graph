@@ -17,6 +17,91 @@ pull requests never edit a common file
 ([ADR 0042](docs/adr/0042-a-changelog-entry-is-a-file-the-pr-owns.md)). What
 has landed since the last release is the list of files in that directory.
 
+## [v0.21.0] - 2026-11-26
+
+**A small release.** A run that leaves its work uncommitted now says so at the
+end, and records it in the run's `state.json`
+([#455](https://github.com/jitokim/oh-my-graph/issues/455)). On Codex, the
+planner is now told that no node can commit, and docs/LIMITATIONS.md documents
+the commit and Go-cache limits
+([#457](https://github.com/jitokim/oh-my-graph/issues/457)).
+
+Open follow-ups.
+[#438](https://github.com/jitokim/oh-my-graph/issues/438): making a planned
+node's own push attributable in `auto`, and failing closed when attribution is
+unavailable, still await the captain's decision.
+[#449](https://github.com/jitokim/oh-my-graph/issues/449): a concurrent commit
+in hq was attributed to a run; it awaits the same decision.
+[#457](https://github.com/jitokim/oh-my-graph/issues/457): whether Codex nodes
+may write `.git`, or the engine commits their work, still awaits the captain's
+decision.
+[#459](https://github.com/jitokim/oh-my-graph/issues/459) is open:
+merge-shepherd's ready-and-wait can never pass on Dependabot PRs, because
+CodeRabbit skips bot authors.
+
+This release's rotating meta-review took **tests** as its subject.
+Meta-review (tests): we asked whether the tests would catch it if either fix
+in this release were undone. We undid each fix in seven separate ways, one at
+a time, on a tree whose tests passed, and checked that each mutation still
+built. (1) In `cmd/oh-my-graph/remotechanges.go`, `(*remoteLeg).print`, we
+removed the `printWorkingTree` call, so no `working tree:` line printed:
+`TestResume_ReadsTheWorkingTreeAtItsOwnEnd`,
+`TestRunAuto_ADirtyWorkingTreeIsPrintedAndRecorded`,
+`TestRunGraph_ADirtyWorkingTreeIsPrintedAndRecorded`,
+`TestRunGraph_ADirtyWorkingTreeNeverChangesAFailure` and
+`TestShow_PrintsTheRecordedWorkingTreeLine` failed. (2) In the same file,
+`(*remoteLeg).end`, we removed the `recordWorkingTree` call, so the line still
+printed but `working_tree` was never written to `state.json`:
+`TestResume_ReadsTheWorkingTreeAtItsOwnEnd`, both
+`…ADirtyWorkingTreeIsPrintedAndRecorded` tests and
+`TestShow_PrintsTheRecordedWorkingTreeLine` failed. (3) In
+`internal/runstate/recorder.go`, `(*SnapshotRecorder).RecordWorkingTree`, we
+dropped the field from the snapshot: `TestSnapshotRecorder_RecordWorkingTree`
+failed, plus the same four tests as (2). (4) In `cmd/oh-my-graph/main.go`,
+`runAutoWithRuntime`, we removed the `WithCodexRuntime()` option on the Codex
+branch: `TestRunAutoWithRuntime_OnlyCodexTellsThePlannerNotToCommit` failed.
+(5) In `cmd/oh-my-graph/chat.go`, `runChatWith`, the same removal failed
+`TestRunChatWith_OnlyCodexTellsThePlannerNotToCommit`. (6) In
+`cmd/oh-my-graph/design.go`, `runDesignWithRuntime`, it failed
+`TestRunDesign_OnlyCodexTellsThePlannerNotToCommit`. (7) In
+`internal/coordinator/codexruntime.go`, `codexRuntimeSuffix`, we returned `""`
+instead of the no-commit paragraph: `TestPlannerPromptCodexNoCommit` and
+`TestPlannerPromptGoldens_CodexRuntime` failed, plus the three
+`…OnlyCodexTellsThePlannerNotToCommit` tests above. Every mutation turned at
+least one test red, and printing and recording the working tree are checked
+separately. We found no untested behaviour; no test was added or changed.
+
+Release QA: PASS on a7c02fe (binary built from the PR head, oh-my-graph
+0.21.0). make local passed. make smoke (claude) passed, run
+20261126-124208.055213197-1: write verified, critique exit-only, own fresh
+directory. make smoke-codex (codex-cli 0.171.0) passed, run
+20261126-124234.617701492-1: write verified, critique exit-only, own fresh
+directory. Four of the seven meta-review mutations (1, 2, 4, 7) were re-run
+independently; each built and turned the same tests red. A Codex
+`auto --plan-only` on a goal that asks for a commit planned no commit step.
+
+### Added
+
+- **A run that leaves its work uncommitted now says so.** At the end of every
+  `run`, `auto` cycle and `resume` leg, a dirty working tree in the invocation
+  repository prints one line after the ledger, `working tree: 3 files changed,
+  uncommitted (a.go, b.go, c.go)` (the first five paths, then `, …`), and is
+  recorded as `working_tree` (`changed`, `paths`) in `state.json`, which `show
+  <run-id>` prints from. A clean tree prints nothing. A leg that was interrupted,
+  and a leg whose working tree could not be read, prints no line and records no
+  `working_tree`. No verdict, node status or exit code changes.
+  ([#455](https://github.com/jitokim/oh-my-graph/issues/455))
+
+### Changed
+
+- **Under `--runtime codex`, the planner is told not to plan commits.** Codex's
+  `workspace-write` sandbox keeps `.git` read-only, so a node told to commit
+  could not. `auto`, `chat` and `design` on Codex now tell the planner that no
+  node can commit, stage or amend; the work stays in the working tree and the
+  end-of-run `working tree:` line reports it. The Claude planner prompt is unchanged.
+  docs/LIMITATIONS.md records this and the Go-cache limit with their measured
+  workarounds. ([#457](https://github.com/jitokim/oh-my-graph/issues/457))
+
 ## [v0.20.0] - 2026-11-12
 
 **A small reliability release.** Ctrl-C is handled more carefully: after an
@@ -6347,7 +6432,8 @@ Initial MVP: a graph-native orchestrator that runs each DAG node as a real
   permanently — it would make an `auto` run depend on files the user forgot
   they had.
 
-[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/jitokim/oh-my-graph/compare/v0.21.0...HEAD
+[v0.21.0]: https://github.com/jitokim/oh-my-graph/compare/v0.20.0...v0.21.0
 [v0.20.0]: https://github.com/jitokim/oh-my-graph/compare/v0.19.0...v0.20.0
 [v0.19.0]: https://github.com/jitokim/oh-my-graph/compare/v0.18.0...v0.19.0
 [v0.18.0]: https://github.com/jitokim/oh-my-graph/compare/v0.17.0...v0.18.0
