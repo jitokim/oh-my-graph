@@ -836,7 +836,12 @@ The shipping side of that loop is a graph too: `graphs/merge-shepherd.yaml`
 takes a PR number, verifies its head locally in a throwaway worktree, marks
 it ready, waits for CI and CodeRabbit, triages the review comments, waits out
 the checks its own fix restarted, pauses at a human approval gate, and merges
-— the operator's by-hand PR-shepherding loop, pinned in YAML. That second wait
+— the operator's by-hand PR-shepherding loop, pinned in YAML. Bot-authored
+PRs (Dependabot) are out of scope: CodeRabbit skips bot authors and declines
+an `@coderabbitai review` comment, so `ready-and-wait` can never settle and
+`resume --retry-failed` halts at the same node again. A bot PR lands by hand
+instead, after an independent review approval and once `gh pr checks` is all
+green, with `gh pr merge --squash --delete-branch` (#459). That second wait
 (`recheck`) is why the gate is a decision rather than a chore: it judges the
 FINAL SHA and says which one, reading every reviewer's own review rather than
 one bot's — a human's `CHANGES_REQUESTED` counts, and does not clear on a push
