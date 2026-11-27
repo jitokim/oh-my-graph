@@ -25,6 +25,14 @@
 # no arc back to triage. Its notes reach the operator at the gate and nowhere
 # else.
 #
+# Out of scope: bot-authored PRs (Dependabot). CodeRabbit skips bot authors
+# ("Review skipped — Bot user detected") and declines an `@coderabbitai review`
+# comment too, so ready-and-wait's condition — CodeRabbit's latest review on
+# the SHA being merged — can never settle, and `resume --retry-failed` halts at
+# the same node again. Do not run this graph on one. A bot PR lands BY HAND: an
+# independent review approval, `gh pr checks <pr>` all green, then
+# `gh pr merge <pr> --squash --delete-branch` (#459).
+#
 # Clean tree required: verify and merge run `git`/`make` inside the repo you
 # point at. The PR itself is only ever touched through THROWAWAY worktrees
 # (`git worktree add --detach /tmp/shepherd-... <sha>` — plain git run by the
