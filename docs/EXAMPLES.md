@@ -840,8 +840,8 @@ the checks its own fix restarted, pauses at a human approval gate, and merges
 PRs (Dependabot) are out of scope: CodeRabbit skips bot authors and declines
 an `@coderabbitai review` comment, so `ready-and-wait` can never settle and
 `resume --retry-failed` halts at the same node again. A bot PR lands by hand
-instead, after an independent review approval and once `gh pr checks` is all
-green, with `gh pr merge --squash --delete-branch` (#459). That second wait
+instead, after an independent review approval and once `gh pr checks <pr>` is
+all green, with `gh pr merge <pr> --squash --delete-branch` (#459). That second wait
 (`recheck`) is why the gate is a decision rather than a chore: it judges the
 FINAL SHA and says which one, reading every reviewer's own review rather than
 one bot's — a human's `CHANGES_REQUESTED` counts, and does not clear on a push
